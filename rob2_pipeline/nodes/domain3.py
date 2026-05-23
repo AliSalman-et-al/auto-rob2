@@ -1,36 +1,26 @@
 from rob2_pipeline.judges.domain3 import judge_domain3
-from rob2_pipeline.models import format_evidence
 from rob2_pipeline.nodes.common import (
     add_domain_judgment,
     set_na,
 )
+from rob2_pipeline.nodes.domain_context import build_domain3_context
 from rob2_pipeline.nodes.domain_helpers import call_domain_sq_prompt
-from rob2_pipeline.nodes.evidence_packets import packet_block_for_domain
 from rob2_pipeline.prompts import PROMPT_DOMAIN3
 from rob2_pipeline.state import RoB2State
 
 
 def domain3_sq_node(state: RoB2State) -> RoB2State:
-    evidence = state["evidence"]
-    rag_contexts = state.get("rag_contexts", {})
-    packet_text = packet_block_for_domain(state.get("evidence_packets", {}), "d3")
-    missing_data_text = format_evidence(evidence["d3_missing_data"]) or format_evidence(
-        evidence["results"]
-    )
+    context = build_domain3_context(state)
     prompt = PROMPT_DOMAIN3.format(
         intervention=state["intervention"],
         comparator=state["comparator"],
         outcome=state["outcome"],
-        n_randomized=state.get("n_randomized", "Not reported"),
-        consort_text=format_evidence(evidence["consort_flow"]),
-        missing_data_text=missing_data_text,
-        sensitivity_text=format_evidence(evidence["d4_outcome_meas"]),
-        rag_text="\n\n".join(
-            part for part in [packet_text, rag_contexts.get("d3", "")] if part
-        ),
-        ctgov_flow=state.get(
-            "ctgov_flow", "(No ClinicalTrials.gov participant flow available)"
-        ),
+        n_randomized=context.n_randomized,
+        consort_text=context.consort_text,
+        missing_data_text=context.missing_data_text,
+        sensitivity_text=context.sensitivity_text,
+        rag_text=context.rag_text,
+        ctgov_flow=context.ctgov_flow,
     )
     sq_answers, log = call_domain_sq_prompt(
         state,

@@ -11,3 +11,7 @@ Triage uses the default canonical labels: `needs-triage`, `needs-info`, `ready-f
 ### Domain docs
 
 This repo uses a single-context domain docs layout: root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.
+
+Read `CONTEXT.md` before making architectural changes, renaming modules, adding
+new domain concepts, or changing prompt evidence assembly. It is the shared
+domain glossary and subsystem map for this repository.

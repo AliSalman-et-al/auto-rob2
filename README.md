@@ -275,6 +275,7 @@ before invoking the CLI.
 
 ```text
 data/references/             benchmark reference CSVs
+CONTEXT.md                   domain glossary and subsystem map for agents
 inputs/                      local PDFs, ignored by git
 inputs/benchmark/            benchmark primary PDFs
 inputs/benchmark/supplement/ benchmark supplements by trial name
@@ -293,9 +294,11 @@ Key files:
 | `rob2_pipeline/graph.py`                  | LangGraph workflow wiring                        |
 | `rob2_pipeline/ingestion/`                | Primary and supplement PDF ingestion             |
 | `rob2_pipeline/rag.py`                    | Per-study FAISS retrieval                        |
+| `rob2_pipeline/nodes/domain_context.py`   | Prompt-ready D1-D5 evidence context              |
 | `rob2_pipeline/nodes/evidence_packets.py` | SQ-specific evidence packets                     |
 | `rob2_pipeline/judges/`                   | Deterministic RoB 2 judgment logic               |
 | `rob2_pipeline/providers/`                | LLM provider adapters                            |
+| `CONTEXT.md`                              | Shared domain vocabulary and change-path map     |
 
 ## Python API
 
@@ -324,6 +327,7 @@ uv run python -m pytest -q
 Run focused tests:
 
 ```bash
+uv run python -m pytest tests/test_domain_context.py -q
 uv run python -m pytest tests/test_supplements.py -q
 uv run python -m pytest tests/test_benchmark.py -q
 ```
@@ -341,6 +345,7 @@ uv run python -m py_compile rob2_pipeline/benchmark.py benchmark.py
 | LLM XML parse failure       | Trace JSON and `rob2_pipeline/xml_parser.py`                     |
 | Early non-RCT stop          | `is_rct`, `rct_screen_evidence`, `errors`                        |
 | Missing evidence            | `evidence`, `rag_sources`, `evidence_packets`                    |
+| Prompt evidence mismatch    | `rob2_pipeline/nodes/domain_context.py` and relevant domain node  |
 | Weak D3/D5 support          | `packet_grades`, `verification_actions`, supplement sources      |
 | Supplement parse errors     | `source_documents`, `supplement_warnings`                        |
 | ClinicalTrials.gov mismatch | Registered endpoint fields and CT.gov-derived `evidence_packets` |

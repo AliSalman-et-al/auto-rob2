@@ -4,6 +4,10 @@ This document explains how `auto-rob2` works internally and where to look when
 changing or debugging it. For installation and command-line usage, start with
 `README.md`.
 
+The repo-level domain glossary and change-path map lives in `CONTEXT.md`.
+Read it first when making architectural changes or when choosing names for new
+modules.
+
 ## Design Goals
 
 `auto-rob2` is built around four constraints:
@@ -137,6 +141,24 @@ Source ranking is domain-aware. For example, D5 prefers protocol, SAP, and
 registry sources; D3 gives weight to appendix and SAP missing-data evidence;
 D4 values outcome-definition and adjudication sources.
 
+### Domain Prompt Context
+
+`rob2_pipeline/nodes/domain_context.py` owns prompt-ready evidence context for
+D1-D5 and for each Domain 2 prompt stage. It combines primary-paper evidence,
+evidence-packet blocks, RAG compatibility text, trial facts, and registry
+fields into dataclass values consumed by the domain SQ nodes.
+
+Domain prompt context is intentionally not responsible for source selection,
+retrieval, signaling-question branching, NA control logic, or deterministic
+judging. Those remain in the evidence-packet, retrieval, domain-node, and judge
+modules.
+
+| File | Responsibility |
+| --- | --- |
+| `rob2_pipeline/nodes/domain_context.py` | Prompt-ready evidence context objects |
+| `rob2_pipeline/nodes/domain_helpers.py` | Shared simple domain SQ LLM call helper |
+| `rob2_pipeline/nodes/domain1.py` - `domain5.py` | Prompt formatting, SQ control logic, and judge node glue |
+
 ### LLM Calls
 
 All graph LLM calls go through `call_node_llm()` in
@@ -201,6 +223,7 @@ Important state groups:
 | Registry enrichment | `registered_endpoint`, `ctgov_outcomes`, `ctgov_design`, `ctgov_flow` |
 | Retrieval | `rag_contexts`, `rag_chunk_metadata`, `retrieval_grades` |
 | Packets | `evidence_packets`, `evidence_facts`, `packet_grades` |
+| Prompt context | Derived in `domain_context.py`; not persisted in state |
 | Judgments | `sq_answers`, `domain_judgments`, `overall_judgment` |
 | Quality | `evidence_validation_flags`, `verification_actions`, `human_review_priority` |
 | Diagnostics | `errors`, `llm_call_log`, `verifier_trace` |
@@ -343,9 +366,10 @@ For a wrong judgment, inspect in this order:
 1. `domain_judgments` and `domain_rationales`
 2. relevant `sq_answers`
 3. relevant `evidence_packets`
-4. domain `rag_sources`
-5. `retrieval_grades` and `packet_grades`
-6. `evidence_validation_flags` and `verification_actions`
+4. relevant `DomainEvidenceContext` builder in `nodes/domain_context.py`
+5. domain `rag_sources`
+6. `retrieval_grades` and `packet_grades`
+7. `evidence_validation_flags` and `verification_actions`
 
 For ingestion problems, inspect:
 
@@ -378,8 +402,9 @@ Common failure modes:
 3. Add or adjust query text in `rob2_pipeline/rag_queries.py`.
 4. Update the evidence contract in `nodes/evidence_contracts.py`.
 5. Update packet selection or grading if the evidence requirements changed.
-6. Update the relevant graph node and deterministic judge.
-7. Add tests for parsing, packets, and judge behavior.
+6. Update `nodes/domain_context.py` if prompt evidence fields change.
+7. Update the relevant graph node and deterministic judge.
+8. Add tests for context, parsing, packets, and judge behavior.
 
 ### Add A New Evidence Source
 
@@ -387,6 +412,12 @@ Prefer adding the source as an evidence-packet candidate with explicit
 `source_kind`, `document_role`, and provenance metadata. Avoid blending external
 source text into primary-paper evidence unless it was extracted from the primary
 publication itself.
+
+### Change Prompt Evidence Assembly
+
+Start in `nodes/domain_context.py`. Keep retrieval and packet selection in the
+RAG/evidence-packet modules, and keep SQ branching and NA control logic in the
+domain node unless the behavior is being deliberately redesigned.
 
 ### Add A New LLM Node
 
