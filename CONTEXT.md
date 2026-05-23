@@ -154,6 +154,12 @@ stage. It combines primary-paper evidence, evidence packets, RAG compatibility
 text, trial facts, and registry fields without changing source selection or
 signaling-question control logic.
 
+### DomainSqStage
+
+The shared interface for one LLM signaling-question stage. It records the graph
+node name, SQ ids, source-domain key, prompt builder, parser, and optional
+stage-local post-processing for answer corrections or NA control flow.
+
 ### Signaling Question Answer
 
 The parsed XML answer for one RoB 2 signaling question. It contains an answer
@@ -253,8 +259,9 @@ Some-concerns domains.
 
 - `rob2_pipeline/nodes/domain_context.py` builds prompt-ready context objects
   for D1-D5 and D2 prompt stages.
-- `rob2_pipeline/nodes/domain_helpers.py` centralizes the simple domain SQ LLM
-  call pattern.
+- `rob2_pipeline/nodes/domain_helpers.py` owns `DomainSqStage`, the shared
+  interface for SQ-stage prompt building, LLM invocation, parsed-answer
+  merging, chunk-source logging, and optional stage-local SQ control flow.
 - `rob2_pipeline/nodes/domain1.py` handles D1 randomization SQs and D1 judge.
 - `rob2_pipeline/nodes/domain2.py` handles D2 SQ12, conditional, analysis, ITT
   versus per-protocol routing, D2 NA control logic, and D2 judge.
@@ -312,6 +319,10 @@ Some-concerns domains.
 - Evidence packets are the main prompt context protection against overload.
 - `DomainEvidenceContext` is prompt assembly only. It does not own packet
   selection, retrieval, SQ branching, NA control logic, or judges.
+- `DomainSqStage` owns SQ-stage execution shape: prompt build, LLM call,
+  parsed-answer merge, chunk-source logging, and optional stage-local
+  post-processing. It must not own source selection, evidence-packet grading,
+  or deterministic judging.
 - D2 has three prompt stages because the official algorithm branches by
   awareness, deviations, analysis, and effect of interest.
 - D4 includes outcome-type-specific corrections before final D4 NA control
@@ -329,7 +340,7 @@ Some-concerns domains.
 
 Update methodology cards, prompt templates, RAG queries, evidence contracts,
 packet grading or source selection if evidence requirements changed, the
-domain node, the deterministic judge, and focused tests.
+domain node's `DomainSqStage`, the deterministic judge, and focused tests.
 
 ### Add A New Evidence Source
 
@@ -340,8 +351,8 @@ to `full_text` or primary `PaperEvidence`.
 ### Change Prompt Evidence Assembly
 
 Start in `domain_context.py`. Keep packet source selection in evidence-packet
-modules and keep SQ control logic in domain SQ modules unless the behavior is
-being deliberately redesigned.
+modules and keep SQ control logic in `DomainSqStage` post-processing inside
+domain SQ modules unless the behavior is being deliberately redesigned.
 
 ### Investigate A Wrong Judgment
 

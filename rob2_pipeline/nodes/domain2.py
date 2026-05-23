@@ -2,9 +2,6 @@ from rob2_pipeline.judges.domain2 import judge_domain2
 from rob2_pipeline.nodes.common import (
     add_domain_judgment,
     call_node_llm,
-    call_node_llm_with_sources,
-    format_chunk_sources,
-    merge_sq_answers,
     set_na,
 )
 from rob2_pipeline.nodes.domain_context import (
@@ -12,6 +9,7 @@ from rob2_pipeline.nodes.domain_context import (
     build_domain2_conditional_context,
     build_domain2_sq12_context,
 )
+from rob2_pipeline.nodes.domain_helpers import DomainSqStage, run_domain_sq_stage
 from rob2_pipeline.prompts import (
     PROMPT_DOMAIN2_ADHERING_ANALYSIS,
     PROMPT_DOMAIN2_ADHERING_CONDITIONAL,
@@ -20,12 +18,11 @@ from rob2_pipeline.prompts import (
     PROMPT_DOMAIN2_SQ12,
 )
 from rob2_pipeline.state import RoB2State
-from rob2_pipeline.xml_parser import parse_sq_response
 
 
-def domain2_sq12_node(state: RoB2State) -> RoB2State:
+def build_domain2_sq12_prompt(state: RoB2State) -> str:
     context = build_domain2_sq12_context(state)
-    prompt = PROMPT_DOMAIN2_SQ12.format(
+    return PROMPT_DOMAIN2_SQ12.format(
         intervention=state["intervention"],
         comparator=state["comparator"],
         outcome=state["outcome"],
@@ -34,16 +31,11 @@ def domain2_sq12_node(state: RoB2State) -> RoB2State:
         rag_text=context.rag_text,
         ctgov_design=context.ctgov_design,
     )
-    response, log, parsed = call_node_llm_with_sources(
-        call_node_llm,
-        state,
-        prompt,
-        "domain2_sq12",
-        parse_sq_response,
-        ["2.1", "2.2"],
-        chunk_sources=format_chunk_sources(state, "d2"),
-    )
-    sq_answers = merge_sq_answers(state, parsed or {})
+
+
+def apply_domain2_sq12_control_flow(
+    state: RoB2State, sq_answers: dict[str, dict]
+) -> dict[str, dict]:
     s21 = sq_answers.get("2.1", {}).get("answer", "NI")
     s22 = sq_answers.get("2.2", {}).get("answer", "NI")
     if (
@@ -51,8 +43,21 @@ def domain2_sq12_node(state: RoB2State) -> RoB2State:
         and s21 in ("N", "PN")
         and s22 in ("N", "PN")
     ):
-        sq_answers = set_na(sq_answers, "2.3", "2.4", "2.5")
-    return {"sq_answers": sq_answers, "llm_call_log": log}
+        return set_na(sq_answers, "2.3", "2.4", "2.5")
+    return sq_answers
+
+
+DOMAIN2_SQ12_STAGE = DomainSqStage(
+    node_name="domain2_sq12",
+    sq_ids=("2.1", "2.2"),
+    source_domain="d2",
+    build_prompt=build_domain2_sq12_prompt,
+    postprocess=apply_domain2_sq12_control_flow,
+)
+
+
+def domain2_sq12_node(state: RoB2State) -> RoB2State:
+    return run_domain_sq_stage(state, DOMAIN2_SQ12_STAGE, call_fn=call_node_llm)
 
 
 def d2_needs_conditional(state: RoB2State) -> str:
@@ -65,14 +70,14 @@ def d2_needs_conditional(state: RoB2State) -> str:
     return "conditional"
 
 
-def domain2_conditional_node(state: RoB2State) -> RoB2State:
+def build_domain2_conditional_prompt(state: RoB2State) -> str:
     context = build_domain2_conditional_context(state)
     prompt_template = (
         PROMPT_DOMAIN2_ADHERING_CONDITIONAL
         if state.get("effect_of_interest", "ITT").lower() == "per-protocol"
         else PROMPT_DOMAIN2_CONDITIONAL
     )
-    prompt = prompt_template.format(
+    return prompt_template.format(
         intervention=state["intervention"],
         comparator=state["comparator"],
         outcome=state["outcome"],
@@ -82,35 +87,45 @@ def domain2_conditional_node(state: RoB2State) -> RoB2State:
         concomitant_text=context.concomitant_text,
         rag_text=context.rag_text,
     )
-    response, log, parsed = call_node_llm_with_sources(
-        call_node_llm,
-        state,
-        prompt,
-        "domain2_conditional",
-        parse_sq_response,
-        ["2.3", "2.4", "2.5"],
-        chunk_sources=format_chunk_sources(state, "d2"),
-    )
-    sq_answers = merge_sq_answers(state, parsed or {})
+
+
+def apply_domain2_conditional_control_flow(
+    state: RoB2State, sq_answers: dict[str, dict]
+) -> dict[str, dict]:
     if state.get("effect_of_interest", "ITT").lower() == "per-protocol":
-        return {"sq_answers": sq_answers, "llm_call_log": log}
+        return sq_answers
     s23 = sq_answers.get("2.3", {}).get("answer", "NI")
     s24 = sq_answers.get("2.4", {}).get("answer", "NI")
     if s23 in ("N", "PN", "NI"):
-        sq_answers = set_na(sq_answers, "2.4", "2.5")
-    elif s24 in ("N", "PN", "NA"):
-        sq_answers = set_na(sq_answers, "2.5")
-    return {"sq_answers": sq_answers, "llm_call_log": log}
+        return set_na(sq_answers, "2.4", "2.5")
+    if s24 in ("N", "PN", "NA"):
+        return set_na(sq_answers, "2.5")
+    return sq_answers
 
 
-def domain2_analysis_node(state: RoB2State) -> RoB2State:
+DOMAIN2_CONDITIONAL_STAGE = DomainSqStage(
+    node_name="domain2_conditional",
+    sq_ids=("2.3", "2.4", "2.5"),
+    source_domain="d2",
+    build_prompt=build_domain2_conditional_prompt,
+    postprocess=apply_domain2_conditional_control_flow,
+)
+
+
+def domain2_conditional_node(state: RoB2State) -> RoB2State:
+    return run_domain_sq_stage(
+        state, DOMAIN2_CONDITIONAL_STAGE, call_fn=call_node_llm
+    )
+
+
+def build_domain2_analysis_prompt(state: RoB2State) -> str:
     context = build_domain2_analysis_context(state)
     prompt_template = (
         PROMPT_DOMAIN2_ADHERING_ANALYSIS
         if state.get("effect_of_interest", "ITT").lower() == "per-protocol"
         else PROMPT_DOMAIN2_ANALYSIS
     )
-    prompt = prompt_template.format(
+    return prompt_template.format(
         intervention=state["intervention"],
         comparator=state["comparator"],
         outcome=state["outcome"],
@@ -119,24 +134,32 @@ def domain2_analysis_node(state: RoB2State) -> RoB2State:
         results_text=context.results_text,
         rag_text=context.rag_text,
     )
-    response, log, parsed = call_node_llm_with_sources(
-        call_node_llm,
-        state,
-        prompt,
-        "domain2_analysis",
-        parse_sq_response,
-        ["2.6", "2.7"],
-        chunk_sources=format_chunk_sources(state, "d2"),
-    )
-    sq_answers = merge_sq_answers(state, parsed or {})
+
+
+def apply_domain2_analysis_control_flow(
+    state: RoB2State, sq_answers: dict[str, dict]
+) -> dict[str, dict]:
     if state.get(
         "effect_of_interest", "ITT"
     ).lower() == "per-protocol" or sq_answers.get("2.6", {}).get("answer", "NI") in (
         "Y",
         "PY",
     ):
-        sq_answers = set_na(sq_answers, "2.7")
-    return {"sq_answers": sq_answers, "llm_call_log": log}
+        return set_na(sq_answers, "2.7")
+    return sq_answers
+
+
+DOMAIN2_ANALYSIS_STAGE = DomainSqStage(
+    node_name="domain2_analysis",
+    sq_ids=("2.6", "2.7"),
+    source_domain="d2",
+    build_prompt=build_domain2_analysis_prompt,
+    postprocess=apply_domain2_analysis_control_flow,
+)
+
+
+def domain2_analysis_node(state: RoB2State) -> RoB2State:
+    return run_domain_sq_stage(state, DOMAIN2_ANALYSIS_STAGE, call_fn=call_node_llm)
 
 
 def domain2_judge_node(state: RoB2State) -> RoB2State:

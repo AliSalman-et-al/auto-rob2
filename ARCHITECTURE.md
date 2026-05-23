@@ -156,8 +156,13 @@ modules.
 | File | Responsibility |
 | --- | --- |
 | `rob2_pipeline/nodes/domain_context.py` | Prompt-ready evidence context objects |
-| `rob2_pipeline/nodes/domain_helpers.py` | Shared simple domain SQ LLM call helper |
-| `rob2_pipeline/nodes/domain1.py` - `domain5.py` | Prompt formatting, SQ control logic, and judge node glue |
+| `rob2_pipeline/nodes/domain_helpers.py` | `DomainSqStage` interface and shared SQ-stage runner |
+| `rob2_pipeline/nodes/domain1.py` - `domain5.py` | Prompt builders, SQ-stage declarations, stage-local SQ control logic, and judge node glue |
+
+Every domain SQ node runs through `DomainSqStage`. The stage interface keeps
+LLM invocation, chunk-source logging, parsed-answer merging, and optional
+post-processing in one place while leaving prompt assembly in
+`domain_context.py` and deterministic judging in `judges/`.
 
 ### LLM Calls
 
@@ -403,8 +408,10 @@ Common failure modes:
 4. Update the evidence contract in `nodes/evidence_contracts.py`.
 5. Update packet selection or grading if the evidence requirements changed.
 6. Update `nodes/domain_context.py` if prompt evidence fields change.
-7. Update the relevant graph node and deterministic judge.
-8. Add tests for context, parsing, packets, and judge behavior.
+7. Update the relevant `DomainSqStage` prompt builder, SQ IDs, or
+   stage-local control flow in the domain node.
+8. Update the deterministic judge if final-label behavior changes.
+9. Add tests for stage behavior, context, parsing, packets, and judge behavior.
 
 ### Add A New Evidence Source
 
@@ -417,7 +424,8 @@ publication itself.
 
 Start in `nodes/domain_context.py`. Keep retrieval and packet selection in the
 RAG/evidence-packet modules, and keep SQ branching and NA control logic in the
-domain node unless the behavior is being deliberately redesigned.
+domain node's `DomainSqStage` post-processing unless the behavior is being
+deliberately redesigned.
 
 ### Add A New LLM Node
 
