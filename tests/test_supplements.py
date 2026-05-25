@@ -268,8 +268,8 @@ def test_skipped_source_documents_records_requested_supplements():
     assert warnings == [documents[0]["error"]]
 
 
-def test_pdf_ingest_node_appends_supplement_chunks(monkeypatch):
-    import rob2_pipeline.nodes.ingest as node
+def test_assessment_ingestion_appends_supplement_chunks(monkeypatch):
+    import rob2_pipeline.ingestion.assessment as node
 
     from rob2_pipeline.models import empty_paper_evidence
 
@@ -348,9 +348,9 @@ def test_pdf_ingest_node_appends_supplement_chunks(monkeypatch):
         node, "_get_docling_converter", lambda use_ocr=False: Converter()
     )
 
-    result = node.pdf_ingest_node(
-        {"pdf_path": "primary.pdf", "supplementary_paths": ["protocol.pdf"]}
-    )
+    result = node.ingest_assessment_documents(
+        "primary.pdf", ["protocol.pdf"]
+    ).to_state_update()
 
     assert len(result["docling_chunks"]) == 2
     assert result["docling_chunks"][0].metadata["document_id"] == "primary"
@@ -359,10 +359,10 @@ def test_pdf_ingest_node_appends_supplement_chunks(monkeypatch):
     assert result["source_documents"][1]["document_role"] == "protocol"
 
 
-def test_pdf_ingest_node_preserves_primary_chunks_when_supplement_ingestion_escapes(
+def test_assessment_ingestion_preserves_primary_chunks_when_supplement_ingestion_escapes(
     monkeypatch,
 ):
-    import rob2_pipeline.nodes.ingest as node
+    import rob2_pipeline.ingestion.assessment as node
 
     from rob2_pipeline.models import empty_paper_evidence
 
@@ -416,9 +416,9 @@ def test_pdf_ingest_node_preserves_primary_chunks_when_supplement_ingestion_esca
         node, "_get_docling_converter", lambda use_ocr=False: Converter()
     )
 
-    result = node.pdf_ingest_node(
-        {"pdf_path": "primary.pdf", "supplementary_paths": ["protocol.pdf"]}
-    )
+    result = node.ingest_assessment_documents(
+        "primary.pdf", ["protocol.pdf"]
+    ).to_state_update()
 
     assert len(result["docling_chunks"]) == 1
     assert result["docling_chunks"][0].metadata["document_id"] == "primary"

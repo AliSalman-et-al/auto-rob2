@@ -209,8 +209,13 @@ Some-concerns domains.
 
 ### Ingestion
 
-- `rob2_pipeline/nodes/ingest.py` is the graph-facing ingestion node. It owns
-  the fallback order and combines primary plus supplement chunks.
+- `rob2_pipeline/nodes/ingest.py` is the graph-facing ingestion adapter. It
+  calls the Assessment ingestion module and returns the existing `RoB2State`
+  update shape.
+- `rob2_pipeline/ingestion/assessment.py` owns Assessment ingestion behavior:
+  strict primary full-text extraction, primary Docling structural parsing,
+  primary plus supplement chunk assembly, source-document inventory, remote
+  paper-evidence extraction orchestration, and fallback order.
 - `rob2_pipeline/ingestion/docling_extract.py` owns Docling full-text
   extraction, OCR retry, converter caching, chunk building, and chunk page
   metadata.

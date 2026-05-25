@@ -5,7 +5,6 @@ from rob2_pipeline.ingestion.supplements import (
     apply_source_metadata,
     primary_source_document,
 )
-from rob2_pipeline.nodes.ingest import pdf_ingest_node
 from rob2_pipeline.pdf_ingestion import (
     _build_docling_chunks,
     build_document_repr,
@@ -25,6 +24,13 @@ def test_pdf_ingestion_facade_reexports_core_ingestion_api():
     assert callable(pdf_ingestion.extract_structural_paper_evidence)
     assert callable(pdf_ingestion.parse_sections)
     assert callable(pdf_ingestion.extract_censoring_context)
+    assert callable(pdf_ingestion._configure_docling_runtime)
+    assert callable(pdf_ingestion._get_docling_converter)
+    assert callable(pdf_ingestion._build_docling_chunks)
+    assert callable(pdf_ingestion.build_document_repr)
+    assert callable(pdf_ingestion.paper_evidence_from_sections)
+    assert callable(pdf_ingestion.appears_rct_candidate)
+    assert callable(pdf_ingestion.allow_remote_evidence_extraction)
 
 
 def test_docling_chunker_can_still_be_monkeypatched_via_facade(monkeypatch):
@@ -513,7 +519,11 @@ def test_extract_censoring_context_returns_empty_for_no_matches():
     assert extract_censoring_context(full_text, "Overall Survival") == ""
 
 
-def test_ingest_node_falls_back_to_text_parse_when_docling_structure_fails(monkeypatch):
+def test_assessment_ingestion_falls_back_to_text_parse_when_docling_structure_fails(
+    monkeypatch,
+):
+    import rob2_pipeline.ingestion.assessment as assessment
+
     """If the docling converter fails, fall back to a text keyword parse of the
     already-extracted full text. extract_full_text itself still raises on
     failure (no pymupdf fallback)."""
@@ -521,7 +531,7 @@ def test_ingest_node_falls_back_to_text_parse_when_docling_structure_fails(monke
         "Methods\nParticipants were randomly assigned in a 1:1 ratio.\nResults\nDone."
     )
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest.extract_full_text", lambda _: known_text
+        "rob2_pipeline.ingestion.assessment.extract_full_text", lambda _: known_text
     )
 
     class BrokenConverter:
@@ -529,12 +539,14 @@ def test_ingest_node_falls_back_to_text_parse_when_docling_structure_fails(monke
             raise RuntimeError("docling structured parse failed")
 
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest._get_docling_converter",
+        "rob2_pipeline.ingestion.assessment._get_docling_converter",
         lambda use_ocr: BrokenConverter(),
     )
 
     state = {"pdf_path": "trial.pdf"}
-    result = pdf_ingest_node(state)
+    result = assessment.ingest_assessment_documents(
+        state["pdf_path"], state.get("supplementary_paths")
+    ).to_state_update()
 
     assert "evidence" in result
     assert result["evidence"]["extraction_method"] == "fallback"
@@ -547,11 +559,13 @@ def test_ingest_node_falls_back_to_text_parse_when_docling_structure_fails(monke
 def test_ingest_node_records_skipped_supplements_when_primary_docling_falls_back(
     monkeypatch,
 ):
+    import rob2_pipeline.ingestion.assessment as assessment
+
     known_text = (
         "Methods\nParticipants were randomly assigned in a 1:1 ratio.\nResults\nDone."
     )
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest.extract_full_text", lambda _: known_text
+        "rob2_pipeline.ingestion.assessment.extract_full_text", lambda _: known_text
     )
 
     class BrokenConverter:
@@ -559,16 +573,17 @@ def test_ingest_node_records_skipped_supplements_when_primary_docling_falls_back
             raise RuntimeError("docling structured parse failed")
 
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest._get_docling_converter",
+        "rob2_pipeline.ingestion.assessment._get_docling_converter",
         lambda use_ocr: BrokenConverter(),
     )
 
-    result = pdf_ingest_node(
-        {
-            "pdf_path": "trial.pdf",
-            "supplementary_paths": ["inputs/benchmark/supplement/TITAN/protocol.pdf"],
-        }
-    )
+    state = {
+        "pdf_path": "trial.pdf",
+        "supplementary_paths": ["inputs/benchmark/supplement/TITAN/protocol.pdf"],
+    }
+    result = assessment.ingest_assessment_documents(
+        state["pdf_path"], state.get("supplementary_paths")
+    ).to_state_update()
 
     assert result["docling_chunks"] == []
     assert result["source_documents"][1]["document_name"] == "protocol.pdf"
@@ -576,10 +591,64 @@ def test_ingest_node_records_skipped_supplements_when_primary_docling_falls_back
     assert "Supplement not ingested" in result["supplement_warnings"][0]
 
 
+def test_pdf_ingest_node_adapts_assessment_ingestion_result(monkeypatch):
+    import rob2_pipeline.nodes.ingest as ingest_node
+    from rob2_pipeline.ingestion.assessment import AssessmentIngestionResult
+
+    evidence = empty_paper_evidence("docling_struct")
+    captured = {}
+    llm_log = {
+        "node": "paper_evidence_extraction",
+        "prompt_length_chars": 120,
+        "response_length_chars": 80,
+        "latency_ms": 5,
+        "cache_hit": False,
+    }
+
+    def fake_ingest_assessment_documents(pdf_path, supplementary_paths):
+        captured["pdf_path"] = pdf_path
+        captured["supplementary_paths"] = supplementary_paths
+        return AssessmentIngestionResult(
+            full_text="Primary text",
+            evidence=evidence,
+            docling_doc=None,
+            docling_chunks=[],
+            source_documents=[],
+            supplement_warnings=["warning"],
+            llm_call_log=[llm_log],
+        )
+
+    monkeypatch.setattr(
+        ingest_node,
+        "ingest_assessment_documents",
+        fake_ingest_assessment_documents,
+    )
+
+    result = ingest_node.pdf_ingest_node(
+        {"pdf_path": "primary.pdf", "supplementary_paths": ["protocol.pdf"]}
+    )
+
+    assert captured == {
+        "pdf_path": "primary.pdf",
+        "supplementary_paths": ["protocol.pdf"],
+    }
+    assert result == {
+        "full_text": "Primary text",
+        "evidence": evidence,
+        "docling_doc": None,
+        "docling_chunks": [],
+        "source_documents": [],
+        "supplement_warnings": ["warning"],
+        "llm_call_log": [llm_log],
+    }
+
+
 def test_ingest_node_stores_docling_conversion_result(monkeypatch):
+    import rob2_pipeline.ingestion.assessment as assessment
+
     known_text = "Methods\nParticipants were randomly assigned."
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest.extract_full_text", lambda _: known_text
+        "rob2_pipeline.ingestion.assessment.extract_full_text", lambda _: known_text
     )
 
     class MockConverter:
@@ -593,31 +662,34 @@ def test_ingest_node_stores_docling_conversion_result(monkeypatch):
 
     converter = MockConverter()
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest._get_docling_converter", lambda use_ocr: converter
+        "rob2_pipeline.ingestion.assessment._get_docling_converter",
+        lambda use_ocr: converter,
     )
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest.build_document_repr",
+        "rob2_pipeline.ingestion.assessment.build_document_repr",
         lambda doc: pdf_ingestion.DocumentRepr(blocks=[], full_text=known_text),
     )
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest.extract_paper_evidence",
+        "rob2_pipeline.ingestion.assessment.extract_paper_evidence",
         lambda doc_repr: (empty_paper_evidence("docling_llm"), []),
     )
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest._build_docling_chunks",
+        "rob2_pipeline.ingestion.assessment._build_docling_chunks",
         lambda conv_result: ["chunk"],
     )
 
-    result = pdf_ingest_node({"pdf_path": "trial.pdf"})
+    result = assessment.ingest_assessment_documents("trial.pdf").to_state_update()
 
     assert result["docling_doc"] is converter.conversion_result
     assert result["docling_chunks"] == ["chunk"]
 
 
 def test_ingest_node_skips_remote_extraction_when_disabled(monkeypatch):
+    import rob2_pipeline.ingestion.assessment as assessment
+
     known_text = "Methods\nParticipants were randomly assigned."
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest.extract_full_text", lambda _: known_text
+        "rob2_pipeline.ingestion.assessment.extract_full_text", lambda _: known_text
     )
 
     class MockConverter:
@@ -631,17 +703,19 @@ def test_ingest_node_skips_remote_extraction_when_disabled(monkeypatch):
 
     converter = MockConverter()
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest._get_docling_converter", lambda use_ocr: converter
+        "rob2_pipeline.ingestion.assessment._get_docling_converter",
+        lambda use_ocr: converter,
     )
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest.build_document_repr",
+        "rob2_pipeline.ingestion.assessment.build_document_repr",
         lambda doc: pdf_ingestion.DocumentRepr(blocks=[], full_text=known_text),
     )
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest.allow_remote_evidence_extraction", lambda: False
+        "rob2_pipeline.ingestion.assessment.allow_remote_evidence_extraction",
+        lambda: False,
     )
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest._build_docling_chunks",
+        "rob2_pipeline.ingestion.assessment._build_docling_chunks",
         lambda conv_result: ["chunk"],
     )
 
@@ -649,21 +723,23 @@ def test_ingest_node_skips_remote_extraction_when_disabled(monkeypatch):
         raise AssertionError("remote extraction should be skipped when disabled")
 
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest.extract_paper_evidence", fail_if_called
+        "rob2_pipeline.ingestion.assessment.extract_paper_evidence", fail_if_called
     )
 
-    result = pdf_ingest_node({"pdf_path": "trial.pdf"})
+    result = assessment.ingest_assessment_documents("trial.pdf").to_state_update()
 
     assert result["evidence"]["extraction_method"] == "docling_struct"
     assert result["docling_chunks"] == ["chunk"]
 
 
 def test_ingest_node_skips_remote_extraction_for_apparent_non_rct(monkeypatch):
+    import rob2_pipeline.ingestion.assessment as assessment
+
     known_text = (
         "Editorial commentary describing mechanism without any trial assignment."
     )
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest.extract_full_text", lambda _: known_text
+        "rob2_pipeline.ingestion.assessment.extract_full_text", lambda _: known_text
     )
 
     class MockConverter:
@@ -677,17 +753,19 @@ def test_ingest_node_skips_remote_extraction_for_apparent_non_rct(monkeypatch):
 
     converter = MockConverter()
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest._get_docling_converter", lambda use_ocr: converter
+        "rob2_pipeline.ingestion.assessment._get_docling_converter",
+        lambda use_ocr: converter,
     )
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest.build_document_repr",
+        "rob2_pipeline.ingestion.assessment.build_document_repr",
         lambda doc: pdf_ingestion.DocumentRepr(blocks=[], full_text=known_text),
     )
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest.allow_remote_evidence_extraction", lambda: True
+        "rob2_pipeline.ingestion.assessment.allow_remote_evidence_extraction",
+        lambda: True,
     )
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest._build_docling_chunks",
+        "rob2_pipeline.ingestion.assessment._build_docling_chunks",
         lambda conv_result: ["chunk"],
     )
 
@@ -697,10 +775,10 @@ def test_ingest_node_skips_remote_extraction_for_apparent_non_rct(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "rob2_pipeline.nodes.ingest.extract_paper_evidence", fail_if_called
+        "rob2_pipeline.ingestion.assessment.extract_paper_evidence", fail_if_called
     )
 
-    result = pdf_ingest_node({"pdf_path": "trial.pdf"})
+    result = assessment.ingest_assessment_documents("trial.pdf").to_state_update()
 
     assert result["evidence"]["extraction_method"] == "docling_struct"
     assert result["docling_chunks"] == ["chunk"]

@@ -1,3 +1,7 @@
+from rob2_pipeline.ingestion.assessment import (
+    AssessmentIngestionResult,
+    ingest_assessment_documents,
+)
 from rob2_pipeline.ingestion.docling_extract import (
     HuggingFaceTokenizer,
     HybridChunker,
@@ -55,6 +59,7 @@ __all__ = [
     "DocumentRepr",
     "EMBED_MAX_TOKENS",
     "EMBED_MODEL_ID",
+    "AssessmentIngestionResult",
     "HuggingFaceTokenizer",
     "HybridChunker",
     "MAX_SECTION_CHARS",
@@ -89,6 +94,7 @@ __all__ = [
     "extract_full_text",
     "extract_paper_evidence",
     "extract_structural_paper_evidence",
+    "ingest_assessment_documents",
     "paper_evidence_from_sections",
     "parse_sections",
 ]

@@ -71,6 +71,8 @@ the main article. Supplement ingestion is best-effort unless benchmark
 
 | File | Responsibility |
 | --- | --- |
+| `rob2_pipeline/nodes/ingest.py` | Graph adapter for ingestion plus RCT screening node |
+| `rob2_pipeline/ingestion/assessment.py` | Primary plus supplement Assessment ingestion behavior and fallback order |
 | `rob2_pipeline/ingestion/docling_extract.py` | Docling conversion, OCR retry, chunk creation |
 | `rob2_pipeline/ingestion/document_repr.py` | Prompt-facing document block representation |
 | `rob2_pipeline/ingestion/evidence.py` | Primary-paper structured evidence extraction |

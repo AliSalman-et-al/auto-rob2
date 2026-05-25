@@ -284,14 +284,14 @@ class _FakeConverter:
 def _patch_ingest_dependencies():
     return (
         patch(
-            "rob2_pipeline.nodes.ingest._get_docling_converter",
+            "rob2_pipeline.ingestion.assessment._get_docling_converter",
             return_value=_FakeConverter(),
         ),
         patch(
-            "rob2_pipeline.nodes.ingest.build_document_repr",
+            "rob2_pipeline.ingestion.assessment.build_document_repr",
             return_value=DocumentRepr(blocks=[], full_text=_pdf_text()),
         ),
-        patch("rob2_pipeline.nodes.ingest._build_docling_chunks", return_value=[]),
+        patch("rob2_pipeline.ingestion.assessment._build_docling_chunks", return_value=[]),
     )
 
 
@@ -356,9 +356,12 @@ def test_graph_happy_path_with_mocked_llm(tmp_path):
     provider = _FakeProvider()
     with (
         patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
-        patch("rob2_pipeline.pdf_ingestion.build_provider", return_value=provider),
+        patch("rob2_pipeline.ingestion.evidence.build_provider", return_value=provider),
         patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
-        patch("rob2_pipeline.nodes.ingest.extract_full_text", return_value=_pdf_text()),
+        patch(
+            "rob2_pipeline.ingestion.assessment.extract_full_text",
+            return_value=_pdf_text(),
+        ),
         _patch_ingest_dependencies()[0],
         _patch_ingest_dependencies()[1],
         _patch_ingest_dependencies()[2],
@@ -402,12 +405,15 @@ def test_graph_pfs_composite_endpoint_d4_some_concerns_d5_low(tmp_path):
     state["outcome"] = "Progression-Free Survival"
     with (
         patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
-        patch("rob2_pipeline.pdf_ingestion.build_provider", return_value=provider),
+        patch("rob2_pipeline.ingestion.evidence.build_provider", return_value=provider),
         patch(
             "rob2_pipeline.registration_api.fetch_registration",
             return_value=fake_reg_data,
         ),
-        patch("rob2_pipeline.nodes.ingest.extract_full_text", return_value=_pdf_text()),
+        patch(
+            "rob2_pipeline.ingestion.assessment.extract_full_text",
+            return_value=_pdf_text(),
+        ),
         _patch_ingest_dependencies()[0],
         _patch_ingest_dependencies()[1],
         _patch_ingest_dependencies()[2],
@@ -440,10 +446,13 @@ def test_graph_stops_for_non_rct(tmp_path):
     with (
         patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
         patch(
-            "rob2_pipeline.pdf_ingestion.build_provider", return_value=_FakeProvider()
+            "rob2_pipeline.ingestion.evidence.build_provider", return_value=_FakeProvider()
         ),
         patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
-        patch("rob2_pipeline.nodes.ingest.extract_full_text", return_value=_pdf_text()),
+        patch(
+            "rob2_pipeline.ingestion.assessment.extract_full_text",
+            return_value=_pdf_text(),
+        ),
         _patch_ingest_dependencies()[0],
         _patch_ingest_dependencies()[1],
         _patch_ingest_dependencies()[2],
@@ -470,9 +479,12 @@ def test_rct_screener_prompt_includes_randomization_context(tmp_path):
     provider = _CaptureProvider()
     with (
         patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
-        patch("rob2_pipeline.pdf_ingestion.build_provider", return_value=provider),
+        patch("rob2_pipeline.ingestion.evidence.build_provider", return_value=provider),
         patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
-        patch("rob2_pipeline.nodes.ingest.extract_full_text", return_value=_pdf_text()),
+        patch(
+            "rob2_pipeline.ingestion.assessment.extract_full_text",
+            return_value=_pdf_text(),
+        ),
         _patch_ingest_dependencies()[0],
         _patch_ingest_dependencies()[1],
         _patch_ingest_dependencies()[2],
@@ -491,9 +503,12 @@ def test_run_assessment_writes_outputs(tmp_path):
     provider = _FakeProvider()
     with (
         patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
-        patch("rob2_pipeline.pdf_ingestion.build_provider", return_value=provider),
+        patch("rob2_pipeline.ingestion.evidence.build_provider", return_value=provider),
         patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
-        patch("rob2_pipeline.nodes.ingest.extract_full_text", return_value=_pdf_text()),
+        patch(
+            "rob2_pipeline.ingestion.assessment.extract_full_text",
+            return_value=_pdf_text(),
+        ),
         _patch_ingest_dependencies()[0],
         _patch_ingest_dependencies()[1],
         _patch_ingest_dependencies()[2],
