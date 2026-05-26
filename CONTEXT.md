@@ -111,12 +111,55 @@ The prompt and D4-control category derived from outcome properties. Current
 values are `patient-reported`, `clinician-graded`, `biomarker`, `vital-status`,
 and `clinician-composite`.
 
+### Open-Label PFS Concern
+
+A Domain 4 concern for progression-free-survival endpoints in open-label trials
+when progression includes clinician or investigator assessment and blinded
+independent adjudication is not shown. In the benchmark references, this maps
+to Some concerns rather than Low or High.
+
+### Outcome Scope
+
+The assessed endpoint identity that constrains outcome-property resolution and
+domain evidence selection. Benchmark outcome codes such as `OS`, `PFS`, and
+`AE` are part of this scope and should prevent unrelated paper-wide mentions
+from changing the assessed endpoint's properties.
+
+### Source-Prioritized Outcome Resolution
+
+Outcome-property resolution should use sources in endpoint-specific priority
+order: requested outcome and benchmark code, primary paper endpoint definition,
+protocol or SAP endpoint definition, then registry endpoint match. Registry
+evidence supports resolution but does not override a clearer primary paper,
+protocol, or SAP definition.
+
 ### Effect Of Interest
 
 The Domain 2 estimand mode. `ITT` means effect of assignment to intervention.
 `per-protocol` means effect of adhering to intervention. Safety endpoints may
 auto-switch to per-protocol when the user has not explicitly overridden the
 environment default.
+
+### Benchmark AE Estimand
+
+For benchmark reference agreement, adverse-event outcomes use the effect of
+assignment to intervention unless an assessment explicitly requests an adhering
+or per-protocol effect. Safety endpoint identity alone should not silently
+change the Domain 2 estimand.
+
+### Evidence-Derived Deviation Concern
+
+A Domain 2 concern must be derived from scoped trial evidence about awareness,
+protocol deviations, implementation, adherence, co-interventions, or analysis.
+Benchmark tuning should not use trial-name priors such as marking a named study
+as Some concerns without evidence.
+
+### Time-To-Event Missingness Evidence
+
+Domain 3 evidence for time-to-event outcomes that directly addresses loss to
+follow-up, missing outcome data, or completeness of event ascertainment. ITT
+analysis language and censoring rules alone do not establish that missing
+outcome data were negligible.
 
 ### TrialFacts
 
@@ -193,6 +236,12 @@ LLMs do not directly assign final domain labels.
 The deterministic overall RoB 2 label derived from D1-D5 domain judgments.
 The default policy follows official RoB 2-style escalation. The benchmark
 reference policy can be more permissive for benchmark comparison.
+
+### Reference Agreement
+
+The benchmark comparison between pipeline labels and the human reference CSVs.
+It is not the same as clinical correctness or official RoB 2 correctness when a
+reference label deliberately follows a more permissive benchmark convention.
 
 ### Verification Flag
 
