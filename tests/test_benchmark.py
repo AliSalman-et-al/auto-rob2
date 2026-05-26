@@ -65,6 +65,65 @@ def test_compare_judgments_case_and_compact_normalization():
     }
 
 
+def test_run_benchmark_reuses_trial_artifacts_across_outcomes(tmp_path, monkeypatch):
+    pdf_dir = tmp_path / "benchmark"
+    pdf_dir.mkdir()
+    (pdf_dir / "TITAN.pdf").write_bytes(b"pdf")
+    reference_csv = tmp_path / "ref.csv"
+    reference_csv.write_text(
+        "Trial,D1,D2,D3,D4,D5,Overall Risk\nTITAN,Low,Low,Low,Low,Low,Low\n",
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_run_assessment(**kwargs):
+        calls.append(kwargs)
+        assessment_dir = Path(kwargs["output_dir"])
+        assessment_dir.mkdir(parents=True)
+        (assessment_dir / "TITAN_rob2_data.json").write_text(
+            json.dumps(
+                {
+                    "domain_judgments": {
+                        "D1": "Low",
+                        "D2": "Low",
+                        "D3": "Low",
+                        "D4": "Low",
+                        "D5": "Low",
+                    },
+                    "overall_judgment": "Low",
+                    "source_documents": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return {
+            "full_text": "Trial text",
+            "evidence": {"warnings": []},
+            "docling_doc": object(),
+            "docling_chunks": [],
+            "source_documents": [],
+            "supplement_warnings": [],
+            "trial_retrieval_indexes": {"index": object(), "filtered": {}},
+        }
+
+    monkeypatch.setattr("rob2_pipeline.benchmark.run_assessment", fake_run_assessment)
+
+    run_benchmark(
+        pdf_dir=pdf_dir,
+        reference_csvs={"OS": reference_csv, "PFS": reference_csv},
+        outcome_map=[
+            {"trial": "TITAN", "outcome_code": "OS"},
+            {"trial": "TITAN", "outcome_code": "PFS"},
+        ],
+        output_dir=tmp_path / "out",
+    )
+
+    assert calls[0]["precomputed_ingestion"] is None
+    assert calls[0]["trial_retrieval_indexes"] is None
+    assert calls[1]["precomputed_ingestion"] is not None
+    assert calls[1]["trial_retrieval_indexes"]
+
+
 def test_summarize_benchmark_agreement_and_confusion_dicts():
     results = [
         {

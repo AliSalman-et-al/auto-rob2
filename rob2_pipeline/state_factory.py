@@ -27,6 +27,8 @@ def create_initial_state(
         "evidence": empty_paper_evidence(),
         "docling_doc": None,
         "docling_chunks": [],
+        "precomputed_ingestion": kwargs.get("precomputed_ingestion"),
+        "trial_retrieval_indexes": kwargs.get("trial_retrieval_indexes") or {},
         "supplementary_paths": list(kwargs.get("supplementary_paths") or []),
         "source_documents": [],
         "supplement_warnings": [],

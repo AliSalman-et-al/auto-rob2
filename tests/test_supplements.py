@@ -255,6 +255,44 @@ def test_supplement_max_scan_pages_defaults_to_large_defensive_limit(monkeypatch
     assert supplements._supplement_max_scan_pages() == DEFAULT_SUPPLEMENT_MAX_SCAN_PAGES
 
 
+def test_supplement_windows_are_bounded_by_page_count(monkeypatch):
+    import rob2_pipeline.ingestion.supplements as supplements
+
+    monkeypatch.setenv("ROB2_SUPPLEMENT_PAGE_WINDOW", "20")
+    monkeypatch.setenv("ROB2_SUPPLEMENT_MAX_SCAN_PAGES", "300")
+    monkeypatch.setattr(supplements, "_pdf_page_count", lambda path: 45)
+    monkeypatch.setattr(supplements, "_evidence_pages", lambda path, max_pages: [])
+
+    assert supplements._effective_supplement_max_pages("protocol.pdf") == 45
+    assert supplements._ordered_supplement_page_ranges("protocol.pdf", 20, 45) == [
+        (1, 20),
+        (21, 40),
+        (41, 45),
+    ]
+
+
+def test_supplement_windows_prioritize_evidence_pages(monkeypatch):
+    import rob2_pipeline.ingestion.supplements as supplements
+
+    monkeypatch.setattr(supplements, "_evidence_pages", lambda path, max_pages: [75])
+
+    assert supplements._ordered_supplement_page_ranges("protocol.pdf", 20, 100) == [
+        (1, 20),
+        (21, 40),
+        (61, 80),
+        (41, 60),
+        (81, 100),
+    ]
+
+
+def test_input_document_invalid_is_exhausted_after_successful_windows():
+    import rob2_pipeline.ingestion.supplements as supplements
+
+    error = RuntimeError("Input document appendix.pdf is not valid.")
+
+    assert supplements._is_page_range_exhausted(error) is True
+
+
 def test_skipped_source_documents_records_requested_supplements():
     documents, warnings = skipped_source_documents(
         ["inputs/benchmark/supplement/TITAN/protocol.pdf"],

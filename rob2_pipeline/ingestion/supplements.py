@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 from langchain_core.documents import Document
@@ -20,7 +21,27 @@ from rob2_pipeline.types import SourceDocument
 
 
 DEFAULT_SUPPLEMENT_PAGE_WINDOW = 20
-DEFAULT_SUPPLEMENT_MAX_SCAN_PAGES = 1000
+DEFAULT_SUPPLEMENT_MAX_SCAN_PAGES = 300
+SUPPLEMENT_EVIDENCE_TERMS = (
+    "random",
+    "allocation",
+    "conceal",
+    "mask",
+    "blind",
+    "protocol",
+    "deviation",
+    "adherence",
+    "analysis",
+    "intention",
+    "per-protocol",
+    "outcome",
+    "endpoint",
+    "missing",
+    "censor",
+    "withdraw",
+    "registry",
+    "registered",
+)
 _SUPPLEMENT_CONVERTER = None
 
 
@@ -83,11 +104,9 @@ def _convert_supplement_in_windows(
     all_chunks: list[Document] = []
     warnings: list[str] = []
     window_size = _supplement_page_window()
-    max_scan_pages = _supplement_max_scan_pages()
-    start = 1
+    max_scan_pages = _effective_supplement_max_pages(path)
 
-    while start <= max_scan_pages:
-        end = min(start + window_size - 1, max_scan_pages)
+    for start, end in _ordered_supplement_page_ranges(path, window_size, max_scan_pages):
         try:
             conv_result = converter.convert(str(path), page_range=(start, end))
             window_chunks = apply_source_metadata(
@@ -95,15 +114,15 @@ def _convert_supplement_in_windows(
             )
         except Exception as error:  # noqa: BLE001
             if _is_page_range_exhausted(error):
-                break
+                if all_chunks:
+                    break
+                raise
             warnings.append(
                 f"Supplement page window skipped: {path} pages {start}-{end}: {error}"
             )
-            start = end + 1
             continue
 
         all_chunks.extend(window_chunks)
-        start = end + 1
 
     return all_chunks, warnings
 
@@ -137,6 +156,87 @@ def _supplement_max_scan_pages() -> int:
     return max_pages
 
 
+def _effective_supplement_max_pages(path: str) -> int:
+    configured = _supplement_max_scan_pages()
+    page_count = _pdf_page_count(path)
+    if page_count is None:
+        return configured
+    return max(0, min(configured, page_count))
+
+
+def _ordered_supplement_page_ranges(
+    path: str, window_size: int, max_pages: int
+) -> list[tuple[int, int]]:
+    ranges = [
+        (start, min(start + window_size - 1, max_pages))
+        for start in range(1, max_pages + 1, window_size)
+    ]
+    if not ranges:
+        return []
+    evidence_pages = _evidence_pages(path, max_pages)
+    if not evidence_pages:
+        return ranges
+    evidence_ranges = []
+    for page in evidence_pages:
+        index = (page - 1) // window_size
+        if 0 <= index < len(ranges):
+            evidence_ranges.append(ranges[index])
+    early_count = min(2, len(ranges))
+    prioritized = [*ranges[:early_count], *evidence_ranges]
+    ordered = []
+    seen = set()
+    for item in [*prioritized, *ranges]:
+        if item not in seen:
+            ordered.append(item)
+            seen.add(item)
+    return ordered
+
+
+def _pdf_page_count(path: str) -> int | None:
+    try:
+        import pypdfium2 as pdfium
+
+        pdf = pdfium.PdfDocument(path)
+        try:
+            return len(pdf)
+        finally:
+            close = getattr(pdf, "close", None)
+            if close is not None:
+                close()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _evidence_pages(path: str, max_pages: int) -> list[int]:
+    pattern = re.compile(
+        "|".join(re.escape(term) for term in SUPPLEMENT_EVIDENCE_TERMS), re.I
+    )
+    pages = []
+    try:
+        import pypdfium2 as pdfium
+
+        pdf = pdfium.PdfDocument(path)
+        try:
+            for index in range(min(len(pdf), max_pages)):
+                page = pdf[index]
+                try:
+                    textpage = page.get_textpage()
+                    text = textpage.get_text_range() or ""
+                    if pattern.search(text):
+                        pages.append(index + 1)
+                finally:
+                    close_page = getattr(page, "close", None)
+                    if close_page is not None:
+                        close_page()
+        finally:
+            close = getattr(pdf, "close", None)
+            if close is not None:
+                close()
+    except Exception:  # noqa: BLE001
+        return []
+    return pages
+
+
 def _is_page_range_exhausted(error: Exception) -> bool:
     message = str(error).casefold()
     processing_error_markers = (
@@ -150,6 +250,8 @@ def _is_page_range_exhausted(error: Exception) -> bool:
     if any(marker in message for marker in processing_error_markers):
         return False
     exhausted_markers = (
+        "input document",
+        "is not valid",
         "page range outside",
         "page range out of range",
         "outside document",

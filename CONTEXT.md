@@ -69,6 +69,15 @@ sections for abstract, methods, results, D1 randomization, D2 blinding, D3
 missing data, D4 outcome measurement, D5 registration, CONSORT flow, and
 baseline table, plus extraction method and warnings.
 
+### Trial Ingestion Artifact
+
+The reusable trial-level ingestion result for a primary paper and its selected
+supplements. It can be shared by multiple outcome-specific Assessments for the
+same trial because primary-paper text, primary-paper evidence, Docling chunks,
+source-document inventory, and supplement warnings do not depend on the assessed
+outcome. If primary-paper evidence extraction becomes outcome-specific, that
+evidence must move out of the trial-level artifact.
+
 ### DocumentRepr
 
 The prompt-facing representation of a Docling document. It groups text and
@@ -127,6 +136,14 @@ text for prompts, currently keyed by `d1`, `d2_blinding`, `d2_deviations`,
 The JSON-facing retrieval provenance emitted from `rag_chunk_metadata`. Sources
 include retrieved text, section, page numbers, score, document id/name/role,
 source kind, and source path.
+
+### Trial Retrieval Index
+
+The reusable trial-level vector index built from Docling chunks for a primary
+paper and its selected supplements. The index can be shared across
+outcome-specific Assessments for the same trial, but retrieved contexts,
+evidence packets, signaling-question prompts, and judgments remain
+outcome-specific.
 
 ### EvidenceContract
 

@@ -7,6 +7,7 @@ from pathlib import Path
 from statistics import mean, median
 from typing import Any
 
+from rob2_pipeline.ingestion.assessment import AssessmentIngestionResult
 from rob2_pipeline.pipeline import run_assessment
 
 
@@ -42,6 +43,29 @@ def _normalize_judgment(value: Any) -> str:
         "high": "High",
     }
     return mapping.get(compact, raw)
+
+
+def _file_cache_identity(path: Path) -> tuple[str, int, int]:
+    stat = path.stat()
+    return (str(path.resolve()), int(stat.st_mtime_ns), int(stat.st_size))
+
+
+def _trial_artifact_cache_key(pdf_path: Path, supplement_paths: list[Path]) -> tuple:
+    return (
+        _file_cache_identity(pdf_path),
+        tuple(_file_cache_identity(path) for path in supplement_paths),
+    )
+
+
+def _state_ingestion_artifact(state: dict) -> AssessmentIngestionResult:
+    return AssessmentIngestionResult(
+        full_text=state.get("full_text", ""),
+        evidence=state.get("evidence"),
+        docling_doc=state.get("docling_doc"),
+        docling_chunks=list(state.get("docling_chunks") or []),
+        source_documents=list(state.get("source_documents") or []),
+        supplement_warnings=list(state.get("supplement_warnings") or []),
+    )
 
 
 def _find_pdf_for_trial(pdf_dir: Path, trial_name: str) -> Path | None:
@@ -294,6 +318,7 @@ def run_benchmark(
     pdf_dir_path = Path(pdf_dir)
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
+    ingestion_cache: dict[tuple, dict[str, Any]] = {}
 
     normalized_refs: dict[str, dict[str, dict]] = {}
     for outcome_code, csv_path in reference_csvs.items():
@@ -384,16 +409,25 @@ def run_benchmark(
             continue
 
         assessment_output_dir = output_dir_path / f"{pdf_path.stem}_{code.lower()}"
+        cache_key = _trial_artifact_cache_key(pdf_path, supplement_paths)
+        cached_artifacts = ingestion_cache.get(cache_key, {})
         start_wall = time.perf_counter()
         run_error: Exception | None = None
         try:
-            run_assessment(
+            state = run_assessment(
                 pdf_path=str(pdf_path),
                 outcome=outcome_label,
                 output_dir=str(assessment_output_dir),
                 supplementary_paths=[str(path) for path in supplement_paths],
+                precomputed_ingestion=cached_artifacts.get("ingestion"),
+                trial_retrieval_indexes=cached_artifacts.get("retrieval_indexes"),
                 **run_kwargs,
             )
+            if state is not None and cache_key not in ingestion_cache:
+                ingestion_cache[cache_key] = {
+                    "ingestion": _state_ingestion_artifact(state),
+                    "retrieval_indexes": state.get("trial_retrieval_indexes") or {},
+                }
         except Exception as exc:  # noqa: BLE001
             run_error = exc
             trial_result["error"] = str(exc)

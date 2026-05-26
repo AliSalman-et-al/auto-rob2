@@ -10,6 +10,7 @@ from rob2_pipeline.ingestion.docling_extract import (
     _build_docling_chunks,
     _configure_docling_runtime,
     _get_docling_converter,
+    _normalize_extracted_text,
     extract_full_text,
 )
 from rob2_pipeline.ingestion.document_repr import build_document_repr
@@ -20,6 +21,7 @@ from rob2_pipeline.ingestion.evidence import (
     parse_sections,
 )
 from rob2_pipeline.ingestion.settings import (
+    MIN_EXTRACTED_CHARS,
     allow_remote_evidence_extraction,
     appears_rct_candidate,
 )
@@ -45,7 +47,7 @@ class AssessmentIngestionResult:
     supplement_warnings: list[str]
     llm_call_log: list[LLMCallLogEntry] = field(default_factory=list)
 
-    def to_state_update(self) -> dict:
+    def to_state_update(self, include_llm_call_log: bool = True) -> dict:
         update = {
             "full_text": self.full_text,
             "evidence": self.evidence,
@@ -54,7 +56,7 @@ class AssessmentIngestionResult:
             "source_documents": self.source_documents,
             "supplement_warnings": self.supplement_warnings,
         }
-        if self.llm_call_log:
+        if include_llm_call_log and self.llm_call_log:
             update["llm_call_log"] = self.llm_call_log
         return update
 
@@ -64,13 +66,10 @@ def ingest_assessment_documents(
 ) -> AssessmentIngestionResult:
     # Full-text extraction is strict. If it fails, the Assessment cannot proceed.
     supplementary_paths = list(supplementary_paths or [])
-    full_text = extract_full_text(pdf_path)
     primary_source = primary_source_document(Path(pdf_path))
 
     try:
-        _configure_docling_runtime()
-        converter = _get_docling_converter(use_ocr=False)
-        conv_result = converter.convert(pdf_path)
+        full_text, conv_result, doc_repr = _convert_primary_pdf(pdf_path)
         docling_chunks = apply_source_metadata(
             _build_docling_chunks(conv_result), primary_source
         )
@@ -85,7 +84,6 @@ def ingest_assessment_documents(
         docling_chunks = [*docling_chunks, *supplement_chunks]
         source_documents = [primary_source, *supplement_documents]
 
-        doc_repr = build_document_repr(conv_result.document)
         if not doc_repr.full_text:
             doc_repr.full_text = full_text
         evidence = extract_structural_paper_evidence(doc_repr)
@@ -139,6 +137,7 @@ def ingest_assessment_documents(
                 supplement_warnings=supplement_warnings,
             )
     except Exception as error:
+        full_text = extract_full_text(pdf_path)
         sections = parse_sections(full_text)
         evidence = paper_evidence_from_sections(
             sections,
@@ -160,3 +159,22 @@ def ingest_assessment_documents(
             source_documents=[primary_source, *supplement_documents],
             supplement_warnings=supplement_warnings,
         )
+
+
+def _convert_primary_pdf(pdf_path: str) -> tuple[str, Any, Any]:
+    errors = []
+    for use_ocr in (False, True):
+        try:
+            _configure_docling_runtime()
+            converter = _get_docling_converter(use_ocr=use_ocr)
+            conv_result = converter.convert(pdf_path)
+            doc_repr = build_document_repr(conv_result.document)
+            full_text = _normalize_extracted_text(doc_repr.full_text)
+            if not full_text:
+                full_text = _normalize_extracted_text(doc_repr.to_prompt_repr())
+            if len(full_text.strip()) < MIN_EXTRACTED_CHARS:
+                full_text = _normalize_extracted_text(extract_full_text(pdf_path))
+            return full_text, conv_result, doc_repr
+        except Exception as error:  # noqa: BLE001
+            errors.append(f"OCR={use_ocr}: {error}")
+    raise RuntimeError("; ".join(errors))

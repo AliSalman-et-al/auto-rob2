@@ -32,6 +32,8 @@ class RoB2State(TypedDict, total=False):
     evidence: Annotated[PaperEvidence, take_latest]
     docling_doc: Annotated[Any, take_latest]
     docling_chunks: Annotated[list, take_latest]
+    precomputed_ingestion: Annotated[Any, take_latest]
+    trial_retrieval_indexes: Annotated[dict, take_latest]
     supplementary_paths: Annotated[list[str], take_latest]
     source_documents: Annotated[list[SourceDocument], take_latest]
     supplement_warnings: Annotated[list[str], take_latest]

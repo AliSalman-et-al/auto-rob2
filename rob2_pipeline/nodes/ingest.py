@@ -7,6 +7,9 @@ from rob2_pipeline.xml_parser import extract_tag
 
 
 def pdf_ingest_node(state: RoB2State) -> RoB2State:
+    precomputed = state.get("precomputed_ingestion")
+    if precomputed is not None:
+        return precomputed.to_state_update(include_llm_call_log=False)
     result = ingest_assessment_documents(
         state["pdf_path"], list(state.get("supplementary_paths") or [])
     )

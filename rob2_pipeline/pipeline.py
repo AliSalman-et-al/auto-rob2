@@ -62,6 +62,8 @@ def run_assessment(
     effect_of_interest: str = DEFAULT_EFFECT_OF_INTEREST,
     output_dir: str = "outputs/",
     supplementary_paths: list[str] | None = None,
+    precomputed_ingestion=None,
+    trial_retrieval_indexes: dict | None = None,
 ) -> RoB2State:
     """
     Main entry point. Returns the completed state dict.
@@ -82,6 +84,8 @@ def run_assessment(
                 outcome,
                 effect_of_interest,
                 supplementary_paths=supplementary_paths or [],
+                precomputed_ingestion=precomputed_ingestion,
+                trial_retrieval_indexes=trial_retrieval_indexes or {},
             )
         )
 

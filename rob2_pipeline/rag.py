@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -75,6 +77,15 @@ def build_filtered_index(chunks: list[Document], keywords: list[str]) -> FAISS |
     if len(filtered) < 3:
         return None
     return FAISS.from_documents(filtered, _get_embeddings())
+
+
+def build_trial_retrieval_indexes(chunks: list[Document]) -> dict[str, Any]:
+    index = build_index(chunks)
+    filtered = {
+        domain: build_filtered_index(chunks, keywords)
+        for domain, keywords in DOMAIN_SECTION_FILTERS.items()
+    }
+    return {"index": index, "filtered": filtered}
 
 
 def retrieve_adaptive(

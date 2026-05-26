@@ -83,6 +83,7 @@ def rag_retrieval_node(state: RoB2State) -> dict:
     chunks = state.get("docling_chunks") or []
     rag_chunk_metadata = _empty_metadata()
     retrieval_grades = {}
+    trial_indexes = state.get("trial_retrieval_indexes") or {}
 
     if not chunks:
         rag_contexts = _sections_fallback(state["evidence"])
@@ -92,12 +93,23 @@ def rag_retrieval_node(state: RoB2State) -> dict:
         }
     else:
         try:
-            index = build_index(chunks)
+            if not trial_indexes:
+                trial_indexes = {
+                    "index": build_index(chunks),
+                    "filtered": {
+                        domain: build_filtered_index(chunks, keywords)
+                        for domain, keywords in DOMAIN_SECTION_FILTERS.items()
+                    },
+                }
+            index = trial_indexes.get("index") or build_index(chunks)
+            filtered_indexes = trial_indexes.get("filtered") or {}
             domain_contexts: dict[str, str] = {}
             for domain in _DOMAINS:
-                filtered_index = build_filtered_index(
-                    chunks, DOMAIN_SECTION_FILTERS.get(domain, [])
-                )
+                filtered_index = filtered_indexes.get(domain)
+                if domain not in filtered_indexes:
+                    filtered_index = build_filtered_index(
+                        chunks, DOMAIN_SECTION_FILTERS.get(domain, [])
+                    )
                 text, metas = retrieve_adaptive(
                     index, filtered_index, domain_queries(domain)
                 )
@@ -126,4 +138,5 @@ def rag_retrieval_node(state: RoB2State) -> dict:
         "rag_contexts": rag_contexts,
         "rag_chunk_metadata": rag_chunk_metadata,
         "retrieval_grades": retrieval_grades,
+        "trial_retrieval_indexes": trial_indexes if chunks else {},
     }
