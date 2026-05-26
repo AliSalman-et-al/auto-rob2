@@ -23,11 +23,13 @@ from rob2_pipeline.ingestion.settings import (
     allow_remote_evidence_extraction,
     appears_rct_candidate,
 )
-from rob2_pipeline.ingestion.supplements import (
+from rob2_pipeline.ingestion.source_catalog import (
     apply_source_metadata,
-    ingest_supplements,
     primary_source_document,
     skipped_source_documents,
+)
+from rob2_pipeline.ingestion.supplements import (
+    ingest_supplements,
 )
 from rob2_pipeline.models import PaperEvidence
 from rob2_pipeline.types import LLMCallLogEntry, SourceDocument

@@ -5,6 +5,17 @@ from pathlib import Path
 
 from langchain_core.documents import Document
 
+from rob2_pipeline.ingestion.source_catalog import (
+    apply_source_metadata,
+    classify_document_role,
+    mark_failed,
+    mark_missing,
+    mark_parsed,
+    mark_partial,
+    primary_source_document as _primary_source_document,
+    skipped_source_documents as _skipped_source_documents,
+    supplement_source_document,
+)
 from rob2_pipeline.types import SourceDocument
 
 
@@ -13,89 +24,15 @@ DEFAULT_SUPPLEMENT_MAX_SCAN_PAGES = 1000
 _SUPPLEMENT_CONVERTER = None
 
 
-def classify_supplement(path: Path) -> str:
-    name = path.name.casefold()
-    compact = name.replace("_", "-")
-    if (
-        "statistical-analysis" in compact
-        or "analysis-plan" in compact
-        or "sap" in compact
-    ):
-        return "sap"
-    if "protocol" in compact:
-        return "protocol"
-    if (
-        "data-sharing" in compact
-        or compact.startswith("ds-")
-        or compact.startswith("ds.")
-        or compact.startswith("dss-")
-        or compact.startswith("dss.")
-    ):
-        return "data_sharing"
-    if "disclosure" in compact or "coi" in compact or "conflict" in compact:
-        return "disclosure"
-    if "appendix" in compact or "supplement" in compact or compact.startswith("mmc"):
-        return "appendix"
-    return "unknown_supplement"
+classify_supplement = classify_document_role
+primary_source_document = _primary_source_document
+skipped_source_documents = _skipped_source_documents
 
 
 def build_source_document(path: Path, role: str, index: int) -> SourceDocument:
-    return SourceDocument(
-        document_id=f"supplement:{index:03d}",
-        document_name=path.name,
-        document_role=role,
-        source_kind="rag_chunk",
-        path=str(path),
-        is_primary=False,
-        status="pending",
-    )
-
-
-def skipped_source_documents(
-    paths: list[str], reason: str
-) -> tuple[list[SourceDocument], list[str]]:
-    documents: list[SourceDocument] = []
-    warnings: list[str] = []
-    for index, raw_path in enumerate(paths, start=1):
-        path = Path(raw_path)
-        source = build_source_document(path, classify_supplement(path), index)
-        source["status"] = "failed"
-        source["error"] = f"Supplement not ingested: {path}: {reason}"
-        documents.append(source)
-        warnings.append(source["error"])
-    return documents, warnings
-
-
-def primary_source_document(path: Path) -> SourceDocument:
-    return SourceDocument(
-        document_id="primary",
-        document_name=path.name,
-        document_role="primary",
-        source_kind="rag_chunk",
-        path=str(path),
-        is_primary=True,
-        status="parsed",
-    )
-
-
-def apply_source_metadata(chunks: list, source: SourceDocument) -> list:
-    enriched = []
-    for chunk in chunks:
-        if not isinstance(chunk, Document):
-            enriched.append(chunk)
-            continue
-        metadata = dict(chunk.metadata)
-        metadata.update(
-            {
-                "document_id": source.get("document_id", ""),
-                "document_name": source.get("document_name", ""),
-                "document_role": source.get("document_role", ""),
-                "source_kind": source.get("source_kind", "rag_chunk"),
-                "source_path": source.get("path", ""),
-            }
-        )
-        enriched.append(Document(page_content=chunk.page_content, metadata=metadata))
-    return enriched
+    source = supplement_source_document(path, index)
+    source["document_role"] = role
+    return source
 
 
 def ingest_supplements(
@@ -113,11 +50,9 @@ def ingest_supplements(
 
     for index, raw_path in enumerate(paths, start=1):
         path = Path(raw_path)
-        role = classify_supplement(path)
-        source = build_source_document(path, role, index)
+        source = supplement_source_document(path, index)
         if not path.exists():
-            source["status"] = "missing"
-            source["error"] = f"Supplement not found: {path}"
+            source = mark_missing(source, path)
             documents.append(source)
             warnings.append(source["error"])
             continue
@@ -127,14 +62,14 @@ def ingest_supplements(
             source_chunks, window_warnings = _convert_supplement_in_windows(
                 converter, str(path), source
             )
-            source["status"] = "partial" if window_warnings else "parsed"
             if window_warnings:
-                source["error"] = "; ".join(window_warnings)
+                source = mark_partial(source, window_warnings)
+            else:
+                source = mark_parsed(source)
             chunks.extend(source_chunks)
             warnings.extend(window_warnings)
         except Exception as error:  # noqa: BLE001
-            source["status"] = "failed"
-            source["error"] = f"Supplement parse failed: {path}: {error}"
+            source = mark_failed(source, f"Supplement parse failed: {path}: {error}")
             warnings.append(source["error"])
         documents.append(source)
     return chunks, documents, warnings
