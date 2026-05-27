@@ -6,6 +6,7 @@ from rob2_pipeline.types import (
     D1RandomizationIntegrityEvidence,
     EvidenceFact,
     EvidencePacket,
+    EvidenceSupportStatus,
     EvidenceValidationFlag,
     D5SelectionEvidence,
     LLMCallLogEntry,
@@ -93,6 +94,7 @@ class RoB2State(TypedDict, total=False):
     high_uncertainty_sqs: Annotated[list[str], take_latest]
     human_review_priority: Annotated[str, take_latest]
     evidence_validation_flags: Annotated[list[EvidenceValidationFlag], take_latest]
+    evidence_support_statuses: Annotated[list[EvidenceSupportStatus], take_latest]
     verifier_trace: Annotated[list[VerifierTraceEntry], take_latest]
     overall_policy: Annotated[str, take_latest]
 

@@ -5,6 +5,7 @@ from rob2_pipeline.state import RoB2State
 
 
 _BYPASS_QUOTES = {"", "not applicable", "no relevant text found", "not reported"}
+_NA_QUOTES = {"not applicable"}
 
 
 def _normalize_text(text: str) -> str:
@@ -31,18 +32,89 @@ def _source_text(state: RoB2State) -> str:
 
 
 def quote_is_supported(quote: str, source_text: str) -> bool:
-    normalized_quote = _normalize_text(quote)
-    if normalized_quote in _BYPASS_QUOTES:
-        return True
-    if normalized_quote in source_text:
-        return True
-    words = [
-        word for word in re.findall(r"[a-z0-9]+", normalized_quote) if len(word) > 3
-    ]
+    return classify_evidence_support(quote, source_text)["status"] in {
+        "supported",
+        "paraphrase-supported",
+        "not-applicable-by-control",
+    }
+
+
+def classify_evidence_support(
+    claim: str, source_text: str, provenance_text: str | None = None
+) -> dict:
+    normalized_claim = _normalize_text(claim)
+    if normalized_claim in _NA_QUOTES:
+        return {
+            "status": "not-applicable-by-control",
+            "provenance": {"source_scope": "control_flow"},
+        }
+    if normalized_claim in _BYPASS_QUOTES:
+        return {
+            "status": "supported",
+            "provenance": {"source_scope": "assessment_context"},
+        }
+
+    normalized_source = _normalize_text(source_text)
+    provenance_source = (
+        _normalize_text(provenance_text) if provenance_text is not None else None
+    )
+    global_match = _support_match(normalized_claim, normalized_source)
+    provenance_match = (
+        _support_match(normalized_claim, provenance_source)
+        if provenance_source is not None
+        else None
+    )
+    if provenance_source is not None and not provenance_match and global_match:
+        return {
+            "status": "source-mismatched",
+            "provenance": {
+                "source_scope": "declared_provenance",
+                "matched_elsewhere": True,
+            },
+        }
+    if provenance_match or global_match:
+        match = provenance_match or global_match or {}
+        return {
+            "status": match["status"],
+            "provenance": {
+                "source_scope": "declared_provenance"
+                if provenance_match
+                else "assessment_context"
+            },
+        }
+    return {
+        "status": "unsupported",
+        "provenance": {
+            "source_scope": "declared_provenance"
+            if provenance_text is not None
+            else "assessment_context"
+        },
+    }
+
+
+def _support_match(normalized_claim: str, normalized_source: str | None) -> dict | None:
+    if not normalized_source:
+        return None
+    if normalized_claim in normalized_source:
+        return {"status": "supported"}
+    words = [_word_key(word) for word in re.findall(r"[a-z0-9]+", normalized_claim)]
+    words = [word for word in words if len(word) > 3]
     if len(words) < 4:
-        return False
-    hits = sum(1 for word in words if word in source_text)
-    return hits / len(words) >= 0.8
+        return None
+    source_words = {
+        _word_key(word) for word in re.findall(r"[a-z0-9]+", normalized_source)
+    }
+    hits = sum(1 for word in words if word in source_words)
+    if hits >= 3 and hits / len(words) >= 0.5:
+        return {"status": "paraphrase-supported"}
+    return None
+
+
+def _word_key(word: str) -> str:
+    for suffix in ("ization", "isation", "ized", "ised", "ally", "ly", "ed", "ing"):
+        if len(word) > len(suffix) + 3 and word.endswith(suffix):
+            return word[: -len(suffix)]
+    return word
 
 
 def _fragile_sq_issue(sq_id: str, answer: dict) -> str | None:
@@ -68,12 +140,15 @@ def verify_sq_evidence(state: RoB2State) -> list[dict]:
     flags = []
     for sq_id, answer in sorted((state.get("sq_answers") or {}).items()):
         quote = answer.get("quote", "")
-        if not quote_is_supported(quote, source):
+        support = classify_evidence_support(quote, source)
+        if support["status"] in {"unsupported", "source-mismatched"}:
             flags.append(
                 {
                     "sq_id": sq_id,
                     "issue": "quote_not_found_in_source_context",
                     "quote": quote,
+                    "support_status": support["status"],
+                    "provenance": support["provenance"],
                 }
             )
         fragile_issue = _fragile_sq_issue(sq_id, answer)
@@ -81,6 +156,42 @@ def verify_sq_evidence(state: RoB2State) -> list[dict]:
             flags.append({"sq_id": sq_id, "issue": fragile_issue, "quote": quote})
     flags.extend(verify_packet_evidence(state))
     return flags
+
+
+def collect_evidence_support_statuses(state: RoB2State) -> list[dict]:
+    source = _source_text(state)
+    statuses = []
+    for sq_id, answer in sorted((state.get("sq_answers") or {}).items()):
+        quote = answer.get("quote", "")
+        support = classify_evidence_support(quote, source)
+        statuses.append(
+            {
+                "sq_id": sq_id,
+                "claim_type": "sq_quote",
+                "quote": quote,
+                "support_status": support["status"],
+                "provenance": support["provenance"],
+            }
+        )
+    for sq_id, facts in sorted((state.get("evidence_facts") or {}).items()):
+        for fact in facts:
+            statuses.append(
+                {
+                    "sq_id": sq_id,
+                    "claim_type": "packet_fact",
+                    "quote": fact.get("quote", ""),
+                    "support_status": fact.get("support_status", "unsupported"),
+                    "provenance": {
+                        "source_scope": "packet_source",
+                        "document_id": fact.get("document_id", ""),
+                        "document_name": fact.get("document_name", ""),
+                        "document_role": fact.get("document_role", ""),
+                        "source_kind": fact.get("source_kind", ""),
+                        "source_path": fact.get("source_path", ""),
+                    },
+                }
+            )
+    return statuses
 
 
 def verify_packet_evidence(state: RoB2State) -> list[dict]:
@@ -131,6 +242,7 @@ def _verification_actions_from_flags(flags: list[dict]) -> list[dict]:
 
 def quote_verifier_node(state: RoB2State) -> RoB2State:
     flags = verify_sq_evidence(state)
+    support_statuses = collect_evidence_support_statuses(state)
     trace = list(state.get("verifier_trace", []))
     actions = _verification_actions_from_flags(flags)
     if flags:
@@ -143,6 +255,7 @@ def quote_verifier_node(state: RoB2State) -> RoB2State:
         )
     return {
         "evidence_validation_flags": flags,
+        "evidence_support_statuses": support_statuses,
         "verifier_trace": trace,
         "verification_actions": actions,
     }
