@@ -167,6 +167,21 @@ class D5SelectionEvidence(TypedDict, total=False):
     assessed_result_binding: D5SelectionEvidenceDimension
 
 
+class D1RandomizationIntegrityEvidenceDimension(TypedDict, total=False):
+    classification: str
+    rationale: str
+    provenance: list[dict]
+
+
+class D1RandomizationIntegrityEvidence(TypedDict, total=False):
+    sequence_generation: D1RandomizationIntegrityEvidenceDimension
+    allocation_concealment: D1RandomizationIntegrityEvidenceDimension
+    enrolment_timing: D1RandomizationIntegrityEvidenceDimension
+    baseline_imbalance_severity: D1RandomizationIntegrityEvidenceDimension
+    prognostic_relevance: D1RandomizationIntegrityEvidenceDimension
+    randomization_failure_signal: D1RandomizationIntegrityEvidenceDimension
+
+
 class EvidenceValidationFlag(TypedDict):
     sq_id: str
     issue: str

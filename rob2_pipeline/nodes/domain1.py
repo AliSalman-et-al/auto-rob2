@@ -2,6 +2,9 @@ from rob2_pipeline.judges.domain1 import judge_domain1
 from rob2_pipeline.nodes.common import (
     add_domain_judgment,
 )
+from rob2_pipeline.nodes.d1_randomization_integrity import (
+    build_d1_randomization_integrity_evidence,
+)
 from rob2_pipeline.nodes.domain_context import build_domain1_context
 from rob2_pipeline.nodes.domain_helpers import DomainSqStage, run_domain_sq_stage
 from rob2_pipeline.prompts import PROMPT_DOMAIN1
@@ -36,4 +39,8 @@ def domain1_sq_node(state: RoB2State) -> RoB2State:
 
 def domain1_judge_node(state: RoB2State) -> RoB2State:
     judgment, rationale = judge_domain1(state["sq_answers"])
-    return add_domain_judgment(state, "D1", judgment, rationale)
+    result = add_domain_judgment(state, "D1", judgment, rationale)
+    result["d1_randomization_integrity_evidence"] = (
+        build_d1_randomization_integrity_evidence(state)
+    )
+    return result
