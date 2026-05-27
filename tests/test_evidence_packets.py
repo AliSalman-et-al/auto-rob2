@@ -234,6 +234,38 @@ def test_d5_packet_prefers_protocol_over_primary_result_when_terms_match():
     assert first["document_role"] == "protocol"
 
 
+def test_d2_packet_prefers_evidence_derived_deviation_concern_over_trial_name():
+    state = _state_with_chunks(
+        "d2",
+        [
+            {
+                "text": "PEACE-1 was an open-label randomized trial.",
+                "section": "Methods",
+                "page_numbers": [4],
+                "score": 0.1,
+                "document_role": "primary",
+            },
+            {
+                "text": (
+                    "Protocol deviations included delayed radiotherapy and differential "
+                    "co-interventions; adherence to assigned treatment was lower in one arm."
+                ),
+                "section": "Protocol deviations",
+                "page_numbers": [8],
+                "score": 0.2,
+                "document_role": "primary",
+            },
+        ],
+        outcome="Adverse Events",
+    )
+
+    result = build_evidence_packets(state)
+
+    first_source = result["evidence_packets"]["2.3"]["sources"][0]
+    assert "Protocol deviations" in first_source["text"]
+    assert "co-interventions" in first_source["text"]
+
+
 def test_packet_block_renders_document_name_and_role():
     state = _state_with_chunks(
         "d5",

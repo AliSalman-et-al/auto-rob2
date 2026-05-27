@@ -194,9 +194,14 @@ def apply_domain4_control(
             "justification": "Participant is the assessor; cannot be blinded to own treatment.",
             "uncertainty_flag": "NORMAL",
         }
-    elif trial_is_open_label and not has_blinded_adjudication and outcome_type in (
-        "clinician-graded",
-        "clinician-composite",
+    elif (
+        trial_is_open_label
+        and not has_blinded_adjudication
+        and outcome_type
+        in (
+            "clinician-graded",
+            "clinician-composite",
+        )
     ):
         existing_quote = updated.get("4.3", {}).get("quote") or ""
         quote = (
@@ -286,7 +291,9 @@ def _is_pfs_outcome(state: RoB2State) -> bool:
     if str(state.get("outcome_code", "")).casefold() == "pfs":
         return True
     outcome = str(state.get("outcome", "")).casefold()
-    return "progression-free survival" in outcome or "progression free survival" in outcome
+    return (
+        "progression-free survival" in outcome or "progression free survival" in outcome
+    )
 
 
 def _effective_domain4_outcome_type(state: RoB2State) -> str:

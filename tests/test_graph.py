@@ -661,3 +661,71 @@ def test_preliminary_node_surfaces_matching_secondary_endpoint(monkeypatch):
     assert result["outcome"] == "Progression-Free Survival"
     assert result["registered_endpoint"] == "Progression-Free Survival"
     assert result["registered_secondary_endpoints"] == "Progression-Free Survival"
+
+
+def test_preliminary_node_keeps_ae_default_effect_of_assignment(monkeypatch):
+    import rob2_pipeline.nodes.preliminary as preliminary_mod
+
+    response = """
+    <preliminary_info>
+      <experimental_intervention><value>Drug A</value></experimental_intervention>
+      <comparator_intervention><value>Placebo</value></comparator_intervention>
+      <outcome_assessed><value>Adverse Events</value></outcome_assessed>
+      <outcome_type>clinician-graded</outcome_type>
+      <numerical_result><value>Grade 3 or higher adverse events were reported.</value></numerical_result>
+      <n_randomized><value>100</value></n_randomized>
+      <trial_registration><number>Not reported</number></trial_registration>
+      <registered_primary_endpoint><value>Not reported</value></registered_primary_endpoint>
+      <registered_secondary_endpoints>Not reported</registered_secondary_endpoints>
+      <registered_analysis><value>ITT</value></registered_analysis>
+    </preliminary_info>
+    """
+    state = _initial_state("trial.pdf")
+    state["outcome"] = "Adverse Events"
+    state["effect_of_interest"] = "ITT"
+
+    monkeypatch.delenv("ROB2_EFFECT_OF_INTEREST", raising=False)
+    monkeypatch.setattr(
+        preliminary_mod,
+        "call_node_llm",
+        lambda state, prompt, node_name: (response, [], None),
+    )
+
+    result = preliminary_mod.preliminary_info_node(state)
+
+    assert result["effect_of_interest"] == "ITT"
+    assert not any(
+        "auto-set to 'per-protocol'" in error for error in result.get("errors", [])
+    )
+
+
+def test_preliminary_node_preserves_explicit_per_protocol_for_ae(monkeypatch):
+    import rob2_pipeline.nodes.preliminary as preliminary_mod
+
+    response = """
+    <preliminary_info>
+      <experimental_intervention><value>Drug A</value></experimental_intervention>
+      <comparator_intervention><value>Placebo</value></comparator_intervention>
+      <outcome_assessed><value>Adverse Events</value></outcome_assessed>
+      <outcome_type>clinician-graded</outcome_type>
+      <numerical_result><value>Grade 3 or higher adverse events were reported.</value></numerical_result>
+      <n_randomized><value>100</value></n_randomized>
+      <trial_registration><number>Not reported</number></trial_registration>
+      <registered_primary_endpoint><value>Not reported</value></registered_primary_endpoint>
+      <registered_secondary_endpoints>Not reported</registered_secondary_endpoints>
+      <registered_analysis><value>ITT</value></registered_analysis>
+    </preliminary_info>
+    """
+    state = _initial_state("trial.pdf")
+    state["outcome"] = "Adverse Events"
+    state["effect_of_interest"] = "per-protocol"
+
+    monkeypatch.setattr(
+        preliminary_mod,
+        "call_node_llm",
+        lambda state, prompt, node_name: (response, [], None),
+    )
+
+    result = preliminary_mod.preliminary_info_node(state)
+
+    assert result["effect_of_interest"] == "per-protocol"
