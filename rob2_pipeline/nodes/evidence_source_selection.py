@@ -14,8 +14,8 @@ from rob2_pipeline.types import PacketSource
 DOMAIN_SOURCE_ROLE_PREFERENCES = {
     "d1": ["primary", "protocol", "appendix"],
     "d2": ["primary", "protocol", "sap", "appendix"],
-    "d3": ["primary", "appendix", "sap"],
-    "d4": ["primary", "protocol", "sap", "appendix"],
+    "d3": ["primary", "appendix", "sap", "registry"],
+    "d4": ["primary", "protocol", "sap", "registry", "appendix"],
     "d5": ["protocol", "sap", "registry", "primary", "appendix"],
 }
 
@@ -67,6 +67,11 @@ def ctgov_sources(state: RoB2State, contract: EvidenceContract) -> list[dict]:
         "d1": ["ctgov_design"],
         "d2": ["ctgov_design"],
         "d3": ["ctgov_flow"],
+        "d4": [
+            "ctgov_outcomes",
+            "registered_endpoint",
+            "registered_secondary_endpoints",
+        ],
         "d5": [
             "ctgov_outcomes",
             "registered_endpoint",
