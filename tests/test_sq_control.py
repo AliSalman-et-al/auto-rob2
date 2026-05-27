@@ -4,6 +4,7 @@ from rob2_pipeline.nodes.sq_control import (
     apply_domain2_sq12_control,
     apply_domain3_control,
     apply_domain4_control,
+    classify_d3_completeness_support,
     next_domain2_stage,
 )
 
@@ -49,7 +50,12 @@ def test_domain2_analysis_sets_sq27_na_when_sq26_is_probably_yes():
 
 
 def test_domain3_sets_remaining_questions_na_when_missing_data_not_problematic():
-    sq_answers = {"3.1": {"answer": "Y"}}
+    sq_answers = {
+        "3.1": {
+            "answer": "Y",
+            "quote": "Outcome data were available for 100 of 100 randomized participants.",
+        }
+    }
 
     result = apply_domain3_control({}, sq_answers)
 
@@ -116,6 +122,84 @@ def test_domain3_time_to_event_accepts_direct_completeness_evidence():
     assert result["3.2"]["answer"] == "NA"
     assert result["3.3"]["answer"] == "NA"
     assert result["3.4"]["answer"] == "NA"
+
+
+def test_domain3_completeness_gate_accepts_direct_denominator_support():
+    text = "Outcome data were available for 198 of 200 randomized participants."
+
+    result = classify_d3_completeness_support({}, text)
+
+    assert result["classification"] == "sufficient"
+
+
+def test_domain3_completeness_gate_blocks_itt_only_support():
+    sq_answers = {
+        "3.1": {
+            "answer": "Y",
+            "quote": "The primary analysis used the intention-to-treat population.",
+            "justification": "ITT analysis included all randomized participants.",
+        }
+    }
+
+    result = apply_domain3_control({}, sq_answers)
+
+    assert result["3.1"]["answer"] == "NI"
+    assert result["3.2"]["answer"] != "NA"
+
+
+def test_domain3_completeness_gate_blocks_censoring_only_support():
+    sq_answers = {
+        "3.1": {
+            "answer": "PY",
+            "quote": "Patients without events were censored at the date of last assessment.",
+            "justification": "Censoring rules were described.",
+        }
+    }
+
+    result = apply_domain3_control(
+        {"outcome_properties": {"time_to_event": True}}, sq_answers
+    )
+
+    assert result["3.1"]["answer"] == "NI"
+
+
+def test_domain3_completeness_gate_blocks_missing_denominator_support():
+    sq_answers = {
+        "3.1": {
+            "answer": "Y",
+            "quote": "Missing outcome data were uncommon.",
+            "justification": "The report says missingness was uncommon.",
+        }
+    }
+
+    result = apply_domain3_control({}, sq_answers)
+
+    assert result["3.1"]["answer"] == "NI"
+
+
+def test_domain3_completeness_gate_flags_contradictory_denominators():
+    text = (
+        "A total of 200 participants were randomized. "
+        "The primary outcome analysis included 160 participants with outcome data."
+    )
+
+    result = classify_d3_completeness_support({}, text)
+
+    assert result["classification"] == "contradictory"
+
+
+def test_domain3_completeness_gate_blocks_safety_population_exclusions():
+    sq_answers = {
+        "3.1": {
+            "answer": "Y",
+            "quote": "The safety population included 180 patients who received at least one dose.",
+            "justification": "Safety analyses excluded untreated randomized participants.",
+        }
+    }
+
+    result = apply_domain3_control({}, sq_answers)
+
+    assert result["3.1"]["answer"] == "NI"
 
 
 def test_domain4_open_label_patient_reported_outcome_sets_assessor_awareness():
