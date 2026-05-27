@@ -13,6 +13,7 @@ from rob2_pipeline.pipeline import run_assessment
 
 LOGGER = logging.getLogger(__name__)
 DOMAINS = ("D1", "D2", "D3", "D4", "D5")
+AGREEMENT_FIELDS = (*DOMAINS, "Overall", "Benchmark Overall")
 OUTCOME_LABELS = {
     "OS": "Overall Survival",
     "PFS": "Progression-Free Survival",
@@ -43,6 +44,17 @@ def _normalize_judgment(value: Any) -> str:
         "high": "High",
     }
     return mapping.get(compact, raw)
+
+
+def benchmark_reference_overall_judgment(domain_judgments: dict) -> str:
+    values = [_normalize_judgment(value) for value in domain_judgments.values()]
+    if any(value == "High" for value in values):
+        return "High"
+    if values and sum(1 for value in values if value == "Some concerns") <= 1:
+        return "Low"
+    if any(value == "Some concerns" for value in values):
+        return "Some concerns"
+    return ""
 
 
 def _file_cache_identity(path: Path) -> tuple[str, int, int]:
@@ -302,6 +314,8 @@ def compare_judgments(pipeline: dict, reference: dict) -> dict[str, bool]:
     overall_pipeline = _normalize_judgment(pipeline.get("overall_judgment", ""))
     overall_ref = _normalize_judgment(reference.get("Overall Risk", ""))
     result["Overall"] = overall_pipeline.casefold() == overall_ref.casefold()
+    benchmark_overall = benchmark_reference_overall_judgment(domain_judgments)
+    result["Benchmark Overall"] = benchmark_overall.casefold() == overall_ref.casefold()
     return result
 
 
@@ -458,6 +472,9 @@ def run_benchmark(
             trial_result["pipeline"] = {
                 "domain_judgments": pipeline_output.get("domain_judgments") or {},
                 "overall_judgment": pipeline_output.get("overall_judgment"),
+                "benchmark_reference_overall_judgment": benchmark_reference_overall_judgment(
+                    pipeline_output.get("domain_judgments") or {}
+                ),
             }
             trial_result["comparison"] = compare_judgments(
                 trial_result["pipeline"], reference_row_entry["row"]
@@ -478,7 +495,7 @@ def _empty_confusion() -> dict[str, dict[str, int]]:
 
 
 def _summarize_results_subset(results) -> dict:
-    fields = [*DOMAINS, "Overall"]
+    fields = list(AGREEMENT_FIELDS)
     counts = {field: {"matches": 0, "total": 0} for field in fields}
     confusion = {field: _empty_confusion() for field in fields}
 
@@ -508,6 +525,26 @@ def _summarize_results_subset(results) -> dict:
         overall_pred = _normalize_judgment(pipeline.get("overall_judgment", ""))
         if overall_ref in JUDGMENT_ORDER and overall_pred in JUDGMENT_ORDER:
             confusion["Overall"][overall_ref][overall_pred] += 1
+
+        benchmark_overall_pred = _normalize_judgment(
+            pipeline.get("benchmark_reference_overall_judgment", "")
+            or benchmark_reference_overall_judgment(domain_judgments)
+        )
+        benchmark_overall_matches = (
+            benchmark_overall_pred.casefold() == overall_ref.casefold()
+            if benchmark_overall_pred and overall_ref
+            else comparison.get("Benchmark Overall")
+        )
+        if benchmark_overall_matches is not None:
+            counts["Benchmark Overall"]["total"] += 1
+            counts["Benchmark Overall"]["matches"] += (
+                1 if benchmark_overall_matches else 0
+            )
+        if (
+            overall_ref in JUDGMENT_ORDER
+            and benchmark_overall_pred in JUDGMENT_ORDER
+        ):
+            confusion["Benchmark Overall"][overall_ref][benchmark_overall_pred] += 1
 
     rates = {}
     for field, field_counts in counts.items():
@@ -667,6 +704,70 @@ def summarize_benchmark(results) -> dict:
     return summary
 
 
+def _results_by_id(results: list[dict]) -> dict[str, dict]:
+    return {
+        _strip(result.get("id")) or f"{_strip(result.get('trial'))}:{_strip(result.get('outcome_code'))}": result
+        for result in results
+    }
+
+
+def compare_benchmark_runs(before: dict, after: dict) -> dict[str, Any]:
+    before_summary = before.get("summary") or {}
+    after_summary = after.get("summary") or {}
+    fields = sorted(
+        set((before_summary.get("agreement_rates") or {}))
+        | set((after_summary.get("agreement_rates") or {}))
+    )
+    field_deltas = {}
+    for field in fields:
+        before_counts = (before_summary.get("agreement_counts") or {}).get(field, {})
+        after_counts = (after_summary.get("agreement_counts") or {}).get(field, {})
+        before_rate = float((before_summary.get("agreement_rates") or {}).get(field, 0))
+        after_rate = float((after_summary.get("agreement_rates") or {}).get(field, 0))
+        field_deltas[field] = {
+            "before_rate": before_rate,
+            "after_rate": after_rate,
+            "rate_delta": after_rate - before_rate,
+            "before_matches": int(before_counts.get("matches", 0)),
+            "after_matches": int(after_counts.get("matches", 0)),
+            "match_delta": int(after_counts.get("matches", 0))
+            - int(before_counts.get("matches", 0)),
+            "before_total": int(before_counts.get("total", 0)),
+            "after_total": int(after_counts.get("total", 0)),
+        }
+
+    before_results = _results_by_id(before.get("results") or [])
+    after_results = _results_by_id(after.get("results") or [])
+    case_deltas = []
+    for result_id in sorted(set(before_results) & set(after_results)):
+        before_comparison = before_results[result_id].get("comparison") or {}
+        after_comparison = after_results[result_id].get("comparison") or {}
+        for field in AGREEMENT_FIELDS:
+            if field not in before_comparison or field not in after_comparison:
+                continue
+            before_value = before_comparison[field]
+            after_value = after_comparison[field]
+            if before_value == after_value:
+                continue
+            if before_value is False and after_value is True:
+                direction = "improved"
+            elif before_value is True and after_value is False:
+                direction = "harmed"
+            else:
+                direction = "changed"
+            case_deltas.append(
+                {
+                    "id": result_id,
+                    "field": field,
+                    "before": before_value,
+                    "after": after_value,
+                    "direction": direction,
+                }
+            )
+
+    return {"field_deltas": field_deltas, "case_deltas": case_deltas}
+
+
 def write_benchmark_report(results, summary, output_path):
     output_path = Path(output_path)
     report_path = output_path.parent / "benchmark_report.md"
@@ -685,7 +786,7 @@ def write_benchmark_report(results, summary, output_path):
         encoding="utf-8",
     )
 
-    fields = [*DOMAINS, "Overall"]
+    fields = list(AGREEMENT_FIELDS)
     has_meaningful_cohort = any(
         (_strip(result.get("cohort")) or "unspecified") != "unspecified"
         for result in results
@@ -800,15 +901,15 @@ def write_benchmark_report(results, summary, output_path):
     if has_meaningful_cohort:
         lines.extend(
             [
-                "| Trial | Outcome | Cohort | D1 | D2 | D3 | D4 | D5 | Overall | Notes |",
-                "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+                "| Trial | Outcome | Cohort | D1 | D2 | D3 | D4 | D5 | Official Overall | Benchmark Overall | Notes |",
+                "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
             ]
         )
     else:
         lines.extend(
             [
-                "| Trial | Outcome | D1 | D2 | D3 | D4 | D5 | Overall | Notes |",
-                "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+                "| Trial | Outcome | D1 | D2 | D3 | D4 | D5 | Official Overall | Benchmark Overall | Notes |",
+                "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
             ]
         )
     for result in results:
@@ -841,6 +942,7 @@ def write_benchmark_report(results, summary, output_path):
                 mark("D4"),
                 mark("D5"),
                 mark("Overall"),
+                mark("Benchmark Overall"),
                 notes or "-",
             ]
         )
@@ -848,3 +950,36 @@ def write_benchmark_report(results, summary, output_path):
         lines.append("| " + " | ".join(row) + " |")
 
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_benchmark_delta_report(delta: dict, output_path: Path) -> None:
+    lines = [
+        "# Benchmark Delta Report",
+        "",
+        "## Agreement Deltas",
+        "",
+        "| Field | Before | After | Delta | Match Delta |",
+        "| --- | ---: | ---: | ---: | ---: |",
+    ]
+    for field, item in delta.get("field_deltas", {}).items():
+        lines.append(
+            f"| {field} | {item['before_rate'] * 100:.1f}% | "
+            f"{item['after_rate'] * 100:.1f}% | {item['rate_delta'] * 100:+.1f} pp | "
+            f"{item['match_delta']:+d} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Case Changes",
+            "",
+            "| Case | Field | Before | After | Direction |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+    )
+    for item in delta.get("case_deltas", []):
+        lines.append(
+            f"| {item['id']} | {item['field']} | {item['before']} | "
+            f"{item['after']} | {item['direction']} |"
+        )
+    Path(output_path).write_text("\n".join(lines) + "\n", encoding="utf-8")

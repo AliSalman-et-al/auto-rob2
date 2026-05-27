@@ -5,6 +5,8 @@ from unittest.mock import patch
 
 from rob2_pipeline.benchmark import (
     _required_supplement_failures,
+    benchmark_reference_overall_judgment,
+    compare_benchmark_runs,
     compare_judgments,
     find_supplements_for_trial,
     load_reference,
@@ -62,6 +64,42 @@ def test_compare_judgments_case_and_compact_normalization():
         "D4": True,
         "D5": True,
         "Overall": True,
+        "Benchmark Overall": True,
+    }
+
+
+def test_benchmark_reference_overall_policy_is_distinct_from_official_judgment():
+    domain_judgments = {
+        "D1": "Low",
+        "D2": "Some concerns",
+        "D3": "Low",
+        "D4": "Low",
+        "D5": "Low",
+    }
+
+    assert benchmark_reference_overall_judgment(domain_judgments) == "Low"
+
+    pipeline = {
+        "domain_judgments": domain_judgments,
+        "overall_judgment": "Some concerns",
+    }
+    reference = {
+        "D1": "Low",
+        "D2": "Some concerns",
+        "D3": "Low",
+        "D4": "Low",
+        "D5": "Low",
+        "Overall Risk": "Low",
+    }
+
+    assert compare_judgments(pipeline, reference) == {
+        "D1": True,
+        "D2": True,
+        "D3": True,
+        "D4": True,
+        "D5": True,
+        "Overall": False,
+        "Benchmark Overall": True,
     }
 
 
@@ -196,6 +234,7 @@ def test_summarize_benchmark_agreement_and_confusion_dicts():
     assert summary["evaluated_trials"] == 2
     assert summary["agreement_counts"]["D1"] == {"matches": 1, "total": 2}
     assert summary["agreement_rates"]["Overall"] == 0.5
+    assert summary["agreement_rates"]["Benchmark Overall"] == 0.0
     assert summary["confusion_matrices"]["D1"]["Low"]["Low"] == 1
     assert summary["confusion_matrices"]["D1"]["Low"]["High"] == 1
     assert summary["confusion_matrices"]["Overall"]["Low"]["High"] == 1
@@ -327,8 +366,63 @@ def test_write_benchmark_report_hides_unspecified_cohort_when_no_labels(tmp_path
 
     report = (tmp_path / "benchmark_report.md").read_text(encoding="utf-8")
     assert "## Cohort Agreement" not in report
-    assert "| Trial | Outcome | D1 | D2 | D3 | D4 | D5 | Overall | Notes |" in report
+    assert (
+        "| Trial | Outcome | D1 | D2 | D3 | D4 | D5 | Official Overall | Benchmark Overall | Notes |"
+        in report
+    )
     assert "unspecified" not in report
+
+
+def test_compare_benchmark_runs_reports_field_and_case_deltas():
+    before = {
+        "summary": {
+            "agreement_rates": {"D1": 0.5, "D2": 1.0, "Overall": 0.5},
+            "agreement_counts": {
+                "D1": {"matches": 1, "total": 2},
+                "D2": {"matches": 2, "total": 2},
+                "Overall": {"matches": 1, "total": 2},
+            },
+        },
+        "results": [
+            {"id": "CHAARTED:OS", "comparison": {"D1": False, "D2": True}},
+            {"id": "PEACE-1:PFS", "comparison": {"D1": True, "D2": True}},
+        ],
+    }
+    after = {
+        "summary": {
+            "agreement_rates": {"D1": 1.0, "D2": 0.5, "Overall": 0.5},
+            "agreement_counts": {
+                "D1": {"matches": 2, "total": 2},
+                "D2": {"matches": 1, "total": 2},
+                "Overall": {"matches": 1, "total": 2},
+            },
+        },
+        "results": [
+            {"id": "CHAARTED:OS", "comparison": {"D1": True, "D2": True}},
+            {"id": "PEACE-1:PFS", "comparison": {"D1": True, "D2": False}},
+        ],
+    }
+
+    comparison = compare_benchmark_runs(before, after)
+
+    assert comparison["field_deltas"]["D1"]["rate_delta"] == 0.5
+    assert comparison["field_deltas"]["D2"]["match_delta"] == -1
+    assert comparison["case_deltas"] == [
+        {
+            "id": "CHAARTED:OS",
+            "field": "D1",
+            "before": False,
+            "after": True,
+            "direction": "improved",
+        },
+        {
+            "id": "PEACE-1:PFS",
+            "field": "D2",
+            "before": True,
+            "after": False,
+            "direction": "harmed",
+        },
+    ]
 
 
 def test_run_benchmark_attaches_timing_from_trace_file(tmp_path, monkeypatch):

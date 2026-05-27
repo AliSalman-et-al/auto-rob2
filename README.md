@@ -197,6 +197,33 @@ uv run python benchmark.py \
   --output-dir outputs/benchmark/chaarted_supplement
 ```
 
+Run the repeatable supplement regression harness for CHAARTED, PEACE-1, and
+STAMPEDE:
+
+```bash
+uv run python benchmark.py \
+  --preset supplement-regression \
+  --output-dir outputs/benchmark/supplement_regression
+```
+
+This preset enables supplements, uses `inputs/benchmark/supplement`, and treats
+missing or failed requested supplements as benchmark errors. The report includes
+per-domain Reference Agreement for D1-D5, official overall agreement, and the
+separate benchmark-reference overall policy.
+
+Compare a current run against a saved baseline:
+
+```bash
+uv run python benchmark.py \
+  --preset supplement-regression \
+  --baseline-results outputs/benchmark/baseline/benchmark_results.json \
+  --output-dir outputs/benchmark/current
+```
+
+The comparison writes `benchmark_delta.json` and `benchmark_delta_report.md`,
+showing which field or trial/outcome slice improved or harmed Reference
+Agreement.
+
 Supplement policies:
 
 | Policy     | Behavior                                                          |
