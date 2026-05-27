@@ -6,6 +6,7 @@ from rob2_pipeline.types import (
     EvidenceFact,
     EvidencePacket,
     EvidenceValidationFlag,
+    D5SelectionEvidence,
     LLMCallLogEntry,
     OutcomeProperties,
     OutcomeResolution,
@@ -77,6 +78,7 @@ class RoB2State(TypedDict, total=False):
     # === DOMAIN JUDGMENTS (set by deterministic nodes) ===
     domain_judgments: Annotated[dict[str, str], merge_dicts]
     domain_rationales: Annotated[dict[str, str], merge_dicts]
+    d5_selection_evidence: Annotated[D5SelectionEvidence, take_latest]
 
     # === OVERALL ===
     overall_judgment: Annotated[str, take_latest]
