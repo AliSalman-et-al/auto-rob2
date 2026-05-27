@@ -8,6 +8,7 @@ from rob2_pipeline.types import (
     EvidenceValidationFlag,
     LLMCallLogEntry,
     OutcomeProperties,
+    OutcomeResolution,
     RetrievalGrade,
     SourceDocument,
     TrialFacts,
@@ -53,6 +54,7 @@ class RoB2State(TypedDict, total=False):
     outcome: Annotated[str, take_latest]
     outcome_type: Annotated[str, take_latest]
     outcome_properties: Annotated[OutcomeProperties, take_latest]
+    outcome_resolution: Annotated[OutcomeResolution, take_latest]
     numerical_result: Annotated[str, take_latest]
     effect_of_interest: Annotated[str, take_latest]
     registration_number: Annotated[str, take_latest]
