@@ -95,6 +95,39 @@ def test_packet_builder_flags_wrong_outcome_context():
     assert packet["packet_grade"]["retry_recommended"] is True
 
 
+def test_d4_pfs_packet_prefers_progression_definition_over_os_and_toxicity_text():
+    state = _state_with_chunks(
+        "d4",
+        [
+            {
+                "text": "Overall survival was defined as time from randomization to death from any cause.",
+                "section": "Endpoints",
+                "page_numbers": [5],
+                "score": 0.1,
+            },
+            {
+                "text": "Safety outcomes included grade 3 or higher adverse events and treatment-emergent toxicity.",
+                "section": "Safety",
+                "page_numbers": [9],
+                "score": 0.1,
+            },
+            {
+                "text": "Progression-free survival was investigator-assessed radiographic progression or death using RECIST criteria.",
+                "section": "Endpoints",
+                "page_numbers": [6],
+                "score": 0.3,
+            },
+        ],
+        outcome="Progression-Free Survival",
+    )
+
+    result = build_evidence_packets(state)
+
+    packet = result["evidence_packets"]["4.1"]
+    assert packet["sources"][0]["text"].startswith("Progression-free survival")
+    assert "possible_wrong_outcome_context" not in packet["negative_flags"]
+
+
 def test_d5_packet_flags_results_without_prespecification_evidence():
     state = _state_with_chunks(
         "d5",

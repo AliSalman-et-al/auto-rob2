@@ -75,3 +75,92 @@ def test_domain4_open_label_patient_reported_outcome_sets_assessor_awareness():
 
     assert result["4.3"]["answer"] == "Y"
     assert result["4.3"]["quote"] == "Open-label study"
+
+
+def test_domain4_objective_os_stays_on_objective_path_before_correction():
+    sq_answers = {
+        "4.1": {"answer": "N", "quote": "Vital status"},
+        "4.2": {"answer": "N", "quote": "Same follow-up"},
+        "4.3": {"answer": "NI", "quote": "No relevant text found"},
+        "4.4": {"answer": "NI", "quote": "No relevant text found"},
+        "4.5": {"answer": "NI", "quote": "No relevant text found"},
+    }
+    state = {
+        "outcome": "Overall Survival",
+        "outcome_code": "OS",
+        "outcome_type": "clinician-composite",
+        "outcome_properties": {
+            "objective_event": True,
+            "patient_reported": False,
+            "safety_harm": False,
+            "blinded_adjudication": False,
+        },
+        "sq_answers": {
+            "2.1": {"answer": "Y", "quote": "Open-label trial"},
+            "2.2": {"answer": "Y", "quote": "Investigators aware"},
+        },
+    }
+
+    result = apply_domain4_control(state, sq_answers)
+
+    assert result["4.3"]["answer"] == "NI"
+    assert result["4.4"]["answer"] == "N"
+    assert result["4.5"]["answer"] == "NA"
+
+
+def test_domain4_open_label_pfs_without_blinded_adjudication_defaults_to_some_concerns_path():
+    sq_answers = {
+        "4.1": {"answer": "N", "quote": "RECIST criteria"},
+        "4.2": {"answer": "N", "quote": "same imaging schedule"},
+        "4.3": {"answer": "NI", "quote": "No relevant text found"},
+        "4.4": {"answer": "NI", "quote": "No relevant text found"},
+        "4.5": {"answer": "NI", "quote": "No relevant text found"},
+    }
+    state = {
+        "outcome": "Progression-free survival",
+        "outcome_code": "PFS",
+        "outcome_type": "clinician-composite",
+        "outcome_properties": {"blinded_adjudication": False},
+        "rag_contexts": {
+            "d4_measurement": "Progression was assessed by investigators using RECIST.",
+        },
+        "sq_answers": {
+            "2.1": {"answer": "Y", "quote": "Open-label trial"},
+            "2.2": {"answer": "Y", "quote": "Investigators aware"},
+        },
+    }
+
+    result = apply_domain4_control(state, sq_answers)
+
+    assert result["4.3"]["answer"] == "PY"
+    assert result["4.4"]["answer"] == "PY"
+    assert result["4.5"]["answer"] == "PN"
+
+
+def test_domain4_open_label_pfs_with_blinded_adjudication_does_not_override_answers():
+    sq_answers = {
+        "4.1": {"answer": "N", "quote": "RECIST criteria"},
+        "4.2": {"answer": "N", "quote": "same imaging schedule"},
+        "4.3": {"answer": "N", "quote": "Blinded independent central review"},
+        "4.4": {"answer": "N", "quote": "Blinded independent central review"},
+        "4.5": {"answer": "NA", "quote": "Not applicable"},
+    }
+    state = {
+        "outcome": "Progression-free survival",
+        "outcome_code": "PFS",
+        "outcome_type": "clinician-composite",
+        "outcome_properties": {"blinded_adjudication": True},
+        "rag_contexts": {
+            "d4_measurement": "Progression was assessed by blinded independent central review.",
+        },
+        "sq_answers": {
+            "2.1": {"answer": "Y", "quote": "Open-label trial"},
+            "2.2": {"answer": "Y", "quote": "Investigators aware"},
+        },
+    }
+
+    result = apply_domain4_control(state, sq_answers)
+
+    assert result["4.3"]["answer"] == "N"
+    assert result["4.4"]["answer"] == "NA"
+    assert result["4.5"]["answer"] == "NA"

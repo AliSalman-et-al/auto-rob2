@@ -1,3 +1,4 @@
+import re
 from typing import Literal
 
 from rob2_pipeline.nodes.common import set_na
@@ -74,13 +75,37 @@ def apply_domain4_control(
     state: RoB2State, sq_answers: dict[str, dict]
 ) -> dict[str, dict]:
     updated = dict(sq_answers)
-    outcome_type = state.get("outcome_type", "clinician-composite")
+    outcome_type = _effective_domain4_outcome_type(state)
     sq_2_1 = state.get("sq_answers", {}).get("2.1", {}).get("answer", "NI")
     sq_2_2 = state.get("sq_answers", {}).get("2.2", {}).get("answer", "NI")
     trial_is_open_label = sq_2_1 in ("Y", "PY") or sq_2_2 in ("Y", "PY")
 
-    if trial_is_open_label and outcome_type in (
-        "patient-reported",
+    has_blinded_adjudication = _has_blinded_adjudication(state)
+    pfs_open_label_concern = (
+        trial_is_open_label
+        and _is_pfs_outcome(state)
+        and not has_blinded_adjudication
+        and _progression_uses_clinician_or_investigator_assessment(state)
+    )
+
+    if trial_is_open_label and outcome_type == "patient-reported":
+        existing_quote = updated.get("4.3", {}).get("quote") or ""
+        quote = (
+            existing_quote
+            if existing_quote and not existing_quote.startswith("Auto-set:")
+            else (
+                state.get("sq_answers", {}).get("2.1", {}).get("quote")
+                or state.get("sq_answers", {}).get("2.2", {}).get("quote")
+                or "No relevant text found"
+            )
+        )
+        updated["4.3"] = {
+            "answer": "Y",
+            "quote": quote or "No relevant text found",
+            "justification": "Participant is the assessor; cannot be blinded to own treatment.",
+            "uncertainty_flag": "NORMAL",
+        }
+    elif trial_is_open_label and not has_blinded_adjudication and outcome_type in (
         "clinician-graded",
         "clinician-composite",
     ):
@@ -94,20 +119,25 @@ def apply_domain4_control(
                 or "No relevant text found"
             )
         )
-        if outcome_type == "patient-reported":
-            answer = "Y"
-            justification = (
-                "Participant is the assessor; cannot be blinded to own treatment."
-            )
-        else:
-            answer = "PY"
-            justification = "In an open-label trial, the clinician grading or adjudicating the outcome is likely aware of treatment assignment."
         updated["4.3"] = {
-            "answer": answer,
+            "answer": "PY",
             "quote": quote or "No relevant text found",
-            "justification": justification,
+            "justification": "In an open-label trial, the clinician grading or adjudicating the outcome is likely aware of treatment assignment.",
             "uncertainty_flag": "NORMAL",
         }
+        if pfs_open_label_concern:
+            updated["4.4"] = {
+                "answer": "PY",
+                "quote": _domain4_quote(state, updated),
+                "justification": "Progression-free survival includes clinician or investigator assessment, so intervention knowledge could plausibly influence progression assessment.",
+                "uncertainty_flag": "NORMAL",
+            }
+            updated["4.5"] = {
+                "answer": "PN",
+                "quote": _domain4_quote(state, updated),
+                "justification": "No blinded independent adjudication is shown, but the evidence does not establish that assessment was likely influenced.",
+                "uncertainty_flag": "NORMAL",
+            }
     elif outcome_type in ("vital-status", "biomarker"):
         s41 = updated.get("4.1", {}).get("answer", "NI")
         s42 = updated.get("4.2", {}).get("answer", "NI")
@@ -161,3 +191,79 @@ def apply_domain4_control(
     if s44 in ("N", "PN"):
         return set_na(updated, "4.5")
     return updated
+
+
+def _is_pfs_outcome(state: RoB2State) -> bool:
+    if str(state.get("outcome_code", "")).casefold() == "pfs":
+        return True
+    outcome = str(state.get("outcome", "")).casefold()
+    return "progression-free survival" in outcome or "progression free survival" in outcome
+
+
+def _effective_domain4_outcome_type(state: RoB2State) -> str:
+    if _is_objective_os_outcome(state):
+        return "vital-status"
+    return str(state.get("outcome_type", "clinician-composite"))
+
+
+def _is_objective_os_outcome(state: RoB2State) -> bool:
+    if str(state.get("outcome_code", "")).casefold() == "os":
+        return True
+    outcome = str(state.get("outcome", "")).casefold()
+    if "overall survival" in outcome or "death from any cause" in outcome:
+        return True
+    props = state.get("outcome_properties") or {}
+    return bool(
+        props.get("objective_event")
+        and not props.get("patient_reported")
+        and not props.get("safety_harm")
+    )
+
+
+def _has_blinded_adjudication(state: RoB2State) -> bool:
+    props = state.get("outcome_properties") or {}
+    if props.get("blinded_adjudication"):
+        return True
+    text = _domain4_text(state)
+    return bool(
+        re.search(
+            r"\b(blinded|masked|independent|central).{0,80}\b(adjudication|committee|review|assessor)\b",
+            text,
+            re.I,
+        )
+    )
+
+
+def _progression_uses_clinician_or_investigator_assessment(state: RoB2State) -> bool:
+    text = _domain4_text(state)
+    if not re.search(r"\bprogression\b", text, re.I):
+        return False
+    return bool(
+        re.search(
+            r"\b(investigator|clinician|physician|radiographic|imaging|recist|assessment|assessed)\b",
+            text,
+            re.I,
+        )
+    )
+
+
+def _domain4_text(state: RoB2State) -> str:
+    parts = [
+        str(state.get("outcome", "")),
+        str((state.get("rag_contexts") or {}).get("d4_measurement", "")),
+        str((state.get("rag_contexts") or {}).get("d4_assessor", "")),
+    ]
+    evidence = state.get("evidence") or {}
+    d4_evidence = evidence.get("d4_outcome_meas") or {}
+    if isinstance(d4_evidence, dict):
+        parts.append(str(d4_evidence.get("text", "")))
+    return "\n".join(part for part in parts if part)
+
+
+def _domain4_quote(state: RoB2State, sq_answers: dict[str, dict]) -> str:
+    return (
+        sq_answers.get("4.1", {}).get("quote")
+        or sq_answers.get("4.2", {}).get("quote")
+        or (state.get("rag_contexts") or {}).get("d4_measurement")
+        or "No relevant text found"
+    )

@@ -12,6 +12,8 @@ from rob2_pipeline.nodes.evidence_packet_grading import (
     source_to_fact,
 )
 from rob2_pipeline.nodes.evidence_source_selection import candidate_sources
+from rob2_pipeline.nodes.evidence_source_selection import aliases_for_outcome
+from rob2_pipeline.nodes.evidence_source_selection import looks_like_wrong_outcome
 from rob2_pipeline.nodes.evidence_source_selection import role_rank
 from rob2_pipeline.state import RoB2State
 from rob2_pipeline.types import EvidenceFact, EvidencePacket, RetrievalGrade
@@ -86,9 +88,11 @@ def _build_packet_for_contract(
     state: RoB2State, contract: EvidenceContract
 ) -> EvidencePacket:
     candidates = candidate_sources(state, contract)
+    ranked_candidates = _outcome_scoped_candidates(state, contract, candidates)
     ranked = sorted(
-        candidates,
+        ranked_candidates,
         key=lambda source: (
+            _outcome_rank(state, contract, source),
             -len(source.get("matched_terms", [])),
             role_rank(contract.domain, source.get("document_role", "")),
             source.get("score", 1e9),
@@ -119,3 +123,28 @@ def _build_packet_for_contract(
         negative_flags=flags,
         packet_grade=grade_packet(retrieval_confidence, missing, flags),
     )
+
+
+def _outcome_scoped_candidates(
+    state: RoB2State, contract: EvidenceContract, candidates: list
+) -> list:
+    if not contract.outcome_bound:
+        return candidates
+    on_scope = [
+        source
+        for source in candidates
+        if _outcome_rank(state, contract, source) in (0, 1)
+    ]
+    return on_scope or candidates
+
+
+def _outcome_rank(state: RoB2State, contract: EvidenceContract, source: dict) -> int:
+    if not contract.outcome_bound:
+        return 0
+    outcome = str(state.get("outcome", "")).casefold().strip()
+    text = str(source.get("text", "")).casefold()
+    if outcome and any(alias in text for alias in aliases_for_outcome(outcome)):
+        return 0
+    if looks_like_wrong_outcome(outcome, text):
+        return 2
+    return 1
