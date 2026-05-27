@@ -3,6 +3,7 @@ from rob2_pipeline.nodes.common import (
     add_domain_judgment,
 )
 from rob2_pipeline.nodes.d1_randomization_integrity import (
+    apply_d1_randomization_integrity_gate,
     build_d1_randomization_integrity_evidence,
 )
 from rob2_pipeline.nodes.domain_context import build_domain1_context
@@ -38,9 +39,12 @@ def domain1_sq_node(state: RoB2State) -> RoB2State:
 
 
 def domain1_judge_node(state: RoB2State) -> RoB2State:
-    judgment, rationale = judge_domain1(state["sq_answers"])
-    result = add_domain_judgment(state, "D1", judgment, rationale)
-    result["d1_randomization_integrity_evidence"] = (
-        build_d1_randomization_integrity_evidence(state)
+    integrity_evidence = build_d1_randomization_integrity_evidence(state)
+    sq_answers = apply_d1_randomization_integrity_gate(
+        state.get("sq_answers", {}), integrity_evidence
     )
+    judgment, rationale = judge_domain1(sq_answers)
+    result = add_domain_judgment(state, "D1", judgment, rationale)
+    result["sq_answers"] = sq_answers
+    result["d1_randomization_integrity_evidence"] = integrity_evidence
     return result
