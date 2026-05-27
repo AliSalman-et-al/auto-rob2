@@ -73,6 +73,13 @@ def test_domain2_stage_contexts_preserve_stage_specific_inputs():
             "protocol_amendments": "Trial fact amendments.",
             "analysis_populations": "Trial fact analysis.",
         },
+        "masking_facts": {
+            "participant_awareness": {
+                "status": "aware",
+                "source_strength": "primary",
+                "quotes": [{"quote": "Open-label trial."}],
+            }
+        },
         "evidence_packets": {},
         "sq_answers": {"2.1": {"answer": "Y"}, "2.2": {"answer": "PY"}},
         "effect_of_interest": "per-protocol",
@@ -85,6 +92,8 @@ def test_domain2_stage_contexts_preserve_stage_specific_inputs():
 
     assert "Open-label trial" in sq12.blinding_text
     assert "Trial fact masking" in sq12.blinding_text
+    assert "Masking facts:" in sq12.blinding_text
+    assert "participant_awareness=aware" in sq12.blinding_text
     assert sq12.methods_text == "Protocol methods."
     assert sq12.ctgov_design == "Registry masking data."
     assert conditional.sq_2_1 == "Y"
@@ -107,6 +116,13 @@ def test_domain4_context_includes_all_prompt_fields_and_both_rag_keys():
             "d4_assessor": "RAG assessor context.",
         },
         "evidence_packets": {},
+        "masking_facts": {
+            "outcome_assessor_awareness": {
+                "status": "unaware",
+                "source_strength": "primary",
+                "quotes": [{"quote": "Outcome assessors were blinded."}],
+            }
+        },
         "sq_answers": {"2.1": {"answer": "N"}},
         "outcome_type": "clinician-composite",
     }
@@ -117,6 +133,8 @@ def test_domain4_context_includes_all_prompt_fields_and_both_rag_keys():
     assert context.outcome_type == "clinician-composite"
     assert context.outcome_measurement_text == "Radiographic progression was assessed."
     assert context.blinding_text == "Outcome assessors were blinded."
+    assert "Masking facts:" in context.rag_text
+    assert "outcome_assessor_awareness=unaware" in context.rag_text
     assert "RAG measurement context" in context.rag_text
     assert "RAG assessor context" in context.rag_text
 

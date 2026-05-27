@@ -82,6 +82,33 @@ def _packet_text(state: RoB2State, domain: str) -> str:
     return packet_block_for_domain(state.get("evidence_packets", {}), domain)
 
 
+def _masking_facts_text(state: RoB2State) -> str:
+    facts = state.get("masking_facts") or {}
+    if not facts:
+        return ""
+    rendered = []
+    for key in (
+        "participant_awareness",
+        "personnel_awareness",
+        "outcome_assessor_awareness",
+        "blinded_adjudication",
+    ):
+        fact = facts.get(key) or {}
+        status = fact.get("status")
+        if not status:
+            continue
+        quote = ""
+        quotes = fact.get("quotes") or []
+        if quotes:
+            quote = f" quote: {quotes[0].get('quote', '')}"
+        rendered.append(
+            f"{key}={status}; source={fact.get('source_strength', 'unknown')};{quote}"
+        )
+    if not rendered:
+        return ""
+    return "Masking facts:\n" + "\n".join(rendered)
+
+
 def build_domain1_context(state: RoB2State) -> Domain1Context:
     evidence = state["evidence"]
     rag_contexts = state.get("rag_contexts", {})
@@ -120,6 +147,7 @@ def build_domain2_sq12_context(state: RoB2State) -> Domain2Sq12Context:
             [
                 format_evidence(evidence["d2_blinding"]),
                 trial_facts.get("masking", ""),
+                _masking_facts_text(state),
             ]
         ),
         methods_text=format_evidence(evidence["methods"]),
@@ -205,6 +233,7 @@ def build_domain4_context(state: RoB2State) -> Domain4Context:
         rag_text=_join_nonempty(
             [
                 packet_text,
+                _masking_facts_text(state),
                 rag_contexts.get("d4_measurement", ""),
                 rag_contexts.get("d4_assessor", ""),
             ]

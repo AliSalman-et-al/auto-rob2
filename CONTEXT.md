@@ -98,6 +98,11 @@ registered outcomes, design/masking metadata, registry description, and
 participant flow. It is supporting evidence and may disagree with the primary
 paper or protocol.
 
+Registry evidence should enrich shared structured facts such as Masking Facts,
+outcome definitions, and D3 Completeness Evidence before it appears as direct
+domain packet text. Direct D4 registry packet sources are lower-priority
+fallbacks when primary, protocol, or SAP evidence is missing or ambiguous.
+
 ### Outcome Properties
 
 Boolean features inferred from the assessed outcome and evidence text:
@@ -117,6 +122,37 @@ A Domain 4 concern for progression-free-survival endpoints in open-label trials
 when progression includes clinician or investigator assessment and blinded
 independent adjudication is not shown. In the benchmark references, this maps
 to Some concerns rather than Low or High.
+
+### D4 Influence Potential
+
+The degree to which outcome assessment could plausibly be affected by assessor
+awareness of intervention assignment. Objective outcomes or assessed-outcome
+blinded adjudication have low influence potential. Clinician-graded,
+investigator-assessed, symptom-based, discretionary, or composite outcomes have
+plausible influence potential when assessors are aware. Likely influence
+requires direct evidence beyond open-label status alone.
+
+### D5 Selection Evidence
+
+Structured evidence for selective reporting within the assessed outcome. It
+distinguishes prespecified analysis plans, eligible outcome measurements,
+eligible analyses, reported-result binding, and result-based selection support.
+It should separate unavailable plans from evidence of no selective reporting,
+and it should not treat multiple prespecified co-primary endpoints or a
+prespecified composite endpoint as selective reporting by themselves.
+
+Its core dimensions are plan availability, outcome-measurement options,
+analysis options, result-based selection support, and assessed-result binding.
+
+### D1 Randomization Integrity Evidence
+
+Structured evidence about whether the randomization process was adequate and
+whether baseline differences suggest a problem with randomization. It
+distinguishes sequence generation, allocation concealment, enrolment timing,
+baseline imbalance severity, prognostic relevance, and whether imbalance
+plausibly signals randomization failure. Baseline differences alone do not
+establish randomization failure unless their size, direction, prognostic
+importance, or pattern supports that concern.
 
 ### Outcome Scope
 
@@ -154,12 +190,44 @@ protocol deviations, implementation, adherence, co-interventions, or analysis.
 Benchmark tuning should not use trial-name priors such as marking a named study
 as Some concerns without evidence.
 
+### D2 Deviation Evidence
+
+Structured evidence about whether deviations from intended intervention arose
+because of trial context. It distinguishes affirmative no-deviation evidence,
+deviations present, insufficient evidence, and contradictory evidence using
+protocol deviations, treatment discontinuation, non-adherence, cross-over,
+contamination, co-interventions, rescue therapy, arm imbalance, outcome
+relevance, and source strength. In aware or open-label trials, silence or
+generic absence of reported deviations does not by itself establish
+`2.3=N/PN`.
+
+### Masking Facts
+
+Shared trial-level facts about participant awareness, personnel awareness,
+outcome-assessor awareness, and blinded adjudication. D2 and D4 may interpret
+these facts differently, but they should not separately infer open-label status
+from incompatible prompt-local evidence.
+
+D2 consumes participant and personnel awareness. D4 consumes outcome-assessor
+awareness and assessed-outcome blinded adjudication. D4 should not depend on D2
+signaling-question execution order.
+
 ### Time-To-Event Missingness Evidence
 
 Domain 3 evidence for time-to-event outcomes that directly addresses loss to
 follow-up, missing outcome data, or completeness of event ascertainment. ITT
 analysis language and censoring rules alone do not establish that missing
 outcome data were negligible.
+
+### D3 Completeness Evidence
+
+Structured evidence about whether outcome data were available for nearly all
+randomized participants for the assessed outcome. It distinguishes sufficient,
+insufficient, and contradictory completeness support using randomized
+denominators, analyzed-outcome denominators, missing or lost-to-follow-up
+counts, percentages with outcome data, outcome scope, and whether the evidence
+is direct rather than only ITT, model, censoring, or analysis-population
+language.
 
 ### TrialFacts
 
@@ -206,6 +274,15 @@ retrieval confidence, and packet grade.
 A compact fact derived from a selected packet source. It records fact type,
 domain, SQ ids, claim, quote, source section, page numbers, confidence, support
 status, document identity, role, source kind, and source path.
+
+### Evidence Support Status
+
+The verification status of a signaling-question quote, packet fact, or
+domain-critical evidence claim. Current statuses should distinguish supported,
+paraphrase-supported, unsupported, source-mismatched, and not-applicable by
+control. Unsupported or source-mismatched evidence can trigger targeted retry,
+answer downgrading, or human-review escalation instead of remaining only a
+post-hoc audit flag.
 
 ### DomainEvidenceContext
 

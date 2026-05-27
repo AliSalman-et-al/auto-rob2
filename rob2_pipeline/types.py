@@ -72,6 +72,25 @@ class OutcomeResolution(TypedDict, total=False):
     source_priority_order: list[str]
 
 
+class MaskingFactQuote(TypedDict, total=False):
+    quote: str
+    source_kind: str
+    source_label: str
+
+
+class MaskingFact(TypedDict, total=False):
+    status: str
+    source_strength: str
+    quotes: list[MaskingFactQuote]
+
+
+class MaskingFacts(TypedDict, total=False):
+    participant_awareness: MaskingFact
+    personnel_awareness: MaskingFact
+    outcome_assessor_awareness: MaskingFact
+    blinded_adjudication: MaskingFact
+
+
 class TrialFacts(TypedDict, total=False):
     randomization: str
     allocation_concealment: str
@@ -80,6 +99,7 @@ class TrialFacts(TypedDict, total=False):
     protocol_amendments: str
     analysis_populations: str
     source: str
+    masking_facts: MaskingFacts
 
 
 class RetrievalGrade(TypedDict):

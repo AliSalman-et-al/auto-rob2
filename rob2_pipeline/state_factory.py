@@ -61,6 +61,7 @@ def create_initial_state(
         "n_randomized": NOT_REPORTED,
         "sources_consulted": [],
         "trial_facts": {},
+        "masking_facts": {},
         "sq_answers": {},
         "domain_judgments": {},
         "domain_rationales": {},
