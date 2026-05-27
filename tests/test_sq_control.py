@@ -301,6 +301,36 @@ def test_domain4_open_label_patient_reported_outcome_sets_assessor_awareness():
     assert result["4.3"]["quote"] == "Open-label study"
 
 
+def test_domain4_open_label_patient_reported_outcome_defaults_to_some_concerns_path():
+    sq_answers = {
+        "4.1": {"answer": "N", "quote": "validated questionnaire"},
+        "4.2": {"answer": "N", "quote": "same questionnaire schedule"},
+        "4.3": {"answer": "NI", "quote": "No relevant text found"},
+        "4.4": {"answer": "NI", "quote": "No relevant text found"},
+        "4.5": {"answer": "NI", "quote": "No relevant text found"},
+    }
+    state = {
+        "outcome": "Pain score",
+        "outcome_type": "patient-reported",
+        "masking_facts": {
+            "participant_awareness": {
+                "status": "aware",
+                "quotes": [{"quote": "Open-label study"}],
+            },
+            "blinded_adjudication": {"status": "absent"},
+        },
+        "rag_contexts": {
+            "d4_measurement": "Patients reported pain scores on a questionnaire.",
+        },
+    }
+
+    result = apply_domain4_control(state, sq_answers)
+
+    assert result["4.3"]["answer"] == "Y"
+    assert result["4.4"]["answer"] == "PY"
+    assert result["4.5"]["answer"] == "PN"
+
+
 def test_domain4_objective_os_stays_on_objective_path_before_correction():
     sq_answers = {
         "4.1": {"answer": "N", "quote": "Vital status"},
@@ -366,6 +396,68 @@ def test_domain4_open_label_pfs_without_blinded_adjudication_defaults_to_some_co
     assert result["4.3"]["answer"] == "PY"
     assert result["4.4"]["answer"] == "PY"
     assert result["4.5"]["answer"] == "PN"
+
+
+def test_domain4_open_label_clinician_graded_ae_defaults_to_some_concerns_path():
+    sq_answers = {
+        "4.1": {"answer": "N", "quote": "CTCAE grading"},
+        "4.2": {"answer": "N", "quote": "same AE grading criteria"},
+        "4.3": {"answer": "NI", "quote": "No relevant text found"},
+        "4.4": {"answer": "NI", "quote": "No relevant text found"},
+        "4.5": {"answer": "NI", "quote": "No relevant text found"},
+    }
+    state = {
+        "outcome": "Clinician-graded adverse events",
+        "outcome_code": "AE",
+        "outcome_type": "clinician-graded",
+        "outcome_properties": {
+            "safety_harm": True,
+            "patient_reported": False,
+            "blinded_adjudication": False,
+        },
+        "masking_facts": {
+            "outcome_assessor_awareness": {
+                "status": "aware",
+                "quotes": [{"quote": "Investigators were aware of treatment assignment."}],
+            },
+            "blinded_adjudication": {"status": "absent"},
+        },
+        "rag_contexts": {
+            "d4_measurement": "Adverse events were graded by investigators using CTCAE.",
+        },
+    }
+
+    result = apply_domain4_control(state, sq_answers)
+
+    assert result["4.3"]["answer"] == "PY"
+    assert result["4.4"]["answer"] == "PY"
+    assert result["4.5"]["answer"] == "PN"
+
+
+def test_domain4_direct_likely_influence_evidence_can_set_high_path():
+    sq_answers = {
+        "4.1": {"answer": "N", "quote": "clinician assessment"},
+        "4.2": {"answer": "N", "quote": "same criteria"},
+        "4.3": {"answer": "Y", "quote": "unblinded treating physiotherapist"},
+        "4.4": {"answer": "Y", "quote": "treating physiotherapist assessed recovery"},
+        "4.5": {"answer": "NI", "quote": "No relevant text found"},
+    }
+    state = {
+        "outcome": "Recovery assessed by physiotherapist",
+        "outcome_type": "clinician-graded",
+        "masking_facts": {
+            "outcome_assessor_awareness": {"status": "aware"},
+            "blinded_adjudication": {"status": "absent"},
+        },
+        "rag_contexts": {
+            "d4_assessor": "The treating physiotherapist who delivered the intervention assessed recovery.",
+        },
+    }
+
+    result = apply_domain4_control(state, sq_answers)
+
+    assert result["4.4"]["answer"] == "Y"
+    assert result["4.5"]["answer"] == "PY"
 
 
 def test_domain4_open_label_pfs_control_is_identical_without_d2_sq_answers():

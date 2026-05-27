@@ -508,6 +508,9 @@ def apply_domain4_control(
     assessor_is_aware = _domain4_assessor_is_aware(state, outcome_type)
 
     has_blinded_adjudication = _has_blinded_adjudication(state)
+    influence_potential = _domain4_influence_potential(
+        state, outcome_type, assessor_is_aware, has_blinded_adjudication
+    )
     pfs_open_label_concern = (
         assessor_is_aware
         and _is_pfs_outcome(state)
@@ -549,19 +552,32 @@ def apply_domain4_control(
             "justification": "In an open-label trial, the clinician grading or adjudicating the outcome is likely aware of treatment assignment.",
             "uncertainty_flag": "NORMAL",
         }
-        if pfs_open_label_concern:
-            updated["4.4"] = {
-                "answer": "PY",
-                "quote": _domain4_quote(state, updated),
-                "justification": "Progression-free survival includes clinician or investigator assessment, so intervention knowledge could plausibly influence progression assessment.",
-                "uncertainty_flag": "NORMAL",
-            }
-            updated["4.5"] = {
-                "answer": "PN",
-                "quote": _domain4_quote(state, updated),
-                "justification": "No blinded independent adjudication is shown, but the evidence does not establish that assessment was likely influenced.",
-                "uncertainty_flag": "NORMAL",
-            }
+    if influence_potential == "likely":
+        updated["4.4"] = {
+            "answer": "Y",
+            "quote": _domain4_quote(state, updated),
+            "justification": "Direct evidence indicates that knowledge of intervention assignment could influence outcome assessment.",
+            "uncertainty_flag": "NORMAL",
+        }
+        updated["4.5"] = {
+            "answer": "PY",
+            "quote": _domain4_quote(state, updated),
+            "justification": "Direct evidence beyond open-label status indicates that assessment was likely influenced.",
+            "uncertainty_flag": "NORMAL",
+        }
+    elif influence_potential == "plausible" or pfs_open_label_concern:
+        updated["4.4"] = {
+            "answer": "PY",
+            "quote": _domain4_quote(state, updated),
+            "justification": "Outcome assessment involves judgment without blinded adjudication, so intervention knowledge could plausibly influence assessment.",
+            "uncertainty_flag": "NORMAL",
+        }
+        updated["4.5"] = {
+            "answer": "PN",
+            "quote": _domain4_quote(state, updated),
+            "justification": "Open-label status shows plausible influence, but direct evidence does not establish that assessment was likely influenced.",
+            "uncertainty_flag": "NORMAL",
+        }
     elif outcome_type in ("vital-status", "biomarker"):
         s41 = updated.get("4.1", {}).get("answer", "NI")
         s42 = updated.get("4.2", {}).get("answer", "NI")
@@ -615,6 +631,23 @@ def apply_domain4_control(
     if s44 in ("N", "PN"):
         return set_na(updated, "4.5")
     return updated
+
+
+def _domain4_influence_potential(
+    state: RoB2State,
+    outcome_type: str,
+    assessor_is_aware: bool,
+    has_blinded_adjudication: bool,
+) -> str:
+    if outcome_type in ("vital-status", "biomarker") or has_blinded_adjudication:
+        return "low"
+    if not assessor_is_aware:
+        return "unknown"
+    if _domain4_text_indicates_likely_influence(state):
+        return "likely"
+    if outcome_type in ("patient-reported", "clinician-graded", "clinician-composite"):
+        return "plausible"
+    return "unknown"
 
 
 def _is_pfs_outcome(state: RoB2State) -> bool:
@@ -710,6 +743,27 @@ def _progression_uses_clinician_or_investigator_assessment(state: RoB2State) -> 
     return bool(
         re.search(
             r"\b(investigator|clinician|physician|radiographic|imaging|recist|assessment|assessed)\b",
+            text,
+            re.I,
+        )
+    )
+
+
+def _domain4_text_indicates_likely_influence(state: RoB2State) -> bool:
+    text = _domain4_text(state)
+    return bool(
+        re.search(
+            r"\b(treating|delivering|delivered|provided|provider|physiotherapist|therapist).{0,120}\b(assess|assessed|assessment|rated|graded|evaluated)\b",
+            text,
+            re.I,
+        )
+        or re.search(
+            r"\b(assess|assessed|assessment|rated|graded|evaluated).{0,120}\b(treating|delivering|delivered|provided|provider|physiotherapist|therapist)\b",
+            text,
+            re.I,
+        )
+        or re.search(
+            r"\b(strong belief|expectation|preferred treatment|desired treatment|vested interest)\b",
             text,
             re.I,
         )
