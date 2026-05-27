@@ -211,6 +211,12 @@ def test_domain4_open_label_patient_reported_outcome_sets_assessor_awareness():
     }
     state = {
         "outcome_type": "patient-reported",
+        "masking_facts": {
+            "participant_awareness": {
+                "status": "aware",
+                "quotes": [{"quote": "Open-label study"}],
+            }
+        },
         "sq_answers": {
             "2.1": {"answer": "Y", "quote": "Open-label study"},
             "2.2": {"answer": "N", "quote": "Outcome assessors masked"},
@@ -267,6 +273,13 @@ def test_domain4_open_label_pfs_without_blinded_adjudication_defaults_to_some_co
         "outcome_code": "PFS",
         "outcome_type": "clinician-composite",
         "outcome_properties": {"blinded_adjudication": False},
+        "masking_facts": {
+            "outcome_assessor_awareness": {
+                "status": "aware",
+                "quotes": [{"quote": "Investigators aware"}],
+            },
+            "blinded_adjudication": {"status": "absent"},
+        },
         "rag_contexts": {
             "d4_measurement": "Progression was assessed by investigators using RECIST.",
         },
@@ -281,6 +294,49 @@ def test_domain4_open_label_pfs_without_blinded_adjudication_defaults_to_some_co
     assert result["4.3"]["answer"] == "PY"
     assert result["4.4"]["answer"] == "PY"
     assert result["4.5"]["answer"] == "PN"
+
+
+def test_domain4_open_label_pfs_control_is_identical_without_d2_sq_answers():
+    sq_answers = {
+        "4.1": {"answer": "N", "quote": "RECIST criteria"},
+        "4.2": {"answer": "N", "quote": "same imaging schedule"},
+        "4.3": {"answer": "NI", "quote": "Auto-set: no quote"},
+        "4.4": {"answer": "NI", "quote": "No relevant text found"},
+        "4.5": {"answer": "NI", "quote": "No relevant text found"},
+    }
+    state = {
+        "outcome": "Progression-free survival",
+        "outcome_code": "PFS",
+        "outcome_type": "clinician-composite",
+        "outcome_properties": {"blinded_adjudication": False},
+        "masking_facts": {
+            "outcome_assessor_awareness": {
+                "status": "aware",
+                "quotes": [{"quote": "Outcome assessors were aware of assignment."}],
+            },
+            "blinded_adjudication": {
+                "status": "absent",
+                "quotes": [{"quote": "No blinded independent adjudication was used."}],
+            },
+        },
+        "rag_contexts": {
+            "d4_measurement": "Progression was assessed by investigators using RECIST.",
+        },
+        "sq_answers": {},
+    }
+    state_with_d2 = {
+        **state,
+        "sq_answers": {
+            "2.1": {"answer": "Y", "quote": "Open-label trial"},
+            "2.2": {"answer": "Y", "quote": "Investigators aware"},
+        },
+    }
+
+    without_d2 = apply_domain4_control(state, sq_answers)
+    with_d2 = apply_domain4_control(state_with_d2, sq_answers)
+
+    assert without_d2 == with_d2
+    assert without_d2["4.3"]["quote"] == "Outcome assessors were aware of assignment."
 
 
 def test_domain4_open_label_pfs_with_blinded_adjudication_does_not_override_answers():

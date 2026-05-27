@@ -109,6 +109,19 @@ def _masking_facts_text(state: RoB2State) -> str:
     return "Masking facts:\n" + "\n".join(rendered)
 
 
+def _participant_awareness_answer_from_masking_facts(state: RoB2State) -> str:
+    status = (
+        (state.get("masking_facts") or {})
+        .get("participant_awareness", {})
+        .get("status")
+    )
+    if status == "aware":
+        return "Y"
+    if status == "unaware":
+        return "N"
+    return "NI"
+
+
 def build_domain1_context(state: RoB2State) -> Domain1Context:
     evidence = state["evidence"]
     rag_contexts = state.get("rag_contexts", {})
@@ -226,7 +239,7 @@ def build_domain4_context(state: RoB2State) -> Domain4Context:
     packet_text = _packet_text(state, "d4")
     return Domain4Context(
         outcome_type=state.get("outcome_type", "clinician-composite"),
-        sq_2_1=state.get("sq_answers", {}).get("2.1", {}).get("answer", "NI"),
+        sq_2_1=_participant_awareness_answer_from_masking_facts(state),
         outcome_measurement_text=format_evidence(evidence["d4_outcome_meas"])
         or format_evidence(evidence["methods"]),
         blinding_text=format_evidence(evidence["d2_blinding"]),

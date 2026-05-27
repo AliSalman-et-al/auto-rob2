@@ -117,13 +117,18 @@ def test_domain4_context_includes_all_prompt_fields_and_both_rag_keys():
         },
         "evidence_packets": {},
         "masking_facts": {
+            "participant_awareness": {
+                "status": "unaware",
+                "source_strength": "primary",
+                "quotes": [{"quote": "Participants were blinded."}],
+            },
             "outcome_assessor_awareness": {
                 "status": "unaware",
                 "source_strength": "primary",
                 "quotes": [{"quote": "Outcome assessors were blinded."}],
             }
         },
-        "sq_answers": {"2.1": {"answer": "N"}},
+        "sq_answers": {},
         "outcome_type": "clinician-composite",
     }
 
