@@ -2,6 +2,7 @@ from rob2_pipeline.judges.domain5 import judge_domain5
 from rob2_pipeline.nodes.common import (
     add_domain_judgment,
 )
+from rob2_pipeline.nodes.d5_selection_evidence import build_d5_selection_evidence
 from rob2_pipeline.nodes.domain_context import build_domain5_context
 from rob2_pipeline.nodes.domain_helpers import DomainSqStage, run_domain_sq_stage
 from rob2_pipeline.prompts import PROMPT_DOMAIN5
@@ -53,4 +54,6 @@ def domain5_sq_node(state: RoB2State) -> RoB2State:
 
 def domain5_judge_node(state: RoB2State) -> RoB2State:
     judgment, rationale = judge_domain5(state["sq_answers"])
-    return add_domain_judgment(state, "D5", judgment, rationale)
+    result = add_domain_judgment(state, "D5", judgment, rationale)
+    result["d5_selection_evidence"] = build_d5_selection_evidence(state)
+    return result

@@ -153,6 +153,20 @@ class EvidencePacket(TypedDict, total=False):
     packet_grade: RetrievalGrade
 
 
+class D5SelectionEvidenceDimension(TypedDict, total=False):
+    classification: str
+    rationale: str
+    provenance: list[dict]
+
+
+class D5SelectionEvidence(TypedDict, total=False):
+    plan_availability: D5SelectionEvidenceDimension
+    outcome_measurement_options: D5SelectionEvidenceDimension
+    analysis_options: D5SelectionEvidenceDimension
+    result_based_selection_support: D5SelectionEvidenceDimension
+    assessed_result_binding: D5SelectionEvidenceDimension
+
+
 class EvidenceValidationFlag(TypedDict):
     sq_id: str
     issue: str
