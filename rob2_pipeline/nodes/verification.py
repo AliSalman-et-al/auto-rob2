@@ -1,11 +1,30 @@
 import re
 
+from rob2_pipeline.judges.domain1 import judge_domain1
+from rob2_pipeline.judges.domain2 import judge_domain2
+from rob2_pipeline.judges.domain3 import judge_domain3
+from rob2_pipeline.judges.domain4 import judge_domain4
+from rob2_pipeline.judges.domain5 import judge_domain5
 from rob2_pipeline.models import EVIDENCE_SECTION_FIELDS, format_evidence
 from rob2_pipeline.state import RoB2State
 
 
 _BYPASS_QUOTES = {"", "not applicable", "no relevant text found", "not reported"}
 _NA_QUOTES = {"not applicable"}
+_DOMAIN_BY_SQ_PREFIX = {
+    "1": "D1",
+    "2": "D2",
+    "3": "D3",
+    "4": "D4",
+    "5": "D5",
+}
+_SQS_BY_DOMAIN = {
+    "D1": ("1.1", "1.2", "1.3"),
+    "D2": ("2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7"),
+    "D3": ("3.1", "3.2", "3.3", "3.4"),
+    "D4": ("4.1", "4.2", "4.3", "4.4", "4.5"),
+    "D5": ("5.1", "5.2", "5.3"),
+}
 
 
 def _normalize_text(text: str) -> str:
@@ -140,7 +159,9 @@ def verify_sq_evidence(state: RoB2State) -> list[dict]:
     flags = []
     for sq_id, answer in sorted((state.get("sq_answers") or {}).items()):
         quote = answer.get("quote", "")
-        support = classify_evidence_support(quote, source)
+        support = classify_evidence_support(
+            quote, source, _declared_provenance_text(state, sq_id)
+        )
         if support["status"] in {"unsupported", "source-mismatched"}:
             flags.append(
                 {
@@ -163,7 +184,9 @@ def collect_evidence_support_statuses(state: RoB2State) -> list[dict]:
     statuses = []
     for sq_id, answer in sorted((state.get("sq_answers") or {}).items()):
         quote = answer.get("quote", "")
-        support = classify_evidence_support(quote, source)
+        support = classify_evidence_support(
+            quote, source, _declared_provenance_text(state, sq_id)
+        )
         statuses.append(
             {
                 "sq_id": sq_id,
@@ -192,6 +215,17 @@ def collect_evidence_support_statuses(state: RoB2State) -> list[dict]:
                 }
             )
     return statuses
+
+
+def _declared_provenance_text(state: RoB2State, sq_id: str) -> str | None:
+    packet = (state.get("evidence_packets") or {}).get(sq_id) or {}
+    selected_sources = packet.get("selected_sources") or []
+    parts = []
+    for source in selected_sources:
+        text = source.get("text") or source.get("quote") or ""
+        if text:
+            parts.append(str(text))
+    return "\n\n".join(parts) if parts else None
 
 
 def verify_packet_evidence(state: RoB2State) -> list[dict]:
@@ -229,15 +263,116 @@ def _verification_actions_from_flags(flags: list[dict]) -> list[dict]:
                     "reason": issue,
                 }
             )
-        elif flag.get("issue") == "quote_not_found_in_source_context":
-            actions.append(
+    return actions
+
+
+def _verified_packet_context(state: RoB2State, sq_id: str) -> str:
+    parts = []
+    for fact in (state.get("evidence_facts") or {}).get(sq_id, []):
+        if fact.get("support_status") in {"supported", "paraphrase-supported"}:
+            text = fact.get("quote") or fact.get("claim") or ""
+            if text:
+                parts.append(str(text))
+    return "\n\n".join(parts)
+
+
+def _apply_verification_actions(
+    state: RoB2State, flags: list[dict], actions: list[dict]
+) -> tuple[dict[str, dict], list[dict]]:
+    sq_answers = {
+        sq_id: dict(answer) for sq_id, answer in (state.get("sq_answers") or {}).items()
+    }
+    revised_actions = list(actions)
+    for flag in flags:
+        if flag.get("issue") != "quote_not_found_in_source_context":
+            continue
+        sq_id = flag.get("sq_id", "")
+        answer = sq_answers.get(sq_id)
+        if not answer:
+            continue
+        current = answer.get("answer", "NI")
+        if current in {"NI", "NA"}:
+            continue
+
+        packet_context = _verified_packet_context(state, sq_id)
+        if packet_context:
+            revised_actions.append(
                 {
-                    "sq_id": flag.get("sq_id", ""),
+                    "sq_id": sq_id,
                     "action": "retry_sq_with_verified_packet",
-                    "reason": issue,
+                    "reason": flag.get("issue", ""),
+                    "verified_packet_context": packet_context,
                 }
             )
-    return actions
+            continue
+
+        reason = (
+            f"Verification downgraded {sq_id} from {current} to NI because "
+            f"the quote was {flag.get('support_status', 'unsupported')}."
+        )
+        sq_answers[sq_id] = {
+            **answer,
+            "answer": "NI",
+            "justification": f"{answer.get('justification', '').strip()} {reason}".strip(),
+            "uncertainty_flag": "HIGH",
+            "verification_support_status": flag.get("support_status", "unsupported"),
+        }
+        domain = _DOMAIN_BY_SQ_PREFIX.get(sq_id.split(".", 1)[0])
+        for domain_sq_id in _SQS_BY_DOMAIN.get(domain, ()):
+            domain_answer = sq_answers.get(domain_sq_id, {})
+            if domain_answer.get("answer") == "NA":
+                sq_answers[domain_sq_id] = {
+                    **domain_answer,
+                    "answer": "NI",
+                    "quote": domain_answer.get("quote") or "No relevant text found",
+                    "justification": (
+                        f"{domain_answer.get('justification', '').strip()} "
+                        f"Verification reopened {domain_sq_id} because {sq_id} no longer supports the control path."
+                    ).strip(),
+                    "uncertainty_flag": "HIGH",
+                }
+        revised_actions.append(
+            {
+                "sq_id": sq_id,
+                "action": "downgrade_unsupported_sq",
+                "reason": reason,
+            }
+        )
+    return sq_answers, revised_actions
+
+
+def _rejudge_domains(
+    state: RoB2State, sq_answers: dict[str, dict]
+) -> tuple[dict, dict]:
+    judgments = dict(state.get("domain_judgments") or {})
+    rationales = dict(state.get("domain_rationales") or {})
+    changed_domains = {
+        _DOMAIN_BY_SQ_PREFIX.get(sq_id.split(".", 1)[0])
+        for sq_id in sq_answers
+        if (state.get("sq_answers") or {}).get(sq_id, {}).get("answer")
+        != sq_answers.get(sq_id, {}).get("answer")
+    }
+    changed_domains.discard(None)
+    for domain in changed_domains:
+        if domain == "D1":
+            judgment, rationale = judge_domain1(sq_answers)
+        elif domain == "D2":
+            judgment, rationale = judge_domain2(
+                sq_answers, state.get("effect_of_interest", "ITT")
+            )
+        elif domain == "D3":
+            judgment, rationale = judge_domain3(sq_answers)
+        elif domain == "D4":
+            judgment, rationale = judge_domain4(sq_answers)
+        elif domain == "D5":
+            judgment, rationale = judge_domain5(sq_answers)
+        else:
+            continue
+        judgments[domain] = judgment
+        rationales[domain] = (
+            f"{rationale} Verification actions applied before final reporting."
+        )
+    return judgments, rationales
 
 
 def quote_verifier_node(state: RoB2State) -> RoB2State:
@@ -245,6 +380,8 @@ def quote_verifier_node(state: RoB2State) -> RoB2State:
     support_statuses = collect_evidence_support_statuses(state)
     trace = list(state.get("verifier_trace", []))
     actions = _verification_actions_from_flags(flags)
+    sq_answers, actions = _apply_verification_actions(state, flags, actions)
+    domain_judgments, domain_rationales = _rejudge_domains(state, sq_answers)
     if flags:
         trace.append(
             {
@@ -258,4 +395,7 @@ def quote_verifier_node(state: RoB2State) -> RoB2State:
         "evidence_support_statuses": support_statuses,
         "verifier_trace": trace,
         "verification_actions": actions,
+        "sq_answers": sq_answers,
+        "domain_judgments": domain_judgments,
+        "domain_rationales": domain_rationales,
     }
