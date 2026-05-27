@@ -1,4 +1,5 @@
 from rob2_pipeline.nodes.d1_randomization_integrity import (
+    apply_d1_randomization_integrity_gate,
     build_d1_randomization_integrity_evidence,
 )
 from rob2_pipeline.nodes.domain1 import domain1_judge_node
@@ -184,3 +185,125 @@ def test_domain1_judge_node_adds_d1_randomization_integrity_evidence_to_state_up
         ]
         == "adequate"
     )
+
+
+def test_domain1_judge_node_does_not_let_baseline_differences_alone_force_concern():
+    result = domain1_judge_node(
+        {
+            "sq_answers": {
+                "1.1": {"answer": "Y"},
+                "1.2": {"answer": "Y"},
+                "1.3": {
+                    "answer": "PY",
+                    "quote": "Baseline characteristics differed between arms.",
+                },
+            },
+            "evidence_packets": {
+                "1.3": {
+                    "sources": [
+                        {
+                            "text": "Baseline characteristics differed between arms.",
+                        }
+                    ]
+                }
+            },
+        }
+    )
+
+    assert result["sq_answers"]["1.3"]["answer"] == "PN"
+    assert result["domain_judgments"]["D1"] == "Low"
+
+
+def test_d1_randomization_integrity_gate_keeps_concerning_baseline_signal():
+    sq_answers = {
+        "1.1": {"answer": "Y"},
+        "1.2": {"answer": "Y"},
+        "1.3": {"answer": "PY"},
+    }
+    evidence = build_d1_randomization_integrity_evidence(
+        {
+            "sq_answers": sq_answers,
+            "evidence_packets": {
+                "1.3": {
+                    "sources": [
+                        {
+                            "text": "A large imbalance in prognostic disease stage was unlikely by chance and suggested randomization failure.",
+                        }
+                    ]
+                }
+            },
+        }
+    )
+
+    gated = apply_d1_randomization_integrity_gate(sq_answers, evidence)
+
+    assert gated["1.3"]["answer"] == "PY"
+
+
+def test_domain1_judge_node_calibrates_adequate_sequence_and_concealment_evidence():
+    result = domain1_judge_node(
+        {
+            "sq_answers": {
+                "1.1": {"answer": "NI"},
+                "1.2": {"answer": "NI"},
+                "1.3": {"answer": "N"},
+            },
+            "evidence_packets": {
+                "1.1": {
+                    "sources": [
+                        {"text": "Randomization used a computer-generated schedule."}
+                    ]
+                },
+                "1.2": {
+                    "sources": [
+                        {
+                            "text": "Treatment was assigned by central randomization with allocation concealed."
+                        }
+                    ]
+                },
+                "1.3": {"sources": [{"text": "Groups were well balanced."}]},
+            },
+        }
+    )
+
+    assert result["sq_answers"]["1.1"]["answer"] == "Y"
+    assert result["sq_answers"]["1.2"]["answer"] == "Y"
+    assert result["domain_judgments"]["D1"] == "Low"
+
+
+def test_domain1_judge_node_calibrates_unclear_and_inadequate_randomization_scenarios():
+    unclear = domain1_judge_node(
+        {
+            "sq_answers": {
+                "1.1": {"answer": "Y"},
+                "1.2": {"answer": "Y"},
+                "1.3": {"answer": "N"},
+            },
+            "evidence_packets": {
+                "1.1": {"sources": [{"text": "Patients were assigned to groups."}]},
+                "1.2": {"sources": [{"text": "Treatment assignment was performed."}]},
+                "1.3": {"sources": [{"text": "No baseline imbalance was reported."}]},
+            },
+        }
+    )
+    inadequate = domain1_judge_node(
+        {
+            "sq_answers": {
+                "1.1": {"answer": "Y"},
+                "1.2": {"answer": "Y"},
+                "1.3": {"answer": "N"},
+            },
+            "evidence_packets": {
+                "1.1": {"sources": [{"text": "Allocation alternated by clinic visit."}]},
+                "1.2": {"sources": [{"text": "The next allocation was known."}]},
+                "1.3": {"sources": [{"text": "No baseline imbalance was reported."}]},
+            },
+        }
+    )
+
+    assert unclear["sq_answers"]["1.1"]["answer"] == "NI"
+    assert unclear["sq_answers"]["1.2"]["answer"] == "NI"
+    assert unclear["domain_judgments"]["D1"] == "Some concerns"
+    assert inadequate["sq_answers"]["1.1"]["answer"] == "N"
+    assert inadequate["sq_answers"]["1.2"]["answer"] == "N"
+    assert inadequate["domain_judgments"]["D1"] == "High"

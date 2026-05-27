@@ -24,7 +24,8 @@ NO_IMBALANCE_TERMS = re.compile(
 )
 IMBALANCE_TERMS = re.compile(
     r"\b(baseline (?:imbalance|difference|differences)|imbalanced|differed at baseline|"
-    r"important imbalance|substantial imbalance|clinically relevant imbalance)\b",
+    r"baseline characteristics differed|important imbalance|substantial imbalance|"
+    r"clinically relevant imbalance)\b",
     re.I,
 )
 PROGNOSTIC_TERMS = re.compile(
@@ -35,6 +36,27 @@ PROGNOSTIC_TERMS = re.compile(
 FAILURE_TERMS = re.compile(
     r"\b(randomi[sz]ation failure|selection bias|tamper|predictable|"
     r"allocation was known|subversion|systematic imbalance|chance alone unlikely)\b",
+    re.I,
+)
+ADEQUATE_SEQUENCE_TERMS = re.compile(
+    r"\b(computer[ -]generated|random number|permuted block|stratified random|"
+    r"randomi[sz]ation schedule|central randomi[sz]ation)\b",
+    re.I,
+)
+INADEQUATE_SEQUENCE_TERMS = re.compile(
+    r"\b(alternate|alternated|alternation|date of birth|medical record number|"
+    r"predictable sequence|quasi-random)\b",
+    re.I,
+)
+ADEQUATE_CONCEALMENT_TERMS = re.compile(
+    r"\b(central (?:web|telephone|randomi[sz]ation)|interactive (?:web|voice)|"
+    r"sealed opaque|allocation was concealed|concealed allocation)\b",
+    re.I,
+)
+INADEQUATE_CONCEALMENT_TERMS = re.compile(
+    r"\b(allocation was known|allocation (?:could be|was)? ?predicted|"
+    r"next allocation was known|open allocation|not concealed|unsealed|"
+    r"predictable allocation|subversion)\b",
     re.I,
 )
 
@@ -86,7 +108,25 @@ def _answer(state: RoB2State, sq_id: str) -> str:
     return str(((state.get("sq_answers") or {}).get(sq_id) or {}).get("answer", "NI"))
 
 
-def _classify_adequacy(answer: str) -> str:
+def _classify_adequacy(answer: str, text: str, kind: str) -> str:
+    if kind == "sequence":
+        if INADEQUATE_SEQUENCE_TERMS.search(text):
+            return "inadequate"
+        if answer in {"N", "PN"}:
+            return "inadequate"
+        if ADEQUATE_SEQUENCE_TERMS.search(text):
+            return "adequate"
+        if text.strip():
+            return "unclear"
+    if kind == "concealment":
+        if INADEQUATE_CONCEALMENT_TERMS.search(text):
+            return "inadequate"
+        if answer in {"N", "PN"}:
+            return "inadequate"
+        if ADEQUATE_CONCEALMENT_TERMS.search(text):
+            return "adequate"
+        if text.strip():
+            return "unclear"
     if answer in {"Y", "PY"}:
         return "adequate"
     if answer in {"N", "PN"}:
@@ -104,7 +144,7 @@ def _classify_enrolment_timing(text: str) -> str:
 
 def _classify_baseline_imbalance(state: RoB2State, text: str) -> str:
     sq13 = _answer(state, "1.3")
-    if FAILURE_TERMS.search(text) or sq13 in {"Y", "PY"}:
+    if FAILURE_TERMS.search(text):
         return "suggests_randomization_failure"
     if IMBALANCE_TERMS.search(text):
         if PROGNOSTIC_TERMS.search(text):
@@ -131,6 +171,82 @@ def _classify_failure_signal(imbalance: str, text: str) -> str:
     return "not_supported"
 
 
+def _calibrated_answer(
+    sq_answer: dict, answer: str, reason: str
+) -> dict:
+    updated = dict(sq_answer)
+    previous = updated.get("answer", "NI")
+    updated["answer"] = answer
+    if previous != answer:
+        justification = updated.get("justification", "")
+        suffix = f"D1 randomization-integrity gate changed {previous} to {answer}: {reason}"
+        updated["justification"] = f"{justification} {suffix}".strip()
+    return updated
+
+
+def _adequacy_answer(classification: str) -> str:
+    if classification == "adequate":
+        return "Y"
+    if classification == "inadequate":
+        return "N"
+    return "NI"
+
+
+def apply_d1_randomization_integrity_gate(
+    sq_answers: dict[str, dict], evidence: D1RandomizationIntegrityEvidence
+) -> dict[str, dict]:
+    gated = {sq_id: dict(answer) for sq_id, answer in sq_answers.items()}
+    sequence = (evidence.get("sequence_generation") or {}).get(
+        "classification", "unclear"
+    )
+    concealment = (evidence.get("allocation_concealment") or {}).get(
+        "classification", "unclear"
+    )
+    imbalance = (evidence.get("baseline_imbalance_severity") or {}).get(
+        "classification", "none"
+    )
+    prognostic = (evidence.get("prognostic_relevance") or {}).get(
+        "classification", "not_applicable"
+    )
+    failure = (evidence.get("randomization_failure_signal") or {}).get(
+        "classification", "not_supported"
+    )
+
+    gated["1.1"] = _calibrated_answer(
+        gated.get("1.1", {}),
+        _adequacy_answer(sequence),
+        f"sequence generation evidence is {sequence}.",
+    )
+    gated["1.2"] = _calibrated_answer(
+        gated.get("1.2", {}),
+        _adequacy_answer(concealment),
+        f"allocation concealment evidence is {concealment}.",
+    )
+
+    if (
+        imbalance == "suggests_randomization_failure"
+        and prognostic == "prognostic"
+        and failure == "supported"
+    ):
+        answer13 = (
+            gated.get("1.3", {}).get("answer")
+            if gated.get("1.3", {}).get("answer") in {"Y", "PY"}
+            else "PY"
+        )
+        reason13 = "baseline evidence is prognostic and supports randomization failure."
+    elif imbalance == "none":
+        answer13 = "N"
+        reason13 = "baseline evidence does not show imbalance."
+    else:
+        answer13 = "PN"
+        reason13 = (
+            "baseline differences lack both prognostic relevance and a supported "
+            "randomization-failure signal."
+        )
+    gated["1.3"] = _calibrated_answer(gated.get("1.3", {}), answer13, reason13)
+    return gated
+
+
 def build_d1_randomization_integrity_evidence(
     state: RoB2State,
 ) -> D1RandomizationIntegrityEvidence:
@@ -147,12 +263,12 @@ def build_d1_randomization_integrity_evidence(
 
     return D1RandomizationIntegrityEvidence(
         sequence_generation=_dimension(
-            _classify_adequacy(_answer(state, "1.1")),
+            _classify_adequacy(_answer(state, "1.1"), sequence_text, "sequence"),
             "Sequence generation is classified from SQ 1.1 support.",
             _provenance_from_sources(sequence_sources) + _sq_provenance(state, "1.1"),
         ),
         allocation_concealment=_dimension(
-            _classify_adequacy(_answer(state, "1.2")),
+            _classify_adequacy(_answer(state, "1.2"), concealment_text, "concealment"),
             "Allocation concealment is classified from SQ 1.2 support.",
             _provenance_from_sources(concealment_sources)
             + _sq_provenance(state, "1.2"),
