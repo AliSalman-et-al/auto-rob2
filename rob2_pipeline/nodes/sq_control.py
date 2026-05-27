@@ -165,9 +165,7 @@ def apply_domain4_control(
 ) -> dict[str, dict]:
     updated = dict(sq_answers)
     outcome_type = _effective_domain4_outcome_type(state)
-    sq_2_1 = state.get("sq_answers", {}).get("2.1", {}).get("answer", "NI")
-    sq_2_2 = state.get("sq_answers", {}).get("2.2", {}).get("answer", "NI")
-    trial_is_open_label = sq_2_1 in ("Y", "PY") or sq_2_2 in ("Y", "PY")
+    trial_is_open_label = _trial_is_open_label(state)
 
     has_blinded_adjudication = _has_blinded_adjudication(state)
     pfs_open_label_concern = (
@@ -317,6 +315,12 @@ def _is_objective_os_outcome(state: RoB2State) -> bool:
 
 
 def _has_blinded_adjudication(state: RoB2State) -> bool:
+    masking_facts = state.get("masking_facts") or {}
+    blinded_adjudication = masking_facts.get("blinded_adjudication") or {}
+    if blinded_adjudication.get("status") == "present":
+        return True
+    if blinded_adjudication.get("status") == "absent":
+        return False
     props = state.get("outcome_properties") or {}
     if props.get("blinded_adjudication"):
         return True
@@ -328,6 +332,23 @@ def _has_blinded_adjudication(state: RoB2State) -> bool:
             re.I,
         )
     )
+
+
+def _trial_is_open_label(state: RoB2State) -> bool:
+    masking_facts = state.get("masking_facts") or {}
+    awareness_statuses = [
+        (masking_facts.get("participant_awareness") or {}).get("status"),
+        (masking_facts.get("personnel_awareness") or {}).get("status"),
+        (masking_facts.get("outcome_assessor_awareness") or {}).get("status"),
+    ]
+    if any(status == "aware" for status in awareness_statuses):
+        return True
+    if awareness_statuses and all(status == "unaware" for status in awareness_statuses):
+        return False
+
+    sq_2_1 = state.get("sq_answers", {}).get("2.1", {}).get("answer", "NI")
+    sq_2_2 = state.get("sq_answers", {}).get("2.2", {}).get("answer", "NI")
+    return sq_2_1 in ("Y", "PY") or sq_2_2 in ("Y", "PY")
 
 
 def _progression_uses_clinician_or_investigator_assessment(state: RoB2State) -> bool:

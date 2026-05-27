@@ -9,6 +9,7 @@ from rob2_pipeline.types import (
     LLMCallLogEntry,
     OutcomeProperties,
     OutcomeResolution,
+    MaskingFacts,
     RetrievalGrade,
     SourceDocument,
     TrialFacts,
@@ -68,6 +69,7 @@ class RoB2State(TypedDict, total=False):
     n_randomized: Annotated[str, take_latest]
     sources_consulted: Annotated[list[str], take_latest]
     trial_facts: Annotated[TrialFacts, take_latest]
+    masking_facts: Annotated[MaskingFacts, take_latest]
 
     # === SIGNALING QUESTION ANSWERS ===
     sq_answers: Annotated[dict[str, dict], merge_dicts]
