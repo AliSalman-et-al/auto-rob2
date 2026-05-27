@@ -154,6 +154,7 @@ def test_domain_prompts_include_canonical_methodology_blocks():
     assert "SQ 1.2" in PROMPT_DOMAIN1
     assert "CANONICAL RoB 2 METHODOLOGY" in PROMPT_DOMAIN2_CONDITIONAL
     assert "SQ 2.3" in PROMPT_DOMAIN2_CONDITIONAL
+    assert "N/PN requires affirmative evidence" in PROMPT_DOMAIN2_CONDITIONAL
     assert "CANONICAL RoB 2 METHODOLOGY" in PROMPT_DOMAIN3
     assert "SQ 3.4" in PROMPT_DOMAIN3
     assert "CANONICAL RoB 2 METHODOLOGY" in PROMPT_DOMAIN4

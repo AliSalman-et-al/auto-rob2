@@ -2,6 +2,7 @@ from rob2_pipeline.nodes.sq_control import (
     apply_domain2_analysis_control,
     apply_domain2_conditional_control,
     apply_domain2_sq12_control,
+    classify_d2_deviation_evidence,
     apply_domain3_control,
     apply_domain4_control,
     classify_d3_completeness_support,
@@ -41,12 +42,83 @@ def test_domain2_conditional_sets_later_questions_na_after_no_deviations():
     assert result["2.5"]["answer"] == "NA"
 
 
+def test_domain2_deviation_gate_accepts_affirmative_no_deviation_evidence():
+    sq_answers = {
+        "2.3": {
+            "answer": "N",
+            "quote": "No protocol deviations occurred during the trial.",
+            "justification": "The report directly states no deviations occurred.",
+        },
+        "2.4": {"answer": "Y"},
+    }
+
+    result = apply_domain2_conditional_control(_aware_itt_state(), sq_answers)
+
+    assert result["2.3"]["answer"] == "N"
+    assert result["2.4"]["answer"] == "NA"
+    assert result["2.5"]["answer"] == "NA"
+
+
+def test_domain2_deviation_gate_blocks_generic_silence_as_no_deviations():
+    sq_answers = {
+        "2.3": {
+            "answer": "N",
+            "quote": "No relevant text found",
+            "justification": "The report did not mention protocol deviations.",
+        }
+    }
+
+    result = apply_domain2_conditional_control(_aware_itt_state(), sq_answers)
+
+    assert result["2.3"]["answer"] == "NI"
+
+
+def test_domain2_deviation_gate_detects_non_adherence_when_sq23_denies_deviations():
+    sq_answers = {
+        "2.3": {
+            "answer": "PN",
+            "quote": "Treatment discontinuation occurred in 17% of the intervention arm.",
+            "justification": "No protocol deviations were reported.",
+        }
+    }
+
+    result = apply_domain2_conditional_control(_aware_itt_state(), sq_answers)
+
+    assert result["2.3"]["answer"] == "Y"
+    assert "deviations present" in result["2.3"]["justification"]
+
+
+def test_domain2_deviation_classifier_covers_deviation_signal_types():
+    examples = [
+        ("Patients crossed over from control to active treatment.", "deviations_present"),
+        ("Non-protocol co-interventions were permitted after progression.", "deviations_present"),
+        ("Rescue therapy was used more often in the placebo arm.", "deviations_present"),
+        ("Dose interruptions were imbalanced between groups.", "deviations_present"),
+        ("No major protocol deviations were reported.", "affirmative_no_deviations"),
+        ("Methods were described in the protocol and results were summarized.", "insufficient"),
+        (
+            "No protocol deviations occurred, but 14 patients crossed over to active treatment.",
+            "contradictory",
+        ),
+    ]
+
+    for text, expected in examples:
+        assert classify_d2_deviation_evidence({}, text)["classification"] == expected
+
+
 def test_domain2_analysis_sets_sq27_na_when_sq26_is_probably_yes():
     sq_answers = {"2.6": {"answer": "PY"}, "2.7": {"answer": "Y"}}
 
     result = apply_domain2_analysis_control({"effect_of_interest": "ITT"}, sq_answers)
 
     assert result["2.7"]["answer"] == "NA"
+
+
+def _aware_itt_state():
+    return {
+        "effect_of_interest": "ITT",
+        "sq_answers": {"2.1": {"answer": "Y"}, "2.2": {"answer": "Y"}},
+    }
 
 
 def test_domain3_sets_remaining_questions_na_when_missing_data_not_problematic():

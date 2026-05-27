@@ -30,6 +30,89 @@ _TTE_ANALYSIS_ONLY_RE = re.compile(
 )
 
 
+_D2_AFFIRMATIVE_NO_DEVIATIONS_RE = re.compile(
+    r"\b("
+    r"no\s+(?:(?:major|important|substantial)\s+)?(?:protocol\s+)?"
+    r"deviations?\s+(?:occurred|were\s+reported|were\s+observed|were\s+recorded)|"
+    r"there\s+were\s+no\s+(?:major\s+|important\s+|substantial\s+|protocol\s+)?"
+    r"(?:protocol\s+)?deviations?|"
+    r"no\s+participants?\s+(?:crossed\s+over|received\s+non[- ]protocol|switched\s+treatment)|"
+    r"adherence\s+(?:was\s+)?(?:high|similar).{0,60}(?:between|across)\s+(?:groups|arms)|"
+    r"(?:protocol\s+)?deviations?\s+(?:were\s+)?(?:balanced|similar)\s+"
+    r"(?:between|across)\s+(?:groups|arms)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+_D2_DEVIATIONS_PRESENT_RE = re.compile(
+    r"\b("
+    r"protocol\s+deviations?\s+included|"
+    r"(?:\d+|[1-9]\d*%|several|some)\s+major\s+protocol\s+deviations?|"
+    r"non[- ]?adheren(?:ce|t)|poor\s+adherence|treatment\s+discontinuation|"
+    r"dose\s+(?:interruptions?|reductions?|modifications?)|"
+    r"crossed\s+over|cross[- ]?over|crossover|switched\s+(?:to|from)\s+(?:the\s+)?(?:active|control|placebo|treatment)|"
+    r"contamination|non[- ]protocol\s+(?:intervention|treatment|therapy)|"
+    r"co[- ]interventions?|concomitant\s+(?:therapy|treatment)|"
+    r"rescue\s+(?:therapy|treatment|medication)|"
+    r"imbalanc(?:e|ed).{0,80}(?:deviation|adherence|discontinuation|interruption|rescue|co[- ]intervention)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+_D2_GENERIC_SILENCE_RE = re.compile(
+    r"\b("
+    r"no\s+relevant\s+text\s+found|not\s+reported|not\s+mentioned|"
+    r"did\s+not\s+mention|absence\s+of\s+reported|"
+    r"methods\s+were\s+described|results\s+were\s+summari[sz]ed|"
+    r"intention[- ]to[- ]treat|itt|all\s+randomi[sz]ed"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def classify_d2_deviation_evidence(
+    state: RoB2State, text: str
+) -> dict[str, object]:
+    """Classify whether SQ 2.3 has direct trial-context deviation support."""
+    evidence_text = " ".join([_domain2_deviation_text(state), str(text or "")])
+    has_affirmative_no = bool(_D2_AFFIRMATIVE_NO_DEVIATIONS_RE.search(evidence_text))
+    has_deviations = bool(_D2_DEVIATIONS_PRESENT_RE.search(evidence_text))
+    explicit_contradiction = has_affirmative_no and bool(
+        re.search(
+            r"\b(crossed\s+over|cross[- ]?over|crossover|non[- ]protocol\s+(?:intervention|treatment|therapy)|rescue\s+(?:therapy|treatment|medication))\b",
+            evidence_text,
+            re.I,
+        )
+    )
+
+    if has_deviations and explicit_contradiction:
+        return {
+            "classification": "contradictory",
+            "reason": "Evidence contains both no-deviation language and deviation signals.",
+        }
+    if has_deviations:
+        return {
+            "classification": "deviations_present",
+            "reason": "Evidence reports protocol deviations, non-adherence, cross-over, co-interventions, rescue therapy, or arm imbalance.",
+        }
+    if has_affirmative_no:
+        return {
+            "classification": "affirmative_no_deviations",
+            "reason": "Evidence affirmatively states no relevant deviations or balanced deviation/adherence patterns.",
+        }
+    if _D2_GENERIC_SILENCE_RE.search(evidence_text) or not evidence_text.strip():
+        return {
+            "classification": "insufficient",
+            "reason": "Generic methods/results text, ITT language, or lack of reported deviations is not affirmative no-deviation evidence.",
+        }
+    return {
+        "classification": "insufficient",
+        "reason": "Direct evidence about trial-context deviations is missing.",
+    }
+
+
 def apply_domain2_sq12_control(
     state: RoB2State, sq_answers: dict[str, dict]
 ) -> dict[str, dict]:
@@ -59,6 +142,7 @@ def apply_domain2_conditional_control(
 ) -> dict[str, dict]:
     if state.get("effect_of_interest", "ITT").lower() == "per-protocol":
         return sq_answers
+    sq_answers = _apply_d2_deviation_gate(state, sq_answers)
     s23 = sq_answers.get("2.3", {}).get("answer", "NI")
     s24 = sq_answers.get("2.4", {}).get("answer", "NI")
     if s23 in ("N", "PN", "NI"):
@@ -66,6 +150,90 @@ def apply_domain2_conditional_control(
     if s24 in ("N", "PN", "NA"):
         return set_na(sq_answers, "2.5")
     return sq_answers
+
+
+def _apply_d2_deviation_gate(
+    state: RoB2State, sq_answers: dict[str, dict]
+) -> dict[str, dict]:
+    sq23 = sq_answers.get("2.3", {})
+    if sq23.get("answer") not in ("N", "PN"):
+        return sq_answers
+    if not _domain2_participants_or_personnel_aware(state):
+        return sq_answers
+
+    quote_text = " ".join(
+        str(sq23.get(field, "")) for field in ("quote", "justification")
+    )
+    support = classify_d2_deviation_evidence(state, quote_text)
+    classification = support["classification"]
+    if classification == "affirmative_no_deviations":
+        return sq_answers
+
+    updated = dict(sq_answers)
+    if classification == "deviations_present":
+        answer = "Y"
+        note = "D2 deviation evidence gate classified 2.3 support as deviations present"
+    else:
+        answer = "NI"
+        note = (
+            "D2 deviation evidence gate classified 2.3 support as "
+            f"{classification}"
+        )
+    updated["2.3"] = {
+        **sq23,
+        "answer": answer,
+        "justification": (
+            f"{sq23.get('justification', '').strip()} "
+            f"{note}: {support['reason']}"
+        ).strip(),
+        "uncertainty_flag": sq23.get("uncertainty_flag", "HIGH"),
+        "deviation_evidence_support": support,
+    }
+    for sq_id in ("2.4", "2.5"):
+        updated.setdefault(
+            sq_id,
+            {
+                "answer": "NI",
+                "quote": "No relevant text found",
+                "justification": "D2 remains applicable after deviation evidence gating.",
+                "uncertainty_flag": "HIGH",
+            },
+        )
+    return updated
+
+
+def _domain2_participants_or_personnel_aware(state: RoB2State) -> bool:
+    sq_answers = state.get("sq_answers") or {}
+    s21 = sq_answers.get("2.1", {}).get("answer", "NI")
+    s22 = sq_answers.get("2.2", {}).get("answer", "NI")
+    if s21 in ("Y", "PY", "NI") or s22 in ("Y", "PY", "NI"):
+        return True
+    masking_facts = state.get("masking_facts") or {}
+    for fact_name in ("participant_awareness", "personnel_awareness"):
+        status = (masking_facts.get(fact_name) or {}).get("status")
+        if status == "aware":
+            return True
+        if status == "unaware":
+            continue
+    return bool(
+        re.search(
+            r"\b(open-label|open label|unblinded|not blinded|not masked)\b",
+            _domain2_deviation_text(state),
+            re.I,
+        )
+    )
+
+
+def _domain2_deviation_text(state: RoB2State) -> str:
+    evidence = state.get("evidence") or {}
+    parts = [
+        _section_text(evidence.get("d2_deviations", {})),
+        _section_text(evidence.get("results", {})),
+        _section_text(evidence.get("methods", {})),
+        str((state.get("rag_contexts") or {}).get("d2_deviations", "")),
+        str((state.get("trial_facts") or {}).get("protocol_deviations", "")),
+    ]
+    return "\n".join(part for part in parts if part)
 
 
 def apply_domain2_analysis_control(
