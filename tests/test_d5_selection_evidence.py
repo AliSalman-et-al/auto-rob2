@@ -112,6 +112,213 @@ def test_domain5_judge_node_adds_d5_selection_evidence_to_state_update():
     )
 
 
+def test_domain5_judge_node_gates_unsupported_measurement_selection_before_judging():
+    result = domain5_judge_node(
+        {
+            "outcome": "Overall Survival",
+            "registration_number": "NCT123",
+            "registered_endpoint": "Overall Survival",
+            "sq_answers": {
+                "5.1": {"answer": "Y"},
+                "5.2": {
+                    "answer": "Y",
+                    "quote": "Overall survival was the prespecified primary endpoint.",
+                },
+                "5.3": {"answer": "N"},
+            },
+            "evidence_packets": {
+                "5.2": {
+                    "sources": [
+                        {
+                            "text": "Overall survival was the prespecified primary endpoint.",
+                            "document_role": "protocol",
+                        }
+                    ],
+                }
+            },
+        }
+    )
+
+    assert result["sq_answers"]["5.2"]["answer"] == "NI"
+    assert result["domain_judgments"]["D5"] == "Some concerns"
+
+
+def test_domain5_judge_node_preserves_supported_measurement_selection_high():
+    result = domain5_judge_node(
+        {
+            "outcome": "Overall Survival",
+            "registration_number": "NCT123",
+            "registered_endpoint": "Overall Survival",
+            "sq_answers": {
+                "5.1": {"answer": "Y"},
+                "5.2": {
+                    "answer": "Y",
+                    "quote": "A post hoc selected subset of survival endpoints was reported.",
+                },
+                "5.3": {"answer": "N"},
+            },
+            "evidence_packets": {
+                "5.2": {
+                    "sources": [
+                        {
+                            "text": "A post hoc selected subset of survival endpoints was reported.",
+                            "document_role": "primary",
+                        }
+                    ],
+                }
+            },
+        }
+    )
+
+    assert result["sq_answers"]["5.2"]["answer"] == "Y"
+    assert result["domain_judgments"]["D5"] == "High"
+
+
+def test_domain5_judge_node_gates_unsupported_analysis_selection_before_judging():
+    result = domain5_judge_node(
+        {
+            "outcome": "Overall Survival",
+            "registration_number": "NCT123",
+            "registered_endpoint": "Overall Survival",
+            "registered_analysis": "Overall survival will use a stratified log-rank test.",
+            "sq_answers": {
+                "5.1": {"answer": "Y"},
+                "5.2": {"answer": "N"},
+                "5.3": {
+                    "answer": "PY",
+                    "quote": "The SAP planned adjusted and unadjusted sensitivity analyses.",
+                },
+            },
+            "evidence_packets": {
+                "5.3": {
+                    "sources": [
+                        {
+                            "text": "The SAP planned adjusted and unadjusted sensitivity analyses.",
+                            "document_role": "sap",
+                        }
+                    ],
+                }
+            },
+        }
+    )
+
+    assert result["sq_answers"]["5.3"]["answer"] == "NI"
+    assert result["domain_judgments"]["D5"] == "Some concerns"
+
+
+def test_domain5_judge_node_preserves_supported_analysis_selection_high():
+    result = domain5_judge_node(
+        {
+            "outcome": "Overall Survival",
+            "registration_number": "NCT123",
+            "registered_endpoint": "Overall Survival",
+            "sq_answers": {
+                "5.1": {"answer": "Y"},
+                "5.2": {"answer": "N"},
+                "5.3": {
+                    "answer": "PY",
+                    "quote": "A post hoc selected subgroup analysis was reported.",
+                },
+            },
+            "evidence_packets": {
+                "5.3": {
+                    "sources": [
+                        {
+                            "text": "A post hoc selected subgroup analysis was reported.",
+                            "document_role": "primary",
+                        }
+                    ],
+                }
+            },
+        }
+    )
+
+    assert result["sq_answers"]["5.3"]["answer"] == "PY"
+    assert result["domain_judgments"]["D5"] == "High"
+
+
+def test_domain5_judge_node_does_not_treat_prespecified_coprimary_endpoints_as_selection():
+    result = domain5_judge_node(
+        {
+            "outcome": "Overall Survival",
+            "registration_number": "NCT123",
+            "registered_endpoint": "Overall Survival and Progression-free Survival",
+            "sq_answers": {
+                "5.1": {"answer": "Y"},
+                "5.2": {
+                    "answer": "Y",
+                    "quote": "Protocol prespecified co-primary endpoints.",
+                },
+                "5.3": {"answer": "N"},
+            },
+            "evidence_packets": {
+                "5.2": {
+                    "sources": [
+                        {
+                            "text": "Protocol prespecified co-primary endpoints.",
+                            "document_role": "protocol",
+                        }
+                    ],
+                }
+            },
+        }
+    )
+
+    assert result["sq_answers"]["5.2"]["answer"] == "NI"
+    assert result["domain_judgments"]["D5"] == "Some concerns"
+
+
+def test_domain5_judge_node_does_not_treat_prespecified_composite_components_as_selection():
+    result = domain5_judge_node(
+        {
+            "outcome": "Composite progression-free survival",
+            "registration_number": "NCT123",
+            "registered_endpoint": "Composite progression-free survival",
+            "sq_answers": {
+                "5.1": {"answer": "Y"},
+                "5.2": {
+                    "answer": "Y",
+                    "quote": "The protocol prespecified a composite endpoint containing progression or death.",
+                },
+                "5.3": {"answer": "N"},
+            },
+            "evidence_packets": {
+                "5.2": {
+                    "sources": [
+                        {
+                            "text": "The protocol prespecified a composite endpoint containing progression or death.",
+                            "document_role": "protocol",
+                        }
+                    ],
+                }
+            },
+        }
+    )
+
+    assert result["sq_answers"]["5.2"]["answer"] == "NI"
+    assert result["domain_judgments"]["D5"] == "Some concerns"
+
+
+def test_domain5_judge_node_missing_plan_does_not_invent_high_risk_selection():
+    result = domain5_judge_node(
+        {
+            "outcome": "Overall Survival",
+            "sq_answers": {
+                "5.1": {"answer": "NI"},
+                "5.2": {"answer": "Y", "quote": "No relevant text found"},
+                "5.3": {"answer": "N"},
+            },
+            "evidence_packets": {
+                "5.1": {"missing_evidence": ["protocol", "SAP"]},
+                "5.2": {"sources": [{"text": "Overall survival was reported."}]},
+            },
+        }
+    )
+
+    assert result["sq_answers"]["5.2"]["answer"] == "NI"
+    assert result["domain_judgments"]["D5"] == "Some concerns"
+
+
 def test_d5_selection_evidence_distinguishes_plan_availability_labels():
     assert (
         build_d5_selection_evidence({"sq_answers": {"5.1": {"answer": "N"}}})[

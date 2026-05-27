@@ -105,10 +105,7 @@ def _classify_options(text: str) -> str:
 
 def _classify_result_selection(state: RoB2State, text: str) -> str:
     sq_answers = state.get("sq_answers") or {}
-    if RESULT_SELECTION_TERMS.search(text) or any(
-        (sq_answers.get(sq_id) or {}).get("answer") in {"Y", "PY"}
-        for sq_id in ("5.2", "5.3")
-    ):
+    if RESULT_SELECTION_TERMS.search(text):
         return "supported"
     if any(
         (sq_answers.get(sq_id) or {}).get("answer") == "NI" for sq_id in ("5.2", "5.3")
