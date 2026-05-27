@@ -39,7 +39,9 @@ def _patch_primary_success(
 ):
     monkeypatch.setattr(assessment, "extract_full_text", lambda path: text)
     monkeypatch.setattr(assessment, "_configure_docling_runtime", lambda: None)
-    monkeypatch.setattr(assessment, "_build_docling_chunks", lambda conv_result: chunks or [])
+    monkeypatch.setattr(
+        assessment, "_build_docling_chunks", lambda conv_result: chunks or []
+    )
     monkeypatch.setattr(assessment, "build_document_repr", lambda doc: _doc_repr(text))
     monkeypatch.setattr(
         assessment,
@@ -51,7 +53,9 @@ def _patch_primary_success(
         def convert(self, path):
             return _result()
 
-    monkeypatch.setattr(assessment, "_get_docling_converter", lambda use_ocr=False: Converter())
+    monkeypatch.setattr(
+        assessment, "_get_docling_converter", lambda use_ocr=False: Converter()
+    )
 
 
 def test_assessment_ingestion_result_to_state_update_omits_empty_llm_log():
@@ -141,7 +145,9 @@ def test_ingest_assessment_documents_preserves_primary_when_supplement_ingestion
     monkeypatch.setattr(
         assessment,
         "ingest_supplements",
-        lambda paths: (_ for _ in ()).throw(RuntimeError("unexpected supplement error")),
+        lambda paths: (_ for _ in ()).throw(
+            RuntimeError("unexpected supplement error")
+        ),
     )
 
     result = assessment.ingest_assessment_documents("primary.pdf", ["protocol.pdf"])

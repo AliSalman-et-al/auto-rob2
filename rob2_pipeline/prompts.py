@@ -477,6 +477,8 @@ Before answering, calculate the percentage of randomised participants whose outc
 
 If ClinicalTrials.gov participant flow data is provided above, use it as supporting participant disposition evidence for Q3.1. Do not assume treatment completion equals outcome-data availability; compare it with paper text about the assessed outcome and missing outcome data.
 
+For time-to-event outcomes, answer 3.1 as Y/PY only when the evidence directly addresses loss to follow-up, missing outcome data, or completeness of event/status ascertainment. ITT population language, Cox models, Kaplan-Meier methods, and censoring rules do not by themselves establish that missing outcome data were negligible.
+
 If 3.1 is Y/PY, answer 3.2-3.4 as NA.
 
 If 3.2 is Y/PY, answer 3.3-3.4 as NA. If 3.2 is N/PN, answer 3.3.

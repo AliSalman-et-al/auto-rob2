@@ -1,7 +1,33 @@
+import re
 from typing import Literal
 
 from rob2_pipeline.nodes.common import set_na
 from rob2_pipeline.state import RoB2State
+
+
+_TTE_DIRECT_MISSINGNESS_RE = re.compile(
+    r"\b("
+    r"missing\s+outcome\s+data|"
+    r"outcome\s+data\s+(?:were\s+)?(?:available|complete)|"
+    r"complete\s+(?:outcome\s+)?(?:data|follow-up|followup)|"
+    r"all\s+(?:patients|participants).{0,40}(?:followed|outcome\s+data)|"
+    r"(?:lost|loss)\s+to\s+follow[- ]?up|"
+    r"no\s+(?:patients|participants).{0,40}(?:lost|missing)|"
+    r"ascertain(?:ed|ment).{0,40}(?:complete|status|outcome|survival|event)|"
+    r"(?:vital|survival|mortality)\s+status.{0,40}(?:available|ascertained|complete)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+_TTE_ANALYSIS_ONLY_RE = re.compile(
+    r"\b("
+    r"intention[- ]to[- ]treat|itt|"
+    r"kaplan[- ]meier|cox|hazard\s+ratio|"
+    r"censor(?:ed|ing)?|last\s+follow[- ]?up|analysis\s+population"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 def apply_domain2_sq12_control(
@@ -58,6 +84,7 @@ def apply_domain2_analysis_control(
 def apply_domain3_control(
     state: RoB2State, sq_answers: dict[str, dict]
 ) -> dict[str, dict]:
+    sq_answers = _calibrate_time_to_event_d3_1(state, sq_answers)
     s31 = sq_answers.get("3.1", {}).get("answer", "NI")
     s32 = sq_answers.get("3.2", {}).get("answer", "NA")
     s33 = sq_answers.get("3.3", {}).get("answer", "NA")
@@ -68,6 +95,69 @@ def apply_domain3_control(
     if s33 in ("N", "PN"):
         return set_na(sq_answers, "3.4")
     return sq_answers
+
+
+def _calibrate_time_to_event_d3_1(
+    state: RoB2State, sq_answers: dict[str, dict]
+) -> dict[str, dict]:
+    if not state.get("outcome_properties", {}).get("time_to_event"):
+        return sq_answers
+    sq31 = sq_answers.get("3.1", {})
+    if sq31.get("answer") not in ("Y", "PY"):
+        return sq_answers
+
+    evidence_text = _domain3_missingness_text(state)
+    quote_text = " ".join(
+        str(sq31.get(field, ""))
+        for field in ("quote", "completeness_calculation", "justification")
+    )
+    text = " ".join([evidence_text, quote_text])
+    if _TTE_DIRECT_MISSINGNESS_RE.search(text):
+        return sq_answers
+    if not _TTE_ANALYSIS_ONLY_RE.search(text):
+        return sq_answers
+
+    updated = dict(sq_answers)
+    updated["3.1"] = {
+        **sq31,
+        "answer": "NI",
+        "justification": (
+            f"{sq31.get('justification', '').strip()} "
+            "For time-to-event outcomes, ITT, survival-model, Kaplan-Meier, or censoring language alone does not directly establish negligible missing outcome data."
+        ).strip(),
+        "uncertainty_flag": sq31.get("uncertainty_flag", "HIGH"),
+    }
+    for sq_id in ("3.2", "3.3", "3.4"):
+        updated.setdefault(
+            sq_id,
+            {
+                "answer": "NI",
+                "quote": "No relevant text found",
+                "justification": "D3 remains applicable after time-to-event missingness calibration.",
+                "uncertainty_flag": "HIGH",
+            },
+        )
+    return updated
+
+
+def _domain3_missingness_text(state: RoB2State) -> str:
+    evidence = state.get("evidence", {})
+    parts = [
+        _section_text(evidence.get("d3_missing_data", {})),
+        _section_text(evidence.get("consort_flow", {})),
+        _section_text(evidence.get("results", {})),
+        state.get("rag_contexts", {}).get("d3", ""),
+        state.get("ctgov_flow", ""),
+    ]
+    return "\n".join(str(part) for part in parts if part)
+
+
+def _section_text(section: object) -> str:
+    if isinstance(section, dict):
+        return "\n".join(
+            str(section.get(key, "")) for key in ("text", "tables") if section.get(key)
+        )
+    return str(section or "")
 
 
 def apply_domain4_control(

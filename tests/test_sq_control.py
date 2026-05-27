@@ -32,7 +32,9 @@ def test_next_domain2_stage_routes_per_protocol_to_conditional():
 def test_domain2_conditional_sets_later_questions_na_after_no_deviations():
     sq_answers = {"2.3": {"answer": "N"}, "2.4": {"answer": "Y"}}
 
-    result = apply_domain2_conditional_control({"effect_of_interest": "ITT"}, sq_answers)
+    result = apply_domain2_conditional_control(
+        {"effect_of_interest": "ITT"}, sq_answers
+    )
 
     assert result["2.4"]["answer"] == "NA"
     assert result["2.5"]["answer"] == "NA"
@@ -51,6 +53,66 @@ def test_domain3_sets_remaining_questions_na_when_missing_data_not_problematic()
 
     result = apply_domain3_control({}, sq_answers)
 
+    assert result["3.2"]["answer"] == "NA"
+    assert result["3.3"]["answer"] == "NA"
+    assert result["3.4"]["answer"] == "NA"
+
+
+def test_domain3_time_to_event_requires_direct_missingness_evidence():
+    state = {
+        "outcome_properties": {"time_to_event": True},
+        "evidence": {
+            "d3_missing_data": {
+                "text": "The primary analysis used the intention-to-treat population. Overall survival was estimated with Kaplan-Meier methods; patients without events were censored at last follow-up.",
+                "tables": "",
+            },
+            "consort_flow": {"text": "", "tables": ""},
+            "results": {"text": "", "tables": ""},
+        },
+        "rag_contexts": {"d3": ""},
+        "ctgov_flow": "",
+    }
+    sq_answers = {
+        "3.1": {
+            "answer": "Y",
+            "quote": "patients without events were censored at last follow-up",
+            "completeness_calculation": "100/100 = 100%",
+            "justification": "The survival analysis censored participants without events.",
+        }
+    }
+
+    result = apply_domain3_control(state, sq_answers)
+
+    assert result["3.1"]["answer"] == "NI"
+    assert result["3.2"]["answer"] != "NA"
+
+
+def test_domain3_time_to_event_accepts_direct_completeness_evidence():
+    state = {
+        "outcome_properties": {"time_to_event": True},
+        "evidence": {
+            "d3_missing_data": {
+                "text": "Vital status was ascertained for 198 of 200 randomized participants; two participants were lost to follow-up before the survival analysis cutoff.",
+                "tables": "",
+            },
+            "consort_flow": {"text": "", "tables": ""},
+            "results": {"text": "", "tables": ""},
+        },
+        "rag_contexts": {"d3": ""},
+        "ctgov_flow": "",
+    }
+    sq_answers = {
+        "3.1": {
+            "answer": "PY",
+            "quote": "Vital status was ascertained for 198 of 200 randomized participants",
+            "completeness_calculation": "198/200 = 99.0%",
+            "justification": "Nearly all participants had survival status ascertained.",
+        }
+    }
+
+    result = apply_domain3_control(state, sq_answers)
+
+    assert result["3.1"]["answer"] == "PY"
     assert result["3.2"]["answer"] == "NA"
     assert result["3.3"]["answer"] == "NA"
     assert result["3.4"]["answer"] == "NA"
