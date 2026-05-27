@@ -337,26 +337,22 @@ def apply_domain4_control(
 ) -> dict[str, dict]:
     updated = dict(sq_answers)
     outcome_type = _effective_domain4_outcome_type(state)
-    trial_is_open_label = _trial_is_open_label(state)
+    assessor_is_aware = _domain4_assessor_is_aware(state, outcome_type)
 
     has_blinded_adjudication = _has_blinded_adjudication(state)
     pfs_open_label_concern = (
-        trial_is_open_label
+        assessor_is_aware
         and _is_pfs_outcome(state)
         and not has_blinded_adjudication
         and _progression_uses_clinician_or_investigator_assessment(state)
     )
 
-    if trial_is_open_label and outcome_type == "patient-reported":
+    if assessor_is_aware and outcome_type == "patient-reported":
         existing_quote = updated.get("4.3", {}).get("quote") or ""
         quote = (
             existing_quote
             if existing_quote and not existing_quote.startswith("Auto-set:")
-            else (
-                state.get("sq_answers", {}).get("2.1", {}).get("quote")
-                or state.get("sq_answers", {}).get("2.2", {}).get("quote")
-                or "No relevant text found"
-            )
+            else _domain4_awareness_quote(state)
         )
         updated["4.3"] = {
             "answer": "Y",
@@ -365,7 +361,7 @@ def apply_domain4_control(
             "uncertainty_flag": "NORMAL",
         }
     elif (
-        trial_is_open_label
+        assessor_is_aware
         and not has_blinded_adjudication
         and outcome_type
         in (
@@ -377,11 +373,7 @@ def apply_domain4_control(
         quote = (
             existing_quote
             if existing_quote and not existing_quote.startswith("Auto-set:")
-            else (
-                state.get("sq_answers", {}).get("2.1", {}).get("quote")
-                or state.get("sq_answers", {}).get("2.2", {}).get("quote")
-                or "No relevant text found"
-            )
+            else _domain4_awareness_quote(state)
         )
         updated["4.3"] = {
             "answer": "PY",
@@ -506,21 +498,41 @@ def _has_blinded_adjudication(state: RoB2State) -> bool:
     )
 
 
-def _trial_is_open_label(state: RoB2State) -> bool:
+def _domain4_assessor_is_aware(state: RoB2State, outcome_type: str) -> bool:
     masking_facts = state.get("masking_facts") or {}
-    awareness_statuses = [
-        (masking_facts.get("participant_awareness") or {}).get("status"),
-        (masking_facts.get("personnel_awareness") or {}).get("status"),
-        (masking_facts.get("outcome_assessor_awareness") or {}).get("status"),
-    ]
-    if any(status == "aware" for status in awareness_statuses):
+    fact_name = (
+        "participant_awareness"
+        if outcome_type == "patient-reported"
+        else "outcome_assessor_awareness"
+    )
+    status = (masking_facts.get(fact_name) or {}).get("status")
+    if status == "aware":
         return True
-    if awareness_statuses and all(status == "unaware" for status in awareness_statuses):
+    if status == "unaware":
         return False
+    return _domain4_text_indicates_assessor_awareness(state)
 
-    sq_2_1 = state.get("sq_answers", {}).get("2.1", {}).get("answer", "NI")
-    sq_2_2 = state.get("sq_answers", {}).get("2.2", {}).get("answer", "NI")
-    return sq_2_1 in ("Y", "PY") or sq_2_2 in ("Y", "PY")
+
+def _domain4_text_indicates_assessor_awareness(state: RoB2State) -> bool:
+    text = _domain4_text(state)
+    return bool(
+        re.search(
+            r"\b(open-label|open label|unblinded|not blinded|not masked)\b",
+            text,
+            re.I,
+        )
+    )
+
+
+def _domain4_awareness_quote(state: RoB2State) -> str:
+    masking_facts = state.get("masking_facts") or {}
+    for fact_name in ("outcome_assessor_awareness", "participant_awareness"):
+        fact = masking_facts.get(fact_name) or {}
+        for quote in fact.get("quotes") or []:
+            text = quote.get("quote")
+            if text:
+                return str(text)
+    return _domain4_quote(state, {})
 
 
 def _progression_uses_clinician_or_investigator_assessment(state: RoB2State) -> bool:
