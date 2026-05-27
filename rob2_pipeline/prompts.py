@@ -287,6 +287,8 @@ Because 2.1 or 2.2 was Y/PY/NI, answer the conditional Domain 2 questions for th
 
 If 2.3 is N/PN, answer 2.4 and 2.5 as NA. If 2.3 is Y/PY/NI, answer 2.4.
 
+For SQ 2.3 in aware/open-label trials, N/PN requires affirmative evidence that no relevant deviations occurred or that described deviations were not trial-context deviations. Do not infer N/PN from generic methods/results text, ITT language, "No relevant text found", or simple absence of reported deviations; use NI when that is all the sources provide.
+
 If 2.4 is N/PN/NI/NA, answer 2.5 as NA. If 2.4 is Y/PY, answer 2.5.
 
 <domain2_conditional>

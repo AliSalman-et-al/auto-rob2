@@ -59,7 +59,7 @@ DOMAIN2_ASSIGNMENT_METHODOLOGY = DomainMethodology(
     title="Bias due to deviations from intended interventions: effect of assignment",
     principles=[
         "Open-label trials are not automatically high risk; bias depends on trial-context deviations and analysis appropriateness.",
-        "NI is a last resort. NI is appropriate only when deviations are described that could plausibly have arisen from the trial context but the report does not clarify their origin. Do not use NI merely because a report omits an explicit statement that routine clinical-management events were unrelated to trial context when N or PN is a reasonable inference.",
+        "In aware or open-label trials, 2.3=N/PN requires affirmative no-deviation evidence. Generic methods/results text, ITT language, or absence of reported deviations is insufficient evidence rather than proof of no trial-context deviations.",
     ],
     rule_cards={
         "2.1": _AWARENESS_21,
@@ -78,10 +78,10 @@ DOMAIN2_ASSIGNMENT_METHODOLOGY = DomainMethodology(
                     "Deviations appear consistent with what could occur outside the trial context, or no indication suggests trial-context influence."
                 ),
                 "N": ResponseRule(
-                    "Deviations are explicitly unrelated to trial context, are protocol-consistent changes, or reflect normal clinical management that could occur outside the trial context."
+                    "Affirmative evidence shows no relevant deviations, or deviations are explicitly unrelated to trial context, protocol-consistent, or normal clinical management that could occur outside the trial context."
                 ),
                 "NI": ResponseRule(
-                    "Use only when deviations are described but the available sources genuinely do not allow a reasonable PY or PN judgment about whether they arose because of the trial context."
+                    "Use when evidence about trial-context deviations is insufficient or when described deviations cannot be classified as trial-context or non-trial-context."
                 ),
             },
             [Citation(SUPP, "p.7"), Citation(BMJ, "p.3")],
