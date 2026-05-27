@@ -3,6 +3,7 @@ from typing import Annotated, Any, TypedDict
 
 from rob2_pipeline.models import PaperEvidence
 from rob2_pipeline.types import (
+    D1RandomizationIntegrityEvidence,
     EvidenceFact,
     EvidencePacket,
     EvidenceValidationFlag,
@@ -78,6 +79,9 @@ class RoB2State(TypedDict, total=False):
     # === DOMAIN JUDGMENTS (set by deterministic nodes) ===
     domain_judgments: Annotated[dict[str, str], merge_dicts]
     domain_rationales: Annotated[dict[str, str], merge_dicts]
+    d1_randomization_integrity_evidence: Annotated[
+        D1RandomizationIntegrityEvidence, take_latest
+    ]
     d5_selection_evidence: Annotated[D5SelectionEvidence, take_latest]
 
     # === OVERALL ===
