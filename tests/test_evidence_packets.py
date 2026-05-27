@@ -52,6 +52,28 @@ def test_builds_sq_specific_packet_for_allocation_concealment():
     assert "conceal" not in packet["missing_evidence"]
     assert packet["sources"][0]["page_numbers"] == [3]
     assert packet["retrieval_confidence"] > 0
+    assert packet["candidate_facts"][0]["support_status"] == "supported"
+
+
+def test_packet_fact_marks_wrong_endpoint_source_as_source_mismatched():
+    state = _state_with_chunks(
+        "d5",
+        [
+            {
+                "text": "Overall survival was the primary endpoint and HR 0.82 was reported.",
+                "section": "Results",
+                "page_numbers": [9],
+                "score": 0.1,
+            }
+        ],
+        outcome="Progression-Free Survival",
+    )
+
+    result = build_evidence_packets(state)
+
+    facts = result["evidence_packets"]["5.2"]["candidate_facts"]
+    assert facts
+    assert facts[0]["support_status"] == "source-mismatched"
 
 
 def test_d3_completeness_packet_flags_missing_denominator():

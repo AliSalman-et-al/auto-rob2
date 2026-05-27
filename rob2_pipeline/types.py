@@ -188,6 +188,14 @@ class EvidenceValidationFlag(TypedDict):
     quote: str
 
 
+class EvidenceSupportStatus(TypedDict, total=False):
+    sq_id: str
+    claim_type: str
+    quote: str
+    support_status: str
+    provenance: dict
+
+
 class VerifierTraceEntry(TypedDict, total=False):
     node: str
     sq_id: str

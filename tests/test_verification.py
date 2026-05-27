@@ -1,5 +1,6 @@
 from rob2_pipeline.models import empty_paper_evidence
 from rob2_pipeline.nodes.verification import (
+    classify_evidence_support,
     quote_is_supported,
     quote_verifier_node,
     verify_sq_evidence,
@@ -20,6 +21,52 @@ def test_quote_support_rejects_hallucinated_quote():
     assert not quote_is_supported(
         "Outcome assessors were blinded by an independent committee.", source.casefold()
     )
+
+
+def test_classifies_exact_quote_support():
+    result = classify_evidence_support(
+        "Participants were randomly assigned using a central web system.",
+        source_text="Participants were randomly assigned using a central web system.",
+    )
+
+    assert result["status"] == "supported"
+
+
+def test_classifies_paraphrase_support_separately_from_exact_support():
+    result = classify_evidence_support(
+        "Participants were centrally randomized with a web-based system.",
+        source_text="Participants were randomly assigned using a central web system.",
+    )
+
+    assert result["status"] == "paraphrase-supported"
+
+
+def test_classifies_unsupported_evidence():
+    result = classify_evidence_support(
+        "Outcome assessors were blinded by an independent committee.",
+        source_text="Participants were randomly assigned using a central web system.",
+    )
+
+    assert result["status"] == "unsupported"
+
+
+def test_classifies_source_mismatched_evidence():
+    result = classify_evidence_support(
+        "Progression-free survival was assessed by investigators.",
+        source_text=(
+            "Progression-free survival was assessed by investigators. "
+            "Participants were centrally randomized."
+        ),
+        provenance_text="Participants were centrally randomized.",
+    )
+
+    assert result["status"] == "source-mismatched"
+
+
+def test_classifies_not_applicable_by_control_separately():
+    result = classify_evidence_support("Not applicable", source_text="")
+
+    assert result["status"] == "not-applicable-by-control"
 
 
 def test_verify_sq_evidence_flags_missing_d3_denominator():
@@ -65,6 +112,30 @@ def test_verify_sq_evidence_flags_unsupported_selective_reporting_quote():
 
     assert any(flag["issue"] == "quote_not_found_in_source_context" for flag in flags)
     assert any("multiple eligible" in flag["issue"] for flag in flags)
+
+
+def test_verify_sq_evidence_emits_support_status_with_provenance():
+    evidence = empty_paper_evidence()
+    state = {
+        "full_text": "The trial used a central web randomization system.",
+        "evidence": evidence,
+        "rag_contexts": {},
+        "sq_answers": {
+            "1.1": {
+                "answer": "Y",
+                "quote": "The trial used a central web randomization system.",
+                "justification": "Randomization was adequate.",
+            }
+        },
+    }
+
+    result = quote_verifier_node(state)
+
+    support = result["evidence_support_statuses"]
+    assert support
+    assert support[0]["support_status"] == "supported"
+    assert support[0]["provenance"]["source_scope"] == "assessment_context"
+    assert result["evidence_validation_flags"] == []
 
 
 def test_quote_verifier_surfaces_packet_retry_actions():

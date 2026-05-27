@@ -107,7 +107,7 @@ def _build_packet_for_contract(
     flags = negative_flags(state, contract, selected, text)
     retrieval_confidence = confidence(contract, selected, missing, flags)
     facts = [
-        source_to_fact(contract, source, retrieval_confidence)
+        source_to_fact(contract, source, retrieval_confidence, state)
         for source in selected
         if source.get("text")
     ]

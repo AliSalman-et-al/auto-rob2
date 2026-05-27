@@ -15,6 +15,7 @@ from rob2_pipeline.nodes.evidence_source_selection import (
     contract_terms,
     looks_like_wrong_outcome,
 )
+from rob2_pipeline.nodes.verification import classify_evidence_support
 from rob2_pipeline.state import RoB2State
 from rob2_pipeline.types import EvidenceFact, PacketSource, RetrievalGrade
 
@@ -98,9 +99,20 @@ def grade_packet(
 
 
 def source_to_fact(
-    contract: EvidenceContract, source: PacketSource, confidence: float
+    contract: EvidenceContract,
+    source: PacketSource,
+    confidence: float,
+    state: RoB2State | None = None,
 ) -> EvidenceFact:
     quote = best_sentence(source.get("text", ""), source.get("matched_terms", []))
+    support = classify_evidence_support(quote, source.get("text", ""))
+    support_status = support["status"]
+    if (
+        state is not None
+        and contract.outcome_bound
+        and looks_like_wrong_outcome(state.get("outcome", ""), quote)
+    ):
+        support_status = "source-mismatched"
     return EvidenceFact(
         fact_type=contract.required_evidence[0]
         if contract.required_evidence
@@ -112,7 +124,7 @@ def source_to_fact(
         source_section=source.get("section", ""),
         page_numbers=source.get("page_numbers", []),
         confidence=confidence,
-        support_status="supported" if quote else "missing",
+        support_status=support_status if quote else "unsupported",
         document_id=source.get("document_id", ""),
         document_name=source.get("document_name", ""),
         document_role=source.get("document_role", ""),

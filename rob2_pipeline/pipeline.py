@@ -46,6 +46,7 @@ JSON_OUTPUT_KEYS = (
     "ni_count",
     "high_uncertainty_sqs",
     "human_review_priority",
+    "evidence_support_statuses",
     "evidence_validation_flags",
     "verifier_trace",
     "verification_actions",
