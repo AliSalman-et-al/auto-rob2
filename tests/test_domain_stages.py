@@ -4,7 +4,9 @@ from rob2_pipeline.nodes.domain_helpers import DomainSqStage, run_domain_sq_stag
 def test_domain_sq_stage_runs_llm_and_postprocesses_answers():
     calls = []
 
-    def fake_call_fn(state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources=None):
+    def fake_call_fn(
+        state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources=None
+    ):
         calls.append(
             {
                 "prompt": prompt,

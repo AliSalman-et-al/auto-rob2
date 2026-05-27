@@ -83,9 +83,7 @@ DOMAIN2_CONDITIONAL_STAGE = DomainSqStage(
 
 
 def domain2_conditional_node(state: RoB2State) -> RoB2State:
-    return run_domain_sq_stage(
-        state, DOMAIN2_CONDITIONAL_STAGE, call_fn=call_node_llm
-    )
+    return run_domain_sq_stage(state, DOMAIN2_CONDITIONAL_STAGE, call_fn=call_node_llm)
 
 
 def build_domain2_analysis_prompt(state: RoB2State) -> str:
