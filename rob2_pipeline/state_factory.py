@@ -46,6 +46,7 @@ def create_initial_state(
         "outcome": outcome or "",
         "outcome_type": "clinician-composite",
         "outcome_properties": dict(DEFAULT_OUTCOME_PROPERTIES),
+        "outcome_resolution": {},
         "numerical_result": NOT_REPORTED,
         "effect_of_interest": effect_of_interest,
         "registration_number": NOT_REPORTED,

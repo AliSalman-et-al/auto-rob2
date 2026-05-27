@@ -49,6 +49,29 @@ class OutcomeProperties(TypedDict):
     blinded_adjudication: bool
 
 
+class OutcomeResolutionSupport(TypedDict, total=False):
+    source_priority: int
+    source_label: str
+    field: str
+    source_kind: str
+    document_role: str
+    quote: str
+
+
+class OutcomeResolution(TypedDict, total=False):
+    outcome: str
+    outcome_code: str
+    requested_outcome: str
+    benchmark_code: str
+    outcome_type: str
+    properties: OutcomeProperties
+    support: list[OutcomeResolutionSupport]
+    warnings: list[str]
+    resolver: str
+    resolution_method: str
+    source_priority_order: list[str]
+
+
 class TrialFacts(TypedDict, total=False):
     randomization: str
     allocation_concealment: str
