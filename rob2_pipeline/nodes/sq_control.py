@@ -84,6 +84,7 @@ def apply_domain2_analysis_control(
 def apply_domain3_control(
     state: RoB2State, sq_answers: dict[str, dict]
 ) -> dict[str, dict]:
+    sq_answers = _apply_d3_completeness_gate(state, sq_answers)
     sq_answers = _calibrate_time_to_event_d3_1(state, sq_answers)
     s31 = sq_answers.get("3.1", {}).get("answer", "NI")
     s32 = sq_answers.get("3.2", {}).get("answer", "NA")
@@ -95,6 +96,177 @@ def apply_domain3_control(
     if s33 in ("N", "PN"):
         return set_na(sq_answers, "3.4")
     return sq_answers
+
+
+_DIRECT_COMPLETENESS_RE = re.compile(
+    r"\b("
+    r"outcome\s+data\s+(?:were\s+)?(?:available|complete|obtained|collected)|"
+    r"(?:complete|completed)\s+(?:outcome\s+)?(?:data|follow-up|followup)|"
+    r"(?:vital|survival|mortality|event)\s+status.{0,60}(?:available|ascertained|complete)|"
+    r"ascertain(?:ed|ment).{0,60}(?:complete|status|outcome|event|survival)|"
+    r"(?:lost|loss)\s+to\s+follow[- ]?up|"
+    r"missing\s+outcome\s+data|"
+    r"no\s+(?:patients|participants).{0,50}(?:lost|missing)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+_ANALYSIS_ONLY_RE = re.compile(
+    r"\b("
+    r"intention[- ]to[- ]treat|itt|modified\s+intention|mitt|"
+    r"kaplan[- ]meier|cox|hazard\s+ratio|survival\s+model|"
+    r"censor(?:ed|ing)?|last\s+follow[- ]?up|"
+    r"analysis\s+population|full\s+analysis\s+set"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+_SAFETY_POPULATION_RE = re.compile(
+    r"\b("
+    r"safety\s+(?:analysis\s+)?population|safety\s+set|"
+    r"received\s+at\s+least\s+one\s+dose|treated\s+population"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+_RANDOMIZED_DENOMINATOR_RE = re.compile(
+    r"\b(?:randomi[sz]ed|randomly\s+assigned|enrolled)\D{0,40}(\d{2,5})\b|"
+    r"\b(\d{2,5})\s+(?:patients|participants)\s+(?:were\s+)?(?:randomi[sz]ed|randomly\s+assigned)\b",
+    re.IGNORECASE,
+)
+
+
+_OUTCOME_DENOMINATOR_RE = re.compile(
+    r"\b(?:outcome\s+data|primary\s+outcome|vital\s+status|survival\s+status|event\s+status|"
+    r"follow[- ]?up|analysis)\D{0,80}?(\d{2,5})\s+(?:of|/)\s+(\d{2,5})\b|"
+    r"\b(\d{2,5})\s+(?:of|/)\s+(\d{2,5})\D{0,80}?"
+    r"(?:outcome\s+data|primary\s+outcome|vital\s+status|survival\s+status|event\s+status|follow[- ]?up|analysis)\b|"
+    r"\b(\d{2,5})\s+(?:patients|participants)\D{0,60}?"
+    r"(?:had|with|included in|available for)\D{0,40}?"
+    r"(?:outcome\s+data|primary\s+outcome|vital\s+status|survival\s+status|event\s+status|follow[- ]?up)\b",
+    re.IGNORECASE,
+)
+
+
+def classify_d3_completeness_support(state: RoB2State, text: str) -> dict[str, object]:
+    """Classify whether D3 3.1 has direct completeness support."""
+    evidence_text = " ".join([_domain3_missingness_text(state), str(text or "")])
+    randomized = _randomized_denominators(evidence_text)
+    outcome_counts = _outcome_counts(evidence_text)
+    direct = bool(_DIRECT_COMPLETENESS_RE.search(evidence_text))
+    analysis_only = bool(_ANALYSIS_ONLY_RE.search(evidence_text))
+    safety_only = bool(_SAFETY_POPULATION_RE.search(evidence_text)) and not direct
+
+    if randomized and outcome_counts:
+        largest_randomized = max(randomized)
+        best_observed = max(count for count, _total in outcome_counts)
+        best_total = max(total for _count, total in outcome_counts)
+        if best_total and best_total != largest_randomized and best_observed < 0.95 * largest_randomized:
+            return {
+                "classification": "contradictory",
+                "reason": "Outcome-data denominators conflict with the randomized denominator.",
+                "randomized_denominators": randomized,
+                "outcome_denominators": outcome_counts,
+            }
+        if direct and best_observed / max(best_total, 1) >= 0.95:
+            return {
+                "classification": "sufficient",
+                "reason": "Direct outcome-data denominator support shows nearly complete data.",
+                "randomized_denominators": randomized,
+                "outcome_denominators": outcome_counts,
+            }
+
+    if safety_only or _SAFETY_POPULATION_RE.search(evidence_text):
+        return {
+            "classification": "insufficient",
+            "reason": "Safety population exclusions do not establish complete randomized-participant outcome data.",
+            "randomized_denominators": randomized,
+            "outcome_denominators": outcome_counts,
+        }
+    if analysis_only and not direct:
+        return {
+            "classification": "insufficient",
+            "reason": "Analysis-population, model, or censoring language is not direct completeness evidence.",
+            "randomized_denominators": randomized,
+            "outcome_denominators": outcome_counts,
+        }
+    if direct and outcome_counts:
+        count, total = max(outcome_counts, key=lambda pair: pair[1])
+        if count / max(total, 1) >= 0.95:
+            return {
+                "classification": "sufficient",
+                "reason": "Direct outcome-data denominator support shows nearly complete data.",
+                "randomized_denominators": randomized,
+                "outcome_denominators": outcome_counts,
+            }
+    return {
+        "classification": "insufficient",
+        "reason": "Direct denominator or percentage support for assessed-outcome completeness is missing.",
+        "randomized_denominators": randomized,
+        "outcome_denominators": outcome_counts,
+    }
+
+
+def _apply_d3_completeness_gate(
+    state: RoB2State, sq_answers: dict[str, dict]
+) -> dict[str, dict]:
+    sq31 = sq_answers.get("3.1", {})
+    if sq31.get("answer") not in ("Y", "PY"):
+        return sq_answers
+    quote_text = " ".join(
+        str(sq31.get(field, ""))
+        for field in ("quote", "completeness_calculation", "justification")
+    )
+    support = classify_d3_completeness_support(state, quote_text)
+    if support["classification"] == "sufficient":
+        return sq_answers
+
+    updated = dict(sq_answers)
+    updated["3.1"] = {
+        **sq31,
+        "answer": "NI",
+        "justification": (
+            f"{sq31.get('justification', '').strip()} "
+            f"D3 completeness evidence gate classified 3.1 support as {support['classification']}: {support['reason']}"
+        ).strip(),
+        "uncertainty_flag": sq31.get("uncertainty_flag", "HIGH"),
+        "completeness_support": support,
+    }
+    for sq_id in ("3.2", "3.3", "3.4"):
+        updated.setdefault(
+            sq_id,
+            {
+                "answer": "NI",
+                "quote": "No relevant text found",
+                "justification": "D3 remains applicable after completeness evidence gating.",
+                "uncertainty_flag": "HIGH",
+            },
+        )
+    return updated
+
+
+def _randomized_denominators(text: str) -> list[int]:
+    values: list[int] = []
+    for match in _RANDOMIZED_DENOMINATOR_RE.finditer(text):
+        for group in match.groups():
+            if group:
+                values.append(int(group))
+                break
+    return values
+
+
+def _outcome_counts(text: str) -> list[tuple[int, int]]:
+    counts: list[tuple[int, int]] = []
+    for match in _OUTCOME_DENOMINATOR_RE.finditer(text):
+        groups = [int(group) for group in match.groups() if group]
+        if len(groups) >= 2:
+            counts.append((groups[0], groups[1]))
+        elif len(groups) == 1:
+            counts.append((groups[0], groups[0]))
+    return counts
 
 
 def _calibrate_time_to_event_d3_1(
