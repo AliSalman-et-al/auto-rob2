@@ -234,6 +234,59 @@ def test_d5_packet_prefers_protocol_over_primary_result_when_terms_match():
     assert first["document_role"] == "protocol"
 
 
+def test_d3_packet_uses_ctgov_flow_only_after_primary_completeness_evidence():
+    evidence = empty_paper_evidence("test")
+    evidence["d3_missing_data"]["text"] = (
+        "Outcome data were available for 196 of 200 randomized participants."
+    )
+    state = {
+        "outcome": "Overall Survival",
+        "evidence": evidence,
+        "ctgov_flow": (
+            "Participant flow (from ClinicalTrials.gov posted results): "
+            "STARTED: 220; COMPLETED: 180."
+        ),
+        "rag_chunk_metadata": {"d1": [], "d2": [], "d3": [], "d4": [], "d5": []},
+        "retrieval_grades": {},
+    }
+
+    result = build_evidence_packets(state)
+
+    sources = result["evidence_packets"]["3.1"]["sources"]
+    assert sources[0]["document_role"] == "primary"
+    assert any(source.get("source_kind") == "ctgov" for source in sources)
+
+
+def test_d4_packet_uses_registry_outcome_definition_as_lower_priority_fallback():
+    state = _state_with_chunks(
+        "d4",
+        [
+            {
+                "text": "The protocol defined progression-free survival using RECIST 1.1 criteria.",
+                "section": "Protocol endpoints",
+                "page_numbers": [13],
+                "score": 0.3,
+                "document_id": "supplement:protocol",
+                "document_name": "protocol.pdf",
+                "document_role": "protocol",
+                "source_kind": "rag_chunk",
+                "source_path": "protocol.pdf",
+            }
+        ],
+        outcome="Progression-Free Survival",
+    )
+    state["ctgov_outcomes"] = (
+        "Primary Outcome: Progression-Free Survival. Time Frame: from randomization "
+        "to radiographic progression or death."
+    )
+
+    result = build_evidence_packets(state)
+
+    sources = result["evidence_packets"]["4.1"]["sources"]
+    assert sources[0]["document_role"] == "protocol"
+    assert any(source.get("document_role") == "registry" for source in sources)
+
+
 def test_d2_packet_prefers_evidence_derived_deviation_concern_over_trial_name():
     state = _state_with_chunks(
         "d2",
