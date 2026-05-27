@@ -1,13 +1,16 @@
 import argparse
+import json
 import os
 from pathlib import Path
 
 from rob2_pipeline.benchmark import (
     OUTCOME_LABELS,
+    compare_benchmark_runs,
     find_supplements_for_trial,
     load_reference,
     run_benchmark,
     summarize_benchmark,
+    write_benchmark_delta_report,
     write_benchmark_report,
 )
 
@@ -15,6 +18,16 @@ from rob2_pipeline.benchmark import (
 DEFAULT_REFERENCE_OS = "data/references/overall_survival.csv"
 DEFAULT_REFERENCE_PFS = "data/references/progression_free_survival.csv"
 DEFAULT_REFERENCE_AE = "data/references/adverse_events.csv"
+SUPPLEMENT_REGRESSION_OUTCOME_MAP = [
+    {"trial": "CHAARTED", "outcome_code": "OS", "cohort": "supplement-regression"},
+    {"trial": "CHAARTED", "outcome_code": "PFS", "cohort": "supplement-regression"},
+    {"trial": "PEACE-1", "outcome_code": "OS", "cohort": "supplement-regression"},
+    {"trial": "PEACE-1", "outcome_code": "PFS", "cohort": "supplement-regression"},
+    {"trial": "PEACE-1", "outcome_code": "AE", "cohort": "supplement-regression"},
+    {"trial": "STAMPEDE", "outcome_code": "OS", "cohort": "supplement-regression"},
+    {"trial": "STAMPEDE", "outcome_code": "PFS", "cohort": "supplement-regression"},
+    {"trial": "STAMPEDE", "outcome_code": "AE", "cohort": "supplement-regression"},
+]
 
 
 def _parse_outcome_map(values: list[str]) -> list[dict[str, str]]:
@@ -93,8 +106,14 @@ def main():
     parser.add_argument(
         "--outcome-map",
         nargs="+",
-        required=True,
+        default=None,
         help="Trial:outcome mappings, e.g. CHAARTED:OS ARCHES:PFS or CHAARTED:OS:calibration",
+    )
+    parser.add_argument(
+        "--preset",
+        choices=["supplement-regression"],
+        default=None,
+        help="Use a named benchmark set. supplement-regression runs CHAARTED, PEACE-1, and STAMPEDE supplement cases.",
     )
     parser.add_argument(
         "--output-dir", default="outputs/benchmark/", help="Benchmark output directory."
@@ -126,12 +145,26 @@ def main():
         action="store_true",
         help="Validate inputs and print planned runs only.",
     )
+    parser.add_argument(
+        "--baseline-results",
+        default=None,
+        help="Optional previous benchmark_results.json to compare against this run.",
+    )
     args = parser.parse_args()
 
     if args.no_cache:
         os.environ["ROB2_USE_CACHE"] = "0"
 
-    outcome_map = _parse_outcome_map(args.outcome_map)
+    if args.preset == "supplement-regression":
+        outcome_map = list(SUPPLEMENT_REGRESSION_OUTCOME_MAP)
+        args.use_supplements = True
+        args.supplement_dir = args.supplement_dir or "inputs/benchmark/supplement"
+        if args.supplement_policy == "auto":
+            args.supplement_policy = "required"
+    elif args.outcome_map:
+        outcome_map = _parse_outcome_map(args.outcome_map)
+    else:
+        parser.error("Provide --outcome-map or --preset supplement-regression.")
     input_dir = Path(args.input_dir)
     output_dir = Path(args.output_dir)
     reference_csvs = {
@@ -183,6 +216,17 @@ def main():
     summary = summarize_benchmark(results)
     write_benchmark_report(results, summary, output_dir / "benchmark_report.md")
 
+    if args.baseline_results:
+        baseline = json.loads(Path(args.baseline_results).read_text(encoding="utf-8"))
+        current = {"results": results, "summary": summary}
+        delta = compare_benchmark_runs(baseline, current)
+        delta_json_path = output_dir / "benchmark_delta.json"
+        delta_json_path.write_text(
+            json.dumps(delta, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        write_benchmark_delta_report(delta, output_dir / "benchmark_delta_report.md")
+
     print(f"Benchmark complete: {summary['evaluated_trials']} trial(s) evaluated")
     if args.debug:
         for item in results:
@@ -192,6 +236,8 @@ def main():
             )
         print(f"Results written to: {output_dir / 'benchmark_results.json'}")
         print(f"Report written to: {output_dir / 'benchmark_report.md'}")
+        if args.baseline_results:
+            print(f"Delta written to: {output_dir / 'benchmark_delta_report.md'}")
 
 
 if __name__ == "__main__":
