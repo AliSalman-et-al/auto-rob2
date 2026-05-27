@@ -136,9 +136,9 @@ protocol, or SAP definition.
 ### Effect Of Interest
 
 The Domain 2 estimand mode. `ITT` means effect of assignment to intervention.
-`per-protocol` means effect of adhering to intervention. Safety endpoints may
-auto-switch to per-protocol when the user has not explicitly overridden the
-environment default.
+`per-protocol` means effect of adhering to intervention. Endpoint identity does
+not change this mode; an assessment must explicitly request an adhering or
+per-protocol effect.
 
 ### Benchmark AE Estimand
 
@@ -298,8 +298,7 @@ Some-concerns domains.
 ### Trial Metadata
 
 - `rob2_pipeline/nodes/preliminary.py` extracts trial metadata, fetches
-  ClinicalTrials.gov data, reconciles registered endpoints, and may auto-set
-  safety outcomes to per-protocol.
+  ClinicalTrials.gov data, and reconciles registered endpoints.
 - `rob2_pipeline/registration_api.py` fetches and formats ClinicalTrials.gov
   outcomes, design, description, and participant flow.
 - `rob2_pipeline/nodes/outcome_resolver.py` infers outcome properties and

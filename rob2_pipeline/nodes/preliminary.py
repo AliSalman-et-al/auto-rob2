@@ -201,37 +201,4 @@ def preliminary_info_node(state: RoB2State) -> RoB2State:
     if _matched_registered_endpoint:
         state["registered_endpoint"] = _matched_registered_endpoint
 
-    # Auto-detect safety outcomes and override effect_of_interest
-    _safety_keywords = {
-        "adverse",
-        "toxicity",
-        "toxic",
-        "safety",
-        "tolerability",
-        "harm",
-        "side effect",
-        "side-effect",
-        "harms",
-    }
-    _outcome_lower = state.get("outcome", "").lower()
-    _outcome_type = state.get("outcome_type", "")
-    _user_set_effect = os.getenv("ROB2_EFFECT_OF_INTEREST", "ITT")
-
-    if (
-        _outcome_type == "clinician-graded"
-        and any(kw in _outcome_lower for kw in _safety_keywords)
-        and _user_set_effect == "ITT"
-    ):  # only override if user didn't explicitly set it
-        state["effect_of_interest"] = "per-protocol"
-        if "errors" not in state:
-            state["errors"] = []
-        state["errors"].append(
-            "INFO: effect_of_interest auto-set to 'per-protocol' because outcome '"
-            + state.get("outcome", "")
-            + "' was classified as a safety endpoint "
-            "(outcome_type=clinician-graded with safety keywords). Domain 2 will use "
-            "the per-protocol algorithm. Override with ROB2_EFFECT_OF_INTEREST=ITT "
-            "environment variable if this is incorrect."
-        )
-
     return state
