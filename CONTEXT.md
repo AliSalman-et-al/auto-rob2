@@ -67,7 +67,15 @@ page numbers.
 The structured primary-paper evidence object used by downstream nodes. It has
 sections for abstract, methods, results, D1 randomization, D2 blinding, D3
 missing data, D4 outcome measurement, D5 registration, CONSORT flow, and
-baseline table, plus extraction method and warnings.
+baseline table, plus extraction method and warnings. It is extracted evidence,
+not authoritative evidence; when it conflicts with quote-grounded source text,
+the quote-grounded source text is authoritative.
+
+### Quote-Grounded Evidence
+
+Evidence whose claim can be traced to matching text in `full_text`, a Docling
+chunk, or another provenance-bearing `SourceDocument`. It is the authority used
+to resolve conflicts with unverified extracted evidence.
 
 ### Trial Ingestion Artifact
 
@@ -162,7 +170,43 @@ retrieval confidence, and packet grade.
 
 A compact fact derived from a selected packet source. It records fact type,
 domain, SQ ids, claim, quote, source section, page numbers, confidence, support
-status, document identity, role, source kind, and source path.
+status, document identity, role, source kind, and source path. Its Evidence
+Support Level describes how well the source supports the extracted claim.
+
+### Evidence Support Level
+
+The reviewer-facing strength of support for a claim or signaling-question
+answer. It captures the human judgment that evidence may be strong, moderate,
+weak, or unsupported even when a relevant quote or number is present. It is a
+reasoned assessment of support, not a mechanical keyword or denominator check.
+Canonical levels are `strong`, `moderate`, `weak`, and `unsupported`. Support
+level primarily shapes the SQ answer itself; domain judging uses it as an audit
+brake when a weak or unsupported SQ answer is pivotal to the final judgment.
+
+### Pivotal SQ Answer
+
+A signaling-question answer whose more conservative interpretation would change
+the Domain Judgment. Weak or unsupported pivotal answers should be retried or
+escalated rather than silently driving the final judgment.
+
+### Pivotality Test
+
+An explicit audit artifact that records whether a signaling-question answer is
+pivotal. It compares the original Domain Judgment with the judgment produced by
+a documented conservative test answer, without silently mutating the emitted SQ
+answer.
+
+### SQ Support Adjudication
+
+A focused retry of one pivotal signaling-question answer. It re-evaluates
+whether the original answer is semantically supported by the selected evidence
+without re-running the whole domain judgment.
+
+### SQ Support Audit
+
+The pipeline step that identifies weak or unsupported pivotal signaling-question
+answers and routes them to SQ Support Adjudication before final domain
+judgments are accepted.
 
 ### DomainEvidenceContext
 
@@ -181,7 +225,9 @@ stage-local post-processing for answer corrections or NA control flow.
 
 The parsed XML answer for one RoB 2 signaling question. It contains an answer
 code (`Y`, `PY`, `PN`, `N`, `NI`, or `NA`), quote, justification, and
-uncertainty flag.
+uncertainty flag. Each answer should also carry an Evidence Support Level so
+reviewers can see how strongly the full evidence set supports that SQ answer,
+not just whether one cited fact exists.
 
 ### Domain Judgment
 
