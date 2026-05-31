@@ -6,7 +6,7 @@ Issues are tracked in GitHub Issues for `AliSalman-et-al/auto-rob2` using the `g
 
 ### Triage labels
 
-Triage uses the default canonical labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
+Triage maps the AFK-ready role to `ready-to-implement`; other labels use their canonical names. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
