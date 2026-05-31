@@ -50,6 +50,12 @@ def _clean_cell(value: str) -> str:
     return cleaned.replace("\n", " ").replace("|", "\\|")
 
 
+def _support_cell(answer: dict) -> str:
+    level = _clean_cell(answer.get("support_level", "unsupported")).title()
+    rationale = _clean_cell(answer.get("support_rationale", "No relevant text found"))
+    return f"**{level}**: {rationale}"
+
+
 def _effect_label(state: RoB2State) -> str:
     effect = state.get("effect_of_interest", "ITT")
     if str(effect).lower() == "per-protocol":
@@ -62,17 +68,16 @@ def _domain_table(state: RoB2State, domain: str) -> str:
     rows = [
         f"## Domain {domain[-1]}: {DOMAIN_TITLES[domain]}",
         "",
-        "| Question | Answer | Supporting quote | Justification |",
-        "|----------|--------|-----------------|---------------|",
+        "| Question | Answer | Evidence support | Supporting quote | Justification |",
+        "|----------|--------|------------------|-----------------|---------------|",
     ]
     for sq_id in DOMAIN_SQS[domain]:
         answer = sq_answers.get(sq_id, {})
-        if answer.get("answer") == "NA":
-            continue
         rows.append(
             "| "
             f"{sq_id} {QUESTIONS[sq_id]} | "
             f"{_clean_cell(answer.get('answer', 'NI'))} | "
+            f"{_support_cell(answer)} | "
             f"{_clean_cell(answer.get('quote', 'No relevant text found'))} | "
             f"{_clean_cell(answer.get('justification', 'No relevant text found'))} |"
         )
