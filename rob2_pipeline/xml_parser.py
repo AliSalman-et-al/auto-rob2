@@ -5,6 +5,7 @@ from lxml import etree  # type: ignore[import-untyped]
 
 
 VALID_ANSWERS = {"Y", "PY", "PN", "N", "NI", "NA"}
+VALID_SUPPORT_LEVELS = {"strong", "moderate", "weak", "unsupported"}
 ANSWER_MAPPING = {
     "YES": "Y",
     "NO": "N",
@@ -34,6 +35,15 @@ def _normalize_answer(answer: str) -> str:
     if answer in ANSWER_MAPPING:
         return ANSWER_MAPPING[answer]
     raise ValueError(f"Invalid signaling-question answer: {answer}")
+
+
+def _normalize_support_level(level: Optional[str], answer: str) -> str:
+    normalized = (level or "").strip().lower()
+    if not normalized:
+        return "unsupported" if answer == "NA" else "weak"
+    if normalized in VALID_SUPPORT_LEVELS:
+        return normalized
+    raise ValueError(f"Invalid evidence support level: {level}")
 
 
 def _safe_text(value: Optional[str], default: str = "") -> str:
@@ -74,6 +84,8 @@ def parse_sq_response(xml_string: str, sq_ids: list[str]) -> dict[str, dict]:
             "justification": sq_el.findtext("justification")
             or "No relevant text found",
             "uncertainty_flag": sq_el.findtext("uncertainty_flag") or "NORMAL",
+            "support_level": sq_el.findtext("support_level"),
+            "support_rationale": sq_el.findtext("support_rationale"),
         }
 
         answer = _normalize_answer(parsed.get("answer", "NI"))
@@ -91,6 +103,19 @@ def parse_sq_response(xml_string: str, sq_ids: list[str]) -> dict[str, dict]:
                 quote = "Not applicable"
             if justification == "No relevant text found":
                 justification = "Not applicable"
+        support_level = _normalize_support_level(parsed.get("support_level"), answer)
+        support_rationale_default = "Not applicable" if answer == "NA" else ""
+        support_rationale = _safe_text(
+            parsed.get("support_rationale"), support_rationale_default
+        )
+        if answer != "NA" and not support_rationale:
+            if parsed.get("support_level") is not None:
+                raise ValueError(
+                    f"Non-NA signaling question {sq_id} requires a support rationale"
+                )
+            support_rationale = (
+                "Support rationale was not provided by the legacy response."
+            )
 
         result[sq_id] = {
             "answer": answer,
@@ -99,6 +124,8 @@ def parse_sq_response(xml_string: str, sq_ids: list[str]) -> dict[str, dict]:
             "uncertainty_flag": _safe_text(
                 parsed.get("uncertainty_flag"), "NORMAL"
             ).upper(),
+            "support_level": support_level,
+            "support_rationale": support_rationale,
         }
 
     return result

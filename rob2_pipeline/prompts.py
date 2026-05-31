@@ -37,6 +37,12 @@ DOMAIN5_METHODOLOGY_TEXT = render_methodology(
     DOMAIN5_METHODOLOGY, ["5.1", "5.2", "5.3"]
 )
 
+SQ_SUPPORT_METADATA_INSTRUCTION = """
+For each signaling-question answer, include:
+- <support_level>[strong/moderate/weak/unsupported]</support_level>
+- <support_rationale>[one sentence explaining how strongly the full evidence set supports the answer, or "Not applicable" for NA]</support_rationale>
+"""
+
 
 PROMPT_RCT_SCREEN = """You are a systematic review methodologist. Verify whether the input study is a randomized controlled trial before any RoB 2 assessment.
 
@@ -190,6 +196,9 @@ If ClinicalTrials.gov design metadata is provided above, treat it as authoritati
 
 For each question, choose exactly one answer: Y, PY, PN, N, or NI.
 Y/N means firm evidence is stated. PY/PN means a reasonable inference from indirect evidence. NI is reserved for genuine absence of enough information; it is not a default.
+"""
+    + SQ_SUPPORT_METADATA_INSTRUCTION
+    + """
 
 <domain1>
   <sq_1_1>
@@ -244,6 +253,9 @@ Important RoB 2 principle: an open-label trial is not automatically high risk. R
 If ClinicalTrials.gov design metadata is provided above, use the masking field as authoritative confirmation when it maps to the person being assessed: masking = NONE confirms participants and carers were aware of their assignment (supports Y for Q2.1 and Q2.2). For blinded designs, check any listed masked parties before judging participants separately from carers or intervention deliverers.
 
 If both 2.1 and 2.2 are N/PN, 2.3-2.5 are not applicable and the pipeline will skip them.
+"""
+    + SQ_SUPPORT_METADATA_INSTRUCTION
+    + """
 
 <domain2_part1>
   <sq_2_1>
@@ -288,6 +300,9 @@ Because 2.1 or 2.2 was Y/PY/NI, answer the conditional Domain 2 questions for th
 If 2.3 is N/PN, answer 2.4 and 2.5 as NA. If 2.3 is Y/PY/NI, answer 2.4.
 
 If 2.4 is N/PN/NI/NA, answer 2.5 as NA. If 2.4 is Y/PY, answer 2.5.
+"""
+    + SQ_SUPPORT_METADATA_INSTRUCTION
+    + """
 
 <domain2_conditional>
   <sq_2_3>
@@ -334,6 +349,9 @@ Read the following evidence. The Primary Evidence section was extracted specific
 Answer the Domain 2 Version B conditional questions for bias due to deviations from intended interventions when estimating the effect of adhering to intervention.
 """
     + DOMAIN2_ADHERING_CONDITIONAL_METHODOLOGY_TEXT
+    + """
+"""
+    + SQ_SUPPORT_METADATA_INSTRUCTION
     + """
 
 <domain2_conditional>
@@ -383,6 +401,9 @@ Answer Domain 2 analysis questions for the effect of assignment to intervention 
     + """
 
 If 2.6 is Y/PY, answer 2.7 as NA.
+"""
+    + SQ_SUPPORT_METADATA_INSTRUCTION
+    + """
 
 <domain2_analysis>
   <sq_2_6>
@@ -425,6 +446,9 @@ Answer Domain 2 Version B analysis question for the effect of adhering to interv
     + """
 
 2.7 is not applicable for the effect of adhering to intervention; answer NA.
+"""
+    + SQ_SUPPORT_METADATA_INSTRUCTION
+    + """
 
 <domain2_analysis>
   <sq_2_6>
@@ -482,6 +506,9 @@ If 3.1 is Y/PY, answer 3.2-3.4 as NA.
 If 3.2 is Y/PY, answer 3.3-3.4 as NA. If 3.2 is N/PN, answer 3.3.
 
 If 3.3 is N/PN, answer 3.4 as NA. If 3.3 is Y/PY/NI, answer 3.4.
+"""
+    + SQ_SUPPORT_METADATA_INSTRUCTION
+    + """
 
 <domain3>
   <sq_3_1>
@@ -543,6 +570,9 @@ If 4.1 or 4.2 is Y/PY, answer 4.3-4.5 as NA.
 If 4.3 is N/PN, answer 4.4-4.5 as NA.
 
 If 4.4 is N/PN, answer 4.5 as NA.
+"""
+    + SQ_SUPPORT_METADATA_INSTRUCTION
+    + """
 
 <domain4>
   <sq_4_1>
@@ -622,6 +652,9 @@ Answer Domain 5 signaling questions: Bias in selection of the reported result.
 IMPORTANT: You are assessing Domain 5 for the specific outcome: {outcome}. All three questions concern whether the {outcome} result was selectively reported. Do NOT reason about whether other outcomes were selectively reported or chosen. Each outcome is assessed independently.
 
 If a trial registration number is available, compare the registry/protocol outcomes and analysis intentions against the result being assessed. Focus on whether the numerical result was selected on the basis of the results, not merely whether the assessed outcome was primary or secondary.
+"""
+    + SQ_SUPPORT_METADATA_INSTRUCTION
+    + """
 
 <domain5>
   <sq_5_1>

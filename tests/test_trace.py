@@ -350,12 +350,16 @@ def test_call_node_llm_returns_ni_fallback_when_repair_still_invalid(monkeypatch
             "quote": "No relevant text found",
             "justification": "LLM response could not be parsed after repair.",
             "uncertainty_flag": "HIGH",
+            "support_level": "unsupported",
+            "support_rationale": "Response could not be parsed.",
         },
         "2.7": {
             "answer": "NI",
             "quote": "No relevant text found",
             "justification": "LLM response could not be parsed after repair.",
             "uncertainty_flag": "HIGH",
+            "support_level": "unsupported",
+            "support_rationale": "Response could not be parsed.",
         },
     }
     assert log[0]["suspected_parse_failures"] == ["2.6", "2.7"]

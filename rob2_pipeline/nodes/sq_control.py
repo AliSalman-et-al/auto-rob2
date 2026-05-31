@@ -107,6 +107,8 @@ def apply_domain4_control(
             "quote": quote or "No relevant text found",
             "justification": justification,
             "uncertainty_flag": "NORMAL",
+            "support_level": "moderate",
+            "support_rationale": "Derived from treatment-awareness evidence and outcome type.",
         }
     elif outcome_type in ("vital-status", "biomarker"):
         s41 = updated.get("4.1", {}).get("answer", "NI")
@@ -120,6 +122,11 @@ def apply_domain4_control(
                 or "No relevant text found",
                 "justification": "Assessor awareness is not reported; NA is not applicable when 4.1 and 4.2 do not indicate measurement problems.",
                 "uncertainty_flag": "NORMAL",
+                "support_level": updated.get("4.3", {}).get("support_level", "weak"),
+                "support_rationale": updated.get("4.3", {}).get(
+                    "support_rationale",
+                    "No direct assessor-awareness evidence was reported.",
+                ),
             }
             s43 = "NI"
         if (
@@ -135,6 +142,8 @@ def apply_domain4_control(
                 or "No relevant text found",
                 "justification": "The outcome is inherently objective, so knowledge of intervention assignment is unlikely to influence assessment.",
                 "uncertainty_flag": "NORMAL",
+                "support_level": "moderate",
+                "support_rationale": "Derived from objective outcome classification.",
             }
             s44 = "N"
         if (
@@ -148,6 +157,8 @@ def apply_domain4_control(
                 "quote": "Not applicable",
                 "justification": "Not applicable",
                 "uncertainty_flag": "NORMAL",
+                "support_level": "unsupported",
+                "support_rationale": "Not applicable",
             }
 
     s41 = updated.get("4.1", {}).get("answer", "NI")

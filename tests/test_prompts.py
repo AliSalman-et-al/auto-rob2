@@ -194,6 +194,36 @@ def test_domain_prompts_do_not_duplicate_rendered_sq_rule_cards():
         assert heading not in combined
 
 
+def test_all_domain_prompts_require_support_metadata_for_sq_answers():
+    from rob2_pipeline.prompts import (
+        PROMPT_DOMAIN1,
+        PROMPT_DOMAIN2_ADHERING_ANALYSIS,
+        PROMPT_DOMAIN2_ADHERING_CONDITIONAL,
+        PROMPT_DOMAIN2_ANALYSIS,
+        PROMPT_DOMAIN2_CONDITIONAL,
+        PROMPT_DOMAIN2_SQ12,
+        PROMPT_DOMAIN3,
+        PROMPT_DOMAIN4,
+        PROMPT_DOMAIN5,
+    )
+
+    prompts = [
+        PROMPT_DOMAIN1,
+        PROMPT_DOMAIN2_SQ12,
+        PROMPT_DOMAIN2_CONDITIONAL,
+        PROMPT_DOMAIN2_ADHERING_CONDITIONAL,
+        PROMPT_DOMAIN2_ANALYSIS,
+        PROMPT_DOMAIN2_ADHERING_ANALYSIS,
+        PROMPT_DOMAIN3,
+        PROMPT_DOMAIN4,
+        PROMPT_DOMAIN5,
+    ]
+
+    for prompt in prompts:
+        assert "<support_level>[strong/moderate/weak/unsupported]</support_level>" in prompt
+        assert "<support_rationale>" in prompt
+
+
 def test_domain5_prompt_includes_methodology_and_preserves_outcome_scope():
     from rob2_pipeline.prompts import PROMPT_DOMAIN5
 
