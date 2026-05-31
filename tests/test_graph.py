@@ -291,7 +291,9 @@ def _patch_ingest_dependencies():
             "rob2_pipeline.ingestion.assessment.build_document_repr",
             return_value=DocumentRepr(blocks=[], full_text=_pdf_text()),
         ),
-        patch("rob2_pipeline.ingestion.assessment._build_docling_chunks", return_value=[]),
+        patch(
+            "rob2_pipeline.ingestion.assessment._build_docling_chunks", return_value=[]
+        ),
     )
 
 
@@ -446,7 +448,8 @@ def test_graph_stops_for_non_rct(tmp_path):
     with (
         patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
         patch(
-            "rob2_pipeline.ingestion.evidence.build_provider", return_value=_FakeProvider()
+            "rob2_pipeline.ingestion.evidence.build_provider",
+            return_value=_FakeProvider(),
         ),
         patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
         patch(

@@ -34,7 +34,9 @@ def test_next_domain2_stage_routes_per_protocol_to_conditional():
 def test_domain2_conditional_sets_later_questions_na_after_no_deviations():
     sq_answers = {"2.3": {"answer": "N"}, "2.4": {"answer": "Y"}}
 
-    result = apply_domain2_conditional_control({"effect_of_interest": "ITT"}, sq_answers)
+    result = apply_domain2_conditional_control(
+        {"effect_of_interest": "ITT"}, sq_answers
+    )
 
     assert result["2.4"]["answer"] == "NA"
     assert result["2.5"]["answer"] == "NA"

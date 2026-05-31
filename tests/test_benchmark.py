@@ -65,6 +65,134 @@ def test_compare_judgments_case_and_compact_normalization():
     }
 
 
+def test_run_benchmark_scores_final_judgments_and_records_adjudication_metrics(
+    tmp_path, monkeypatch
+):
+    pdf_dir = tmp_path / "benchmark"
+    pdf_dir.mkdir()
+    (pdf_dir / "TITAN.pdf").write_bytes(b"pdf")
+
+    reference_csv = tmp_path / "ref.csv"
+    reference_csv.write_text(
+        "Trial,D1,D2,D3,D4,D5,Overall Risk\nTITAN,Low,Low,Low,Low,Low,Low\n",
+        encoding="utf-8",
+    )
+
+    def fake_run_assessment(**kwargs):
+        assessment_dir = Path(kwargs["output_dir"])
+        assessment_dir.mkdir(parents=True)
+        assessment_dir.joinpath("TITAN_rob2_data.json").write_text(
+            json.dumps(
+                {
+                    "domain_judgments": {
+                        "D1": "Low",
+                        "D2": "Low",
+                        "D3": "Low",
+                        "D4": "Low",
+                        "D5": "Low",
+                    },
+                    "overall_judgment": "Low",
+                    "pivotality_tests": {
+                        "D1": [
+                            {
+                                "sq_id": "1.3",
+                                "support_level": "weak",
+                                "pivotal": True,
+                                "original_domain_judgment": "Some concerns",
+                                "test_domain_judgment": "Low",
+                            }
+                        ],
+                        "D5": [
+                            {
+                                "sq_id": "5.1",
+                                "support_level": "unsupported",
+                                "pivotal": False,
+                                "original_domain_judgment": "Low",
+                                "test_domain_judgment": "Low",
+                            }
+                        ],
+                    },
+                    "sq_support_adjudications": {
+                        "D1": [
+                            {
+                                "sq_id": "1.3",
+                                "initial_answer": {
+                                    "answer": "Y",
+                                    "support_level": "weak",
+                                },
+                                "adjudicated_answer": {
+                                    "answer": "N",
+                                    "support_level": "strong",
+                                },
+                                "changed": True,
+                                "domain_impact": {
+                                    "original_domain_judgment": "Some concerns",
+                                    "test_domain_judgment": "Low",
+                                },
+                                "llm_node": "sq_support_adjudication_D1_1_3",
+                            }
+                        ]
+                    },
+                    "source_documents": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        assessment_dir.joinpath("TITAN_trace.json").write_text(
+            json.dumps(
+                {
+                    "llm_calls": [
+                        {"node": "domain1_sq", "latency_ms": 100},
+                        {
+                            "node": "sq_support_adjudication_D1_1_3",
+                            "latency_ms": 40,
+                            "input_tokens": 7,
+                            "output_tokens": 2,
+                        },
+                    ],
+                    "node_spans": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr("rob2_pipeline.benchmark.run_assessment", fake_run_assessment)
+
+    results = run_benchmark(
+        pdf_dir=pdf_dir,
+        reference_csvs={"OS": reference_csv},
+        outcome_map=[{"trial": "TITAN", "outcome_code": "OS"}],
+        output_dir=tmp_path / "out",
+    )
+    summary = summarize_benchmark(results)
+
+    assert results[0]["comparison"]["D1"] is True
+    assert results[0]["pipeline"]["initial_domain_judgments"]["D1"] == "Some concerns"
+    assert results[0]["pipeline"]["domain_judgments"]["D1"] == "Low"
+    assert results[0]["adjudication_metrics"]["initial_final_deltas"] == {
+        "domain_judgments": {"D1": {"initial": "Some concerns", "final": "Low"}},
+        "overall_judgment": {"initial": "Some concerns", "final": "Low"},
+    }
+    assert results[0]["adjudication_metrics"]["weak_sq_answers"] == 1
+    assert results[0]["adjudication_metrics"]["unsupported_sq_answers"] == 1
+    assert results[0]["adjudication_metrics"]["pivotality_tests"] == {
+        "total": 2,
+        "pivotal": 1,
+        "non_pivotal": 1,
+    }
+    assert results[0]["adjudication_metrics"]["sq_support_adjudications"] == {
+        "total": 1,
+        "changed_answer": 1,
+        "changed_support": 1,
+        "changed_answer_or_support": 1,
+    }
+    assert results[0]["timing"]["adjudication_llm_calls"] == 1
+    assert results[0]["timing"]["adjudication_llm_total_ms"] == 40
+    assert summary["adjudication_metrics"]["weak_sq_answers"] == 1
+    assert summary["adjudication_metrics"]["unsupported_sq_answers"] == 1
+    assert summary["timing"]["total_adjudication_llm_calls"] == 1
+
+
 def test_run_benchmark_reuses_trial_artifacts_across_outcomes(tmp_path, monkeypatch):
     pdf_dir = tmp_path / "benchmark"
     pdf_dir.mkdir()
@@ -713,6 +841,104 @@ def test_write_benchmark_report_renders_timing_summary(tmp_path):
     assert "node_spans" not in public_timing
     assert "_node_spans" not in json.dumps(benchmark_json["summary"])
     assert "node_spans" not in json.dumps(benchmark_json["summary"])
+
+
+def test_write_benchmark_report_renders_adjudication_summary(tmp_path):
+    results = [
+        {
+            "id": "A:OS",
+            "trial": "A",
+            "outcome": "Outcome A",
+            "cohort": "unspecified",
+            "skipped": False,
+            "error": None,
+            "notes": "",
+            "comparison": {
+                "D1": True,
+                "D2": True,
+                "D3": True,
+                "D4": True,
+                "D5": True,
+                "Overall": True,
+            },
+            "reference": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+                "Overall Risk": "Low",
+            },
+            "pipeline": {
+                "domain_judgments": {
+                    "D1": "Low",
+                    "D2": "Low",
+                    "D3": "Low",
+                    "D4": "Low",
+                    "D5": "Low",
+                },
+                "overall_judgment": "Low",
+                "initial_domain_judgments": {
+                    "D1": "Some concerns",
+                    "D2": "Low",
+                    "D3": "Low",
+                    "D4": "Low",
+                    "D5": "Low",
+                },
+                "initial_overall_judgment": "Some concerns",
+            },
+            "adjudication_metrics": {
+                "weak_sq_answers": 1,
+                "unsupported_sq_answers": 1,
+                "pivotality_tests": {"total": 2, "pivotal": 1, "non_pivotal": 1},
+                "sq_support_adjudications": {
+                    "total": 1,
+                    "changed_answer": 1,
+                    "changed_support": 1,
+                    "changed_answer_or_support": 1,
+                },
+                "initial_final_deltas": {
+                    "domain_judgments": {
+                        "D1": {"initial": "Some concerns", "final": "Low"}
+                    },
+                    "overall_judgment": {
+                        "initial": "Some concerns",
+                        "final": "Low",
+                    },
+                },
+            },
+            "timing": {
+                "total_wall_ms": 100,
+                "llm_total_ms": 40,
+                "adjudication_llm_calls": 1,
+                "adjudication_llm_total_ms": 40,
+                "adjudication_llm_input_tokens": 7,
+                "adjudication_llm_output_tokens": 2,
+                "slowest_nodes": [],
+                "node_spans": [],
+            },
+        }
+    ]
+    summary = summarize_benchmark(results)
+
+    write_benchmark_report(results, summary, tmp_path / "benchmark_report.md")
+
+    report = (tmp_path / "benchmark_report.md").read_text(encoding="utf-8")
+    assert "## Adjudication Summary" in report
+    assert "- Weak SQ answers: 1" in report
+    assert "- Unsupported SQ answers: 1" in report
+    assert "- Pivotality tests: 2 total; 1 pivotal; 1 non-pivotal" in report
+    assert (
+        "- SQ support adjudications: 1 total; 1 changed answer; 1 changed support"
+        in report
+    )
+    assert (
+        "- Adjudication LLM calls: 1 (0.0s latency; 7 input tokens; 2 output tokens)"
+        in report
+    )
+    assert "| Field | Initial | Final | Count |" in report
+    assert "| D1 | Some concerns | Low | 1 |" in report
+    assert "| Overall | Some concerns | Low | 1 |" in report
 
 
 def test_find_supplements_for_trial_handles_spaces_and_case(tmp_path):

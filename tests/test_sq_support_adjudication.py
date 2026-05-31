@@ -20,7 +20,9 @@ def _answer(answer: str, support_level: str = "weak") -> dict:
 def test_pivotal_weak_answer_triggers_targeted_adjudication(monkeypatch):
     calls = []
 
-    def fake_call_fn(state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources=None):
+    def fake_call_fn(
+        state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources=None
+    ):
         calls.append(
             {
                 "node_name": node_name,
@@ -89,8 +91,13 @@ def test_pivotal_weak_answer_triggers_targeted_adjudication(monkeypatch):
     assert "SQ 1.3" in calls[0]["prompt"]
     assert result["sq_answers"]["1.3"]["answer"] == "N"
     assert result["domain_judgments"]["D1"] == "Low"
-    assert result["sq_support_adjudications"]["D1"][0]["initial_answer"]["answer"] == "Y"
-    assert result["sq_support_adjudications"]["D1"][0]["adjudicated_answer"]["answer"] == "N"
+    assert (
+        result["sq_support_adjudications"]["D1"][0]["initial_answer"]["answer"] == "Y"
+    )
+    assert (
+        result["sq_support_adjudications"]["D1"][0]["adjudicated_answer"]["answer"]
+        == "N"
+    )
 
 
 def test_non_pivotal_weak_answer_does_not_trigger_adjudication(monkeypatch):
@@ -232,9 +239,15 @@ def test_benchmark_failure_modes_use_adjudicated_pivotal_answer(
 ):
     calls = []
 
-    def fake_call_fn(state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources=None):
+    def fake_call_fn(
+        state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources=None
+    ):
         calls.append((node_name, parse_sq_ids, prompt))
-        return "", [{"node": node_name, "cache_hit": False}], {weak_sq_id: adjudicated_answer}
+        return (
+            "",
+            [{"node": node_name, "cache_hit": False}],
+            {weak_sq_id: adjudicated_answer},
+        )
 
     monkeypatch.setattr("rob2_pipeline.nodes.common.call_node_llm", fake_call_fn)
 
@@ -258,7 +271,10 @@ def test_benchmark_failure_modes_use_adjudicated_pivotal_answer(
         }
     )
 
-    assert calls[0][0] == f"sq_support_adjudication_{domain}_{weak_sq_id.replace('.', '_')}"
+    assert (
+        calls[0][0]
+        == f"sq_support_adjudication_{domain}_{weak_sq_id.replace('.', '_')}"
+    )
     assert calls[0][1] == [weak_sq_id]
     assert result["sq_answers"][weak_sq_id]["answer"] == adjudicated_answer["answer"]
     assert result["domain_judgments"][domain] == expected_judgment
