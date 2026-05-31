@@ -133,3 +133,12 @@ class PivotalityTest(TypedDict):
     original_domain_judgment: str
     test_domain_judgment: str
     pivotal: bool
+
+
+class SqSupportAdjudication(TypedDict, total=False):
+    sq_id: str
+    initial_answer: dict
+    adjudicated_answer: dict
+    domain_impact: dict
+    changed: bool
+    llm_node: str
