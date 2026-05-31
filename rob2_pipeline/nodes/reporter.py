@@ -120,6 +120,56 @@ def _packet_quality_section(state: RoB2State) -> str:
     )
 
 
+def _title_level(value: str) -> str:
+    return _clean_cell(value).title()
+
+
+def _answer_delta(initial: dict, adjudicated: dict) -> str:
+    initial_answer = _clean_cell(initial.get("answer", "NI"))
+    final_answer = _clean_cell(adjudicated.get("answer", "NI"))
+    initial_support = _title_level(initial.get("support_level", "unsupported"))
+    final_support = _title_level(adjudicated.get("support_level", "unsupported"))
+    return f"Answer {initial_answer} -> {final_answer}; support {initial_support} -> {final_support}"
+
+
+def _adjudication_status(attempt: dict) -> str:
+    adjudicated = attempt.get("adjudicated_answer", {}) or {}
+    support_level = str(adjudicated.get("support_level", "")).lower()
+    if support_level in {"weak", "unsupported"} or adjudicated.get("residual_uncertainty"):
+        return "uncertainty remains"
+    return "changed" if attempt.get("changed") else "unchanged"
+
+
+def _adjudication_summary_section(state: RoB2State) -> str:
+    adjudications = state.get("sq_support_adjudications", {}) or {}
+    if not adjudications:
+        return ""
+
+    rows = ["## SQ support adjudication", ""]
+    for domain in ["D1", "D2", "D3", "D4", "D5"]:
+        for attempt in adjudications.get(domain, []):
+            sq_id = _clean_cell(attempt.get("sq_id", "?"))
+            initial = attempt.get("initial_answer", {}) or {}
+            adjudicated = attempt.get("adjudicated_answer", {}) or {}
+            status = _adjudication_status(attempt)
+            rows.append(
+                f"- {domain} SQ {sq_id} triggered adjudication ({status}): "
+                f"{_answer_delta(initial, adjudicated)}."
+            )
+            rationale = _clean_cell(
+                adjudicated.get("support_rationale")
+                or adjudicated.get("justification")
+                or "No relevant text found"
+            )
+            rows.append(f"  Final support: {rationale}")
+            if adjudicated.get("residual_uncertainty"):
+                rows.append(
+                    f"  Residual uncertainty: {_clean_cell(adjudicated.get('residual_uncertainty'))}"
+                )
+    rows.append("")
+    return "\n".join(rows)
+
+
 def report_formatter_node(state: RoB2State) -> RoB2State:
     high_uncertainty = state.get("high_uncertainty_sqs", [])
     high_uncertainty_text = ", ".join(high_uncertainty) if high_uncertainty else "None"
@@ -144,6 +194,9 @@ def report_formatter_node(state: RoB2State) -> RoB2State:
     ]
     for domain in ["D1", "D2", "D3", "D4", "D5"]:
         parts.append(_domain_table(state, domain))
+    adjudication_summary = _adjudication_summary_section(state)
+    if adjudication_summary:
+        parts.append(adjudication_summary)
     parts.append(_packet_quality_section(state))
     parts.extend(
         [
