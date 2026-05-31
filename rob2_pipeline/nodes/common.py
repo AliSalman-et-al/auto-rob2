@@ -20,6 +20,8 @@ NA_ANSWER = {
     "quote": "Not applicable",
     "justification": "Not applicable",
     "uncertainty_flag": "NORMAL",
+    "support_level": "unsupported",
+    "support_rationale": "Not applicable",
 }
 
 
@@ -30,6 +32,8 @@ def _parse_failure_fallback(parse_sq_ids: list[str]) -> dict[str, dict]:
             "quote": "No relevant text found",
             "justification": "LLM response could not be parsed after repair.",
             "uncertainty_flag": "HIGH",
+            "support_level": "unsupported",
+            "support_rationale": "Response could not be parsed.",
         }
         for sq_id in parse_sq_ids
     }

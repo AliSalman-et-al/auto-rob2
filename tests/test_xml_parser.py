@@ -19,12 +19,16 @@ def test_parse_sq_response_valid_xml():
         <answer>Y</answer>
         <quote>"Computer-generated sequence" (Methods)</quote>
         <justification>Random method was stated.</justification>
+        <support_level>strong</support_level>
+        <support_rationale>Direct sequence-generation quote.</support_rationale>
       </sq_1_1>
       <sq_1_2>
         <answer>PY</answer>
         <quote>"Central allocation" (Methods)</quote>
         <justification>Central allocation implies concealment.</justification>
         <uncertainty_flag>normal</uncertainty_flag>
+        <support_level>Moderate</support_level>
+        <support_rationale>Indirect but relevant allocation evidence.</support_rationale>
       </sq_1_2>
     </domain1>
     """
@@ -33,8 +37,10 @@ def test_parse_sq_response_valid_xml():
 
     assert parsed["1.1"]["answer"] == "Y"
     assert parsed["1.1"]["quote"] == '"Computer-generated sequence" (Methods)'
+    assert parsed["1.1"]["support_level"] == "strong"
     assert parsed["1.2"]["answer"] == "PY"
     assert parsed["1.2"]["uncertainty_flag"] == "NORMAL"
+    assert parsed["1.2"]["support_level"] == "moderate"
 
 
 def test_parse_sq_response_malformed_xml_raises():
@@ -81,6 +87,57 @@ def test_parse_sq_response_unexpected_answer_values_raise():
 
     with pytest.raises(ValueError, match="Invalid signaling-question answer"):
         parse_sq_response(xml, ["5.1", "5.2"])
+
+
+def test_parse_sq_response_rejects_invalid_support_level():
+    xml = """
+    <domain1>
+      <sq_1_1>
+        <answer>Y</answer>
+        <quote>"Randomized" (Abstract)</quote>
+        <justification>States randomized.</justification>
+        <support_level>definitive</support_level>
+        <support_rationale>Unsupported label.</support_rationale>
+      </sq_1_1>
+    </domain1>
+    """
+
+    with pytest.raises(ValueError, match="Invalid evidence support level"):
+        parse_sq_response(xml, ["1.1"])
+
+
+def test_parse_sq_response_requires_support_rationale_for_non_na_answers():
+    xml = """
+    <domain1>
+      <sq_1_1>
+        <answer>Y</answer>
+        <quote>"Randomized" (Abstract)</quote>
+        <justification>States randomized.</justification>
+        <support_level>strong</support_level>
+        <support_rationale></support_rationale>
+      </sq_1_1>
+    </domain1>
+    """
+
+    with pytest.raises(ValueError, match="support rationale"):
+        parse_sq_response(xml, ["1.1"])
+
+
+def test_parse_sq_response_defaults_support_metadata_for_legacy_xml():
+    xml = """
+    <domain1>
+      <sq_1_1>
+        <answer>NA</answer>
+        <quote>Not applicable</quote>
+        <justification>Not applicable</justification>
+      </sq_1_1>
+    </domain1>
+    """
+
+    parsed = parse_sq_response(xml, ["1.1"])
+
+    assert parsed["1.1"]["support_level"] == "unsupported"
+    assert parsed["1.1"]["support_rationale"] == "Not applicable"
 
 
 def test_parse_sq_response_strips_xml_code_fences():

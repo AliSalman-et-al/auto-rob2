@@ -16,6 +16,8 @@ def test_domain2_sq12_sets_later_questions_na_when_itt_trial_has_no_awareness():
     assert result["2.3"]["answer"] == "NA"
     assert result["2.4"]["answer"] == "NA"
     assert result["2.5"]["answer"] == "NA"
+    assert result["2.5"]["support_level"] == "unsupported"
+    assert result["2.5"]["support_rationale"] == "Not applicable"
 
 
 def test_next_domain2_stage_routes_per_protocol_to_conditional():
@@ -75,3 +77,5 @@ def test_domain4_open_label_patient_reported_outcome_sets_assessor_awareness():
 
     assert result["4.3"]["answer"] == "Y"
     assert result["4.3"]["quote"] == "Open-label study"
+    assert result["4.3"]["support_level"] == "moderate"
+    assert result["4.3"]["support_rationale"]
