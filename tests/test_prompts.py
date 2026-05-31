@@ -220,7 +220,10 @@ def test_all_domain_prompts_require_support_metadata_for_sq_answers():
     ]
 
     for prompt in prompts:
-        assert "<support_level>[strong/moderate/weak/unsupported]</support_level>" in prompt
+        assert (
+            "<support_level>[strong/moderate/weak/unsupported]</support_level>"
+            in prompt
+        )
         assert "<support_rationale>" in prompt
 
 

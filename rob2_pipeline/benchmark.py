@@ -8,11 +8,13 @@ from statistics import mean, median
 from typing import Any
 
 from rob2_pipeline.ingestion.assessment import AssessmentIngestionResult
+from rob2_pipeline.judges.overall import judge_overall
 from rob2_pipeline.pipeline import run_assessment
 
 
 LOGGER = logging.getLogger(__name__)
 DOMAINS = ("D1", "D2", "D3", "D4", "D5")
+ADJUDICATION_NODE_PREFIX = "sq_support_adjudication"
 OUTCOME_LABELS = {
     "OS": "Overall Survival",
     "PFS": "Progression-Free Survival",
@@ -132,6 +134,10 @@ def _format_seconds(value_ms: object) -> str:
     return f"{_coerce_int_ms(value_ms) / 1000:.1f}s"
 
 
+def _is_adjudication_node(node: object) -> bool:
+    return _strip(node).casefold().startswith(ADJUDICATION_NODE_PREFIX)
+
+
 def _summarize_trace_timing(trace_path: Path, total_wall_ms: int) -> dict[str, Any]:
     timing = {
         "total_wall_ms": total_wall_ms,
@@ -143,6 +149,10 @@ def _summarize_trace_timing(trace_path: Path, total_wall_ms: int) -> dict[str, A
         "llm_cache_hits": 0,
         "llm_repairs": 0,
         "llm_parse_errors": 0,
+        "adjudication_llm_calls": 0,
+        "adjudication_llm_total_ms": 0,
+        "adjudication_llm_input_tokens": 0,
+        "adjudication_llm_output_tokens": 0,
         "slowest_nodes": [],
         "llm_by_node": {},
         "_node_spans": [],
@@ -197,6 +207,19 @@ def _summarize_trace_timing(trace_path: Path, total_wall_ms: int) -> dict[str, A
             llm_parse_errors += 1
         llm_total_ms += latency_ms
 
+    adjudication_llm_calls = [
+        call for call in llm_calls if _is_adjudication_node(call.get("node"))
+    ]
+    adjudication_llm_total_ms = sum(
+        _coerce_int_ms(call.get("latency_ms")) for call in adjudication_llm_calls
+    )
+    adjudication_llm_input_tokens = sum(
+        _coerce_int_ms(call.get("input_tokens")) for call in adjudication_llm_calls
+    )
+    adjudication_llm_output_tokens = sum(
+        _coerce_int_ms(call.get("output_tokens")) for call in adjudication_llm_calls
+    )
+
     sorted_spans = sorted(
         (
             {
@@ -222,6 +245,10 @@ def _summarize_trace_timing(trace_path: Path, total_wall_ms: int) -> dict[str, A
             "llm_cache_hits": llm_cache_hits,
             "llm_repairs": llm_repairs,
             "llm_parse_errors": llm_parse_errors,
+            "adjudication_llm_calls": len(adjudication_llm_calls),
+            "adjudication_llm_total_ms": adjudication_llm_total_ms,
+            "adjudication_llm_input_tokens": adjudication_llm_input_tokens,
+            "adjudication_llm_output_tokens": adjudication_llm_output_tokens,
             "slowest_nodes": [
                 {
                     "node": span["node"],
@@ -303,6 +330,124 @@ def compare_judgments(pipeline: dict, reference: dict) -> dict[str, bool]:
     overall_ref = _normalize_judgment(reference.get("Overall Risk", ""))
     result["Overall"] = overall_pipeline.casefold() == overall_ref.casefold()
     return result
+
+
+def _iter_domain_records(records: object):
+    if not isinstance(records, dict):
+        return
+    for domain, items in records.items():
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if isinstance(item, dict):
+                yield _strip(domain), item
+
+
+def _support_level(answer: object) -> str:
+    if not isinstance(answer, dict):
+        return ""
+    return _strip(answer.get("support_level")).casefold()
+
+
+def _derive_initial_domain_judgments(pipeline_output: dict[str, Any]) -> dict[str, str]:
+    initial = dict(pipeline_output.get("domain_judgments") or {})
+    for domain, attempt in _iter_domain_records(
+        pipeline_output.get("sq_support_adjudications")
+    ):
+        if domain not in DOMAINS:
+            continue
+        impact = attempt.get("domain_impact") or {}
+        original = _normalize_judgment(impact.get("original_domain_judgment"))
+        if original:
+            initial[domain] = original
+    return initial
+
+
+def _overall_from_domains(domain_judgments: dict[str, str]) -> str:
+    if not domain_judgments:
+        return ""
+    overall, _rationale = judge_overall(domain_judgments)
+    return overall
+
+
+def _summarize_adjudication_metrics(
+    pipeline_output: dict[str, Any],
+    initial_domain_judgments: dict[str, str],
+    final_domain_judgments: dict[str, str],
+    initial_overall_judgment: str,
+    final_overall_judgment: str,
+) -> dict[str, Any]:
+    pivotality_total = 0
+    pivotality_pivotal = 0
+    weak_sq_answers = 0
+    unsupported_sq_answers = 0
+    for _domain, test in _iter_domain_records(pipeline_output.get("pivotality_tests")):
+        pivotality_total += 1
+        if test.get("pivotal"):
+            pivotality_pivotal += 1
+        support_level = _strip(test.get("support_level")).casefold()
+        if support_level == "weak":
+            weak_sq_answers += 1
+        elif support_level == "unsupported":
+            unsupported_sq_answers += 1
+
+    adjudication_total = 0
+    changed_answer = 0
+    changed_support = 0
+    changed_answer_or_support = 0
+    for _domain, attempt in _iter_domain_records(
+        pipeline_output.get("sq_support_adjudications")
+    ):
+        adjudication_total += 1
+        initial_answer = attempt.get("initial_answer") or {}
+        adjudicated_answer = attempt.get("adjudicated_answer") or {}
+        answer_changed = initial_answer.get("answer") != adjudicated_answer.get(
+            "answer"
+        )
+        support_changed = _support_level(initial_answer) != _support_level(
+            adjudicated_answer
+        )
+        changed_answer += 1 if answer_changed else 0
+        changed_support += 1 if support_changed else 0
+        changed_answer_or_support += 1 if answer_changed or support_changed else 0
+
+    domain_deltas = {}
+    for domain in DOMAINS:
+        initial_value = _normalize_judgment(initial_domain_judgments.get(domain, ""))
+        final_value = _normalize_judgment(final_domain_judgments.get(domain, ""))
+        if initial_value and final_value and initial_value != final_value:
+            domain_deltas[domain] = {"initial": initial_value, "final": final_value}
+
+    overall_delta = None
+    if (
+        initial_overall_judgment
+        and final_overall_judgment
+        and initial_overall_judgment != final_overall_judgment
+    ):
+        overall_delta = {
+            "initial": initial_overall_judgment,
+            "final": final_overall_judgment,
+        }
+
+    return {
+        "weak_sq_answers": weak_sq_answers,
+        "unsupported_sq_answers": unsupported_sq_answers,
+        "pivotality_tests": {
+            "total": pivotality_total,
+            "pivotal": pivotality_pivotal,
+            "non_pivotal": pivotality_total - pivotality_pivotal,
+        },
+        "sq_support_adjudications": {
+            "total": adjudication_total,
+            "changed_answer": changed_answer,
+            "changed_support": changed_support,
+            "changed_answer_or_support": changed_answer_or_support,
+        },
+        "initial_final_deltas": {
+            "domain_judgments": domain_deltas,
+            "overall_judgment": overall_delta,
+        },
+    }
 
 
 def run_benchmark(
@@ -455,10 +600,27 @@ def run_benchmark(
                     raise RuntimeError(
                         "Required supplement ingestion failed: " + ", ".join(failures)
                     )
+            final_domain_judgments = pipeline_output.get("domain_judgments") or {}
+            final_overall_judgment = _normalize_judgment(
+                pipeline_output.get("overall_judgment")
+            )
+            initial_domain_judgments = _derive_initial_domain_judgments(pipeline_output)
+            initial_overall_judgment = _normalize_judgment(
+                pipeline_output.get("initial_overall_judgment")
+            ) or _overall_from_domains(initial_domain_judgments)
             trial_result["pipeline"] = {
-                "domain_judgments": pipeline_output.get("domain_judgments") or {},
-                "overall_judgment": pipeline_output.get("overall_judgment"),
+                "domain_judgments": final_domain_judgments,
+                "overall_judgment": final_overall_judgment,
+                "initial_domain_judgments": initial_domain_judgments,
+                "initial_overall_judgment": initial_overall_judgment,
             }
+            trial_result["adjudication_metrics"] = _summarize_adjudication_metrics(
+                pipeline_output,
+                initial_domain_judgments,
+                final_domain_judgments,
+                initial_overall_judgment,
+                final_overall_judgment,
+            )
             trial_result["comparison"] = compare_judgments(
                 trial_result["pipeline"], reference_row_entry["row"]
             )
@@ -539,6 +701,10 @@ def _summarize_timing_results(results) -> dict[str, Any]:
             "total_llm_cache_hits": 0,
             "total_llm_repairs": 0,
             "total_llm_parse_errors": 0,
+            "total_adjudication_llm_calls": 0,
+            "total_adjudication_llm_latency_ms": 0,
+            "total_adjudication_llm_input_tokens": 0,
+            "total_adjudication_llm_output_tokens": 0,
             "total_non_llm_estimated_ms": 0,
             "slowest_runs": [],
             "node_aggregates": {},
@@ -561,6 +727,10 @@ def _summarize_timing_results(results) -> dict[str, Any]:
     total_llm_cache_hits = 0
     total_llm_repairs = 0
     total_llm_parse_errors = 0
+    total_adjudication_llm_calls = 0
+    total_adjudication_llm_latency_ms = 0
+    total_adjudication_llm_input_tokens = 0
+    total_adjudication_llm_output_tokens = 0
     total_non_llm_estimated_ms = 0
 
     for result in timed_results:
@@ -577,6 +747,18 @@ def _summarize_timing_results(results) -> dict[str, Any]:
         total_llm_cache_hits += _coerce_int_ms(timing.get("llm_cache_hits"))
         total_llm_repairs += _coerce_int_ms(timing.get("llm_repairs"))
         total_llm_parse_errors += _coerce_int_ms(timing.get("llm_parse_errors"))
+        total_adjudication_llm_calls += _coerce_int_ms(
+            timing.get("adjudication_llm_calls")
+        )
+        total_adjudication_llm_latency_ms += _coerce_int_ms(
+            timing.get("adjudication_llm_total_ms")
+        )
+        total_adjudication_llm_input_tokens += _coerce_int_ms(
+            timing.get("adjudication_llm_input_tokens")
+        )
+        total_adjudication_llm_output_tokens += _coerce_int_ms(
+            timing.get("adjudication_llm_output_tokens")
+        )
         total_non_llm_estimated_ms += non_llm_ms
 
         for span in timing.get("node_spans") or timing.get("_node_spans") or []:
@@ -647,10 +829,86 @@ def _summarize_timing_results(results) -> dict[str, Any]:
         "total_llm_cache_hits": total_llm_cache_hits,
         "total_llm_repairs": total_llm_repairs,
         "total_llm_parse_errors": total_llm_parse_errors,
+        "total_adjudication_llm_calls": total_adjudication_llm_calls,
+        "total_adjudication_llm_latency_ms": total_adjudication_llm_latency_ms,
+        "total_adjudication_llm_input_tokens": total_adjudication_llm_input_tokens,
+        "total_adjudication_llm_output_tokens": total_adjudication_llm_output_tokens,
         "total_non_llm_estimated_ms": total_non_llm_estimated_ms,
         "slowest_runs": slowest_runs[:5],
         "node_aggregates": ordered_node_aggregates,
     }
+
+
+def _empty_adjudication_metrics() -> dict[str, Any]:
+    return {
+        "weak_sq_answers": 0,
+        "unsupported_sq_answers": 0,
+        "pivotality_tests": {"total": 0, "pivotal": 0, "non_pivotal": 0},
+        "sq_support_adjudications": {
+            "total": 0,
+            "changed_answer": 0,
+            "changed_support": 0,
+            "changed_answer_or_support": 0,
+        },
+        "initial_final_deltas": {
+            "domain_judgments": {},
+            "overall_judgment": None,
+        },
+    }
+
+
+def _summarize_adjudication_results(results) -> dict[str, Any]:
+    summary = _empty_adjudication_metrics()
+    for result in results:
+        if result.get("error") or result.get("skipped"):
+            continue
+        metrics = result.get("adjudication_metrics") or {}
+        summary["weak_sq_answers"] += _coerce_int_ms(metrics.get("weak_sq_answers"))
+        summary["unsupported_sq_answers"] += _coerce_int_ms(
+            metrics.get("unsupported_sq_answers")
+        )
+
+        for key in ("total", "pivotal", "non_pivotal"):
+            summary["pivotality_tests"][key] += _coerce_int_ms(
+                (metrics.get("pivotality_tests") or {}).get(key)
+            )
+        for key in (
+            "total",
+            "changed_answer",
+            "changed_support",
+            "changed_answer_or_support",
+        ):
+            summary["sq_support_adjudications"][key] += _coerce_int_ms(
+                (metrics.get("sq_support_adjudications") or {}).get(key)
+            )
+
+        deltas = metrics.get("initial_final_deltas") or {}
+        for domain, delta in (deltas.get("domain_judgments") or {}).items():
+            domain_summary = summary["initial_final_deltas"][
+                "domain_judgments"
+            ].setdefault(domain, {})
+            if isinstance(delta, dict):
+                key = (
+                    _normalize_judgment(delta.get("initial")),
+                    _normalize_judgment(delta.get("final")),
+                )
+                domain_summary[f"{key[0]} -> {key[1]}"] = (
+                    domain_summary.get(f"{key[0]} -> {key[1]}", 0) + 1
+                )
+
+        overall_delta = deltas.get("overall_judgment")
+        if isinstance(overall_delta, dict):
+            key = (
+                _normalize_judgment(overall_delta.get("initial")),
+                _normalize_judgment(overall_delta.get("final")),
+            )
+            overall_summary = summary["initial_final_deltas"].setdefault(
+                "overall_judgment_counts", {}
+            )
+            overall_summary[f"{key[0]} -> {key[1]}"] = (
+                overall_summary.get(f"{key[0]} -> {key[1]}", 0) + 1
+            )
+    return summary
 
 
 def summarize_benchmark(results) -> dict:
@@ -664,6 +922,7 @@ def summarize_benchmark(results) -> dict:
         for cohort, items in sorted(cohorts.items())
     }
     summary["timing"] = _summarize_timing_results(results)
+    summary["adjudication_metrics"] = _summarize_adjudication_results(results)
     return summary
 
 
@@ -795,6 +1054,62 @@ def write_benchmark_report(results, summary, output_path):
                 )
                 + " |"
             )
+
+    adjudication = summary.get("adjudication_metrics") or {}
+    if adjudication:
+        pivotality = adjudication.get("pivotality_tests") or {}
+        sq_adjudications = adjudication.get("sq_support_adjudications") or {}
+        lines.extend(
+            [
+                "",
+                "## Adjudication Summary",
+                "",
+                f"- Weak SQ answers: {adjudication.get('weak_sq_answers', 0)}",
+                f"- Unsupported SQ answers: {adjudication.get('unsupported_sq_answers', 0)}",
+                "- Pivotality tests: "
+                f"{pivotality.get('total', 0)} total; "
+                f"{pivotality.get('pivotal', 0)} pivotal; "
+                f"{pivotality.get('non_pivotal', 0)} non-pivotal",
+                "- SQ support adjudications: "
+                f"{sq_adjudications.get('total', 0)} total; "
+                f"{sq_adjudications.get('changed_answer', 0)} changed answer; "
+                f"{sq_adjudications.get('changed_support', 0)} changed support",
+            ]
+        )
+        if timing:
+            lines.append(
+                "- Adjudication LLM calls: "
+                f"{timing.get('total_adjudication_llm_calls', 0)} "
+                f"({_format_seconds(timing.get('total_adjudication_llm_latency_ms', 0))} latency; "
+                f"{timing.get('total_adjudication_llm_input_tokens', 0)} input tokens; "
+                f"{timing.get('total_adjudication_llm_output_tokens', 0)} output tokens)"
+            )
+
+        delta_counts = adjudication.get("initial_final_deltas", {}).get(
+            "domain_judgments", {}
+        )
+        overall_counts = adjudication.get("initial_final_deltas", {}).get(
+            "overall_judgment_counts", {}
+        )
+        if delta_counts or overall_counts:
+            lines.extend(
+                [
+                    "",
+                    "### Initial-vs-Final Deltas",
+                    "",
+                    "| Field | Initial | Final | Count |",
+                    "| --- | --- | --- | ---: |",
+                ]
+            )
+            for domain in DOMAINS:
+                for delta, count in (delta_counts.get(domain) or {}).items():
+                    initial, separator, final = delta.partition(" -> ")
+                    if separator:
+                        lines.append(f"| {domain} | {initial} | {final} | {count} |")
+            for delta, count in overall_counts.items():
+                initial, separator, final = delta.partition(" -> ")
+                if separator:
+                    lines.append(f"| Overall | {initial} | {final} | {count} |")
 
     lines.extend(["", "## Per-Trial Details", ""])
     if has_meaningful_cohort:

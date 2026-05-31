@@ -135,7 +135,9 @@ def _answer_delta(initial: dict, adjudicated: dict) -> str:
 def _adjudication_status(attempt: dict) -> str:
     adjudicated = attempt.get("adjudicated_answer", {}) or {}
     support_level = str(adjudicated.get("support_level", "")).lower()
-    if support_level in {"weak", "unsupported"} or adjudicated.get("residual_uncertainty"):
+    if support_level in {"weak", "unsupported"} or adjudicated.get(
+        "residual_uncertainty"
+    ):
         return "uncertainty remains"
     return "changed" if attempt.get("changed") else "unchanged"
 

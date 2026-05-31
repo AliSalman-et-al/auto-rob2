@@ -322,7 +322,9 @@ def _adjudicate_pivotal_sq_answers(
         return state, judgment, rationale
 
     updated_state = dict(state)
-    sq_answers = {key: dict(value) for key, value in state.get("sq_answers", {}).items()}
+    sq_answers = {
+        key: dict(value) for key, value in state.get("sq_answers", {}).items()
+    }
     adjudications = list(state.get("sq_support_adjudications", {}).get(domain, []))
     llm_log = []
     changed_any = False
@@ -336,9 +338,10 @@ def _adjudicate_pivotal_sq_answers(
         support_level = sq_answer.get("support_level", "").lower()
         if support_level not in {"weak", "unsupported"}:
             continue
-        if sq_answer.get(
-            "support_rationale"
-        ) == "Support rationale was not provided by the legacy response.":
+        if (
+            sq_answer.get("support_rationale")
+            == "Support rationale was not provided by the legacy response."
+        ):
             continue
 
         impact = _adjudication_domain_impact(sq_answers, sq_id, judgment, judge_fn)

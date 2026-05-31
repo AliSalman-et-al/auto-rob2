@@ -106,7 +106,9 @@ def _convert_supplement_in_windows(
     window_size = _supplement_page_window()
     max_scan_pages = _effective_supplement_max_pages(path)
 
-    for start, end in _ordered_supplement_page_ranges(path, window_size, max_scan_pages):
+    for start, end in _ordered_supplement_page_ranges(
+        path, window_size, max_scan_pages
+    ):
         try:
             conv_result = converter.convert(str(path), page_range=(start, end))
             window_chunks = apply_source_metadata(

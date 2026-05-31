@@ -30,10 +30,10 @@ def build_domain5_prompt(state: RoB2State) -> str:
 
 
 DOMAIN5_STAGE = DomainSqStage(
-        node_name="domain5_sq",
-        sq_ids=("5.1", "5.2", "5.3"),
-        source_domain="d5",
-        build_prompt=build_domain5_prompt,
+    node_name="domain5_sq",
+    sq_ids=("5.1", "5.2", "5.3"),
+    source_domain="d5",
+    build_prompt=build_domain5_prompt,
 )
 
 
