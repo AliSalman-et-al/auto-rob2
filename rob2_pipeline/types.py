@@ -123,3 +123,13 @@ class VerifierTraceEntry(TypedDict, total=False):
     reason: str
     before: dict
     after: dict
+
+
+class PivotalityTest(TypedDict):
+    sq_id: str
+    original_answer: str
+    support_level: str
+    conservative_test_answer: str
+    original_domain_judgment: str
+    test_domain_judgment: str
+    pivotal: bool
