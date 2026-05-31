@@ -38,6 +38,7 @@ JSON_OUTPUT_KEYS = (
     "domain_judgments",
     "domain_rationales",
     "pivotality_tests",
+    "sq_support_adjudications",
     "overall_judgment",
     "overall_rationale",
     "ni_count",

@@ -4,6 +4,8 @@ from typing import Callable, Optional
 
 from rob2_pipeline.cache import read_cache, write_cache
 from rob2_pipeline.config import build_provider
+from rob2_pipeline.methodology import METHODOLOGIES
+from rob2_pipeline.methodology.render import render_methodology
 from rob2_pipeline.trace import append_llm_call
 from rob2_pipeline.types import LLMCallLogEntry
 from rob2_pipeline.xml_parser import validate_sq_answers
@@ -14,6 +16,7 @@ SYSTEM_MESSAGE = (
     "(RoB 2) tool. Respond only in the XML format specified in the prompt. "
     "Do not add preamble, explanation, or markdown code fences around your XML."
 )
+VALID_SQ_ANSWERS = ("Y", "PY", "PN", "N", "NI", "NA")
 
 NA_ANSWER = {
     "answer": "NA",
@@ -261,6 +264,9 @@ def add_domain_judgment_with_pivotality_tests(
     judge_fn: Callable[[dict], tuple[str, str]],
     sq_ids: tuple[str, ...],
 ) -> dict:
+    state, judgment, rationale = _adjudicate_pivotal_sq_answers(
+        state, domain, judgment, rationale, judge_fn, sq_ids
+    )
     update = add_domain_judgment(state, domain, judgment, rationale)
     pivotality_tests = list(state.get("pivotality_tests", {}).get(domain, []))
 
@@ -295,4 +301,220 @@ def add_domain_judgment_with_pivotality_tests(
         all_tests = dict(state.get("pivotality_tests", {}))
         all_tests[domain] = pivotality_tests
         update["pivotality_tests"] = all_tests
+    if state.get("sq_support_adjudications"):
+        update["sq_support_adjudications"] = state["sq_support_adjudications"]
+    if state.get("sq_answers"):
+        update["sq_answers"] = state["sq_answers"]
+    if state.get("_sq_adjudication_llm_call_log"):
+        update["llm_call_log"] = state["_sq_adjudication_llm_call_log"]
     return update
+
+
+def _adjudicate_pivotal_sq_answers(
+    state: dict,
+    domain: str,
+    judgment: str,
+    rationale: str,
+    judge_fn: Callable[[dict], tuple[str, str]],
+    sq_ids: tuple[str, ...],
+) -> tuple[dict, str, str]:
+    if not _has_adjudication_context(state):
+        return state, judgment, rationale
+
+    updated_state = dict(state)
+    sq_answers = {key: dict(value) for key, value in state.get("sq_answers", {}).items()}
+    adjudications = list(state.get("sq_support_adjudications", {}).get(domain, []))
+    llm_log = []
+    changed_any = False
+
+    for sq_id in sq_ids:
+        sq_answer = sq_answers.get(sq_id)
+        if not sq_answer:
+            continue
+        if sq_answer.get("answer") == "NA":
+            continue
+        support_level = sq_answer.get("support_level", "").lower()
+        if support_level not in {"weak", "unsupported"}:
+            continue
+        if sq_answer.get(
+            "support_rationale"
+        ) == "Support rationale was not provided by the legacy response.":
+            continue
+
+        impact = _adjudication_domain_impact(sq_answers, sq_id, judgment, judge_fn)
+        if impact is None:
+            continue
+
+        node_name = f"sq_support_adjudication_{domain}_{sq_id.replace('.', '_')}"
+        _response, log, parsed = call_node_llm_with_sources(
+            call_node_llm,
+            updated_state,
+            _build_sq_support_adjudication_prompt(
+                updated_state,
+                domain,
+                sq_id,
+                sq_answer,
+                judgment,
+                impact["test_answer"],
+                impact["test_domain_judgment"],
+            ),
+            node_name,
+            updated_state.get("adjudication_parse_fn", state.get("parse_fn", None))
+            or _parse_adjudication_passthrough,
+            [sq_id],
+            format_chunk_sources(updated_state, _source_domain_for(domain)),
+        )
+        llm_log.extend(log)
+        adjudicated = dict((parsed or {}).get(sq_id, sq_answer))
+        adjudicated.setdefault(
+            "residual_uncertainty",
+            adjudicated.get("support_rationale", "No residual uncertainty reported."),
+        )
+        changed = _answer_or_support_changed(sq_answer, adjudicated)
+        if changed:
+            sq_answers[sq_id] = adjudicated
+            updated_state["sq_answers"] = sq_answers
+            judgment, rationale = judge_fn(sq_answers)
+            changed_any = True
+
+        adjudications.append(
+            {
+                "sq_id": sq_id,
+                "initial_answer": sq_answer,
+                "adjudicated_answer": adjudicated,
+                "domain_impact": {
+                    "original_domain_judgment": impact["original_domain_judgment"],
+                    "test_answer": impact["test_answer"],
+                    "test_domain_judgment": impact["test_domain_judgment"],
+                },
+                "changed": changed,
+                "llm_node": node_name,
+            }
+        )
+
+    if adjudications:
+        all_adjudications = dict(state.get("sq_support_adjudications", {}))
+        all_adjudications[domain] = adjudications
+        updated_state["sq_support_adjudications"] = all_adjudications
+    if llm_log:
+        updated_state["_sq_adjudication_llm_call_log"] = llm_log
+    if changed_any:
+        updated_state["sq_answers"] = sq_answers
+    return updated_state, judgment, rationale
+
+
+def _has_adjudication_context(state: dict) -> bool:
+    return bool(state.get("evidence_packets") and state.get("outcome"))
+
+
+def _source_domain_for(domain: str) -> str:
+    return domain.lower()
+
+
+def _answer_or_support_changed(initial: dict, adjudicated: dict) -> bool:
+    keys = ("answer", "support_level", "support_rationale", "quote", "justification")
+    return any(initial.get(key) != adjudicated.get(key) for key in keys)
+
+
+def _adjudication_domain_impact(
+    sq_answers: dict,
+    sq_id: str,
+    judgment: str,
+    judge_fn: Callable[[dict], tuple[str, str]],
+) -> dict | None:
+    for test_answer in VALID_SQ_ANSWERS:
+        if test_answer == sq_answers[sq_id].get("answer"):
+            continue
+        test_sq_answers = {key: dict(value) for key, value in sq_answers.items()}
+        test_sq_answers[sq_id] = dict(test_sq_answers[sq_id])
+        test_sq_answers[sq_id]["answer"] = test_answer
+        test_judgment, _ = judge_fn(test_sq_answers)
+        if test_judgment != judgment:
+            return {
+                "original_domain_judgment": judgment,
+                "test_answer": test_answer,
+                "test_domain_judgment": test_judgment,
+            }
+    return None
+
+
+def _methodology_key(domain: str) -> str:
+    if domain == "D2":
+        return "D2_ASSIGNMENT"
+    return domain
+
+
+def _build_sq_support_adjudication_prompt(
+    state: dict,
+    domain: str,
+    sq_id: str,
+    initial_answer: dict,
+    judgment: str,
+    test_answer: str,
+    test_judgment: str,
+) -> str:
+    methodology = METHODOLOGIES[_methodology_key(domain)]
+    packet = state.get("evidence_packets", {}).get(sq_id, {})
+    sources = packet.get("sources", [])
+    rendered_sources = "\n".join(
+        f"- {source.get('section', 'Unknown section')} p.{source.get('page_numbers', ['?'])[0] if source.get('page_numbers') else '?'}: {source.get('text', '')}"
+        for source in sources[:5]
+    )
+    if not rendered_sources:
+        rendered_sources = "No selected packet sources were available."
+
+    domain_marker = _prompt_marker_for_adjudication(domain, sq_id)
+
+    return f"""Re-evaluate one RoB 2 signaling-question answer. Do not re-run a full domain.
+
+<{domain_marker}></{domain_marker}>
+Outcome: {state.get("outcome", "Not reported")}
+Domain: {domain}
+
+{render_methodology(methodology, [sq_id])}
+
+Original answer metadata:
+<answer>{initial_answer.get("answer", "NI")}</answer>
+<quote>{initial_answer.get("quote", "No relevant text found")}</quote>
+<justification>{initial_answer.get("justification", "")}</justification>
+<support_level>{initial_answer.get("support_level", "unsupported")}</support_level>
+<support_rationale>{initial_answer.get("support_rationale", "")}</support_rationale>
+
+Selected evidence packet sources:
+{rendered_sources}
+
+Quote/provenance warnings:
+{packet.get("missing_evidence", [])}
+
+Domain-judgment impact:
+Original domain judgment: {judgment}
+Alternative SQ answer tested for impact: {test_answer}
+Alternative-answer domain judgment: {test_judgment}
+
+Return one adjudicated answer for SQ {sq_id}. Include answer code, quote, justification, support level, support rationale, and residual uncertainty.
+Respond in this exact XML format:
+<sq_{sq_id.replace(".", "_")}>
+  <answer>Y/PY/PN/N/NI/NA</answer>
+  <quote>exact quote or No relevant text found</quote>
+  <justification>brief rationale</justification>
+  <uncertainty_flag>NORMAL or HIGH</uncertainty_flag>
+  <support_level>strong/moderate/weak/unsupported</support_level>
+  <support_rationale>brief support rationale</support_rationale>
+  <residual_uncertainty>brief residual uncertainty</residual_uncertainty>
+</sq_{sq_id.replace(".", "_")}>"""
+
+
+def _parse_adjudication_passthrough(raw: str, sq_ids: list[str]) -> dict[str, dict]:
+    from rob2_pipeline.xml_parser import parse_sq_response
+
+    return parse_sq_response(raw, sq_ids)
+
+
+def _prompt_marker_for_adjudication(domain: str, sq_id: str) -> str:
+    if domain == "D2":
+        if sq_id in {"2.1", "2.2"}:
+            return "domain2_part1"
+        if sq_id in {"2.6", "2.7", "2.6a"}:
+            return "domain2_analysis"
+        return "domain2_conditional"
+    return f"domain{domain[1:]}"
