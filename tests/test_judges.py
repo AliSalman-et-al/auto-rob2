@@ -371,6 +371,175 @@ def test_overall_node_exposes_benchmark_reference_policy():
     assert result["overall_policy"] == "benchmark_reference"
 
 
+def test_overall_priority_ignores_moderate_and_isolated_non_pivotal_weak_support():
+    result = overall_judge_node(
+        {
+            "domain_judgments": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+            },
+            "sq_answers": {
+                "1.1": {
+                    "answer": "PY",
+                    "support_level": "moderate",
+                    "uncertainty_flag": "NORMAL",
+                },
+                "1.2": {
+                    "answer": "PY",
+                    "support_level": "weak",
+                    "uncertainty_flag": "NORMAL",
+                },
+            },
+            "pivotality_tests": {
+                "D1": [
+                    {
+                        "sq_id": "1.2",
+                        "original_answer": "PY",
+                        "support_level": "weak",
+                        "conservative_test_answer": "NI",
+                        "original_domain_judgment": "Low",
+                        "test_domain_judgment": "Low",
+                        "pivotal": False,
+                    }
+                ]
+            },
+        }
+    )
+
+    assert result["human_review_priority"] == "LOW"
+
+
+@pytest.mark.parametrize(
+    "adjudicated_answer",
+    [
+        {
+            "answer": "Y",
+            "support_level": "weak",
+            "support_rationale": "Evidence remains indirect.",
+        },
+        {
+            "answer": "Y",
+            "support_level": "unsupported",
+            "support_rationale": "No selected evidence supports this answer.",
+        },
+    ],
+)
+def test_unresolved_pivotal_weak_support_raises_review_priority(adjudicated_answer):
+    result = overall_judge_node(
+        {
+            "domain_judgments": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+            },
+            "sq_answers": {
+                "1.3": {
+                    "answer": "Y",
+                    "support_level": adjudicated_answer["support_level"],
+                    "uncertainty_flag": "NORMAL",
+                }
+            },
+            "sq_support_adjudications": {
+                "D1": [
+                    {
+                        "sq_id": "1.3",
+                        "initial_answer": {
+                            "answer": "Y",
+                            "support_level": "weak",
+                        },
+                        "adjudicated_answer": adjudicated_answer,
+                        "domain_impact": {
+                            "original_domain_judgment": "Low",
+                            "test_answer": "NI",
+                            "test_domain_judgment": "Some concerns",
+                        },
+                        "changed": False,
+                    }
+                ]
+            },
+        }
+    )
+
+    assert result["human_review_priority"] == "HIGH"
+
+
+def test_adjudication_conflict_raises_review_priority():
+    result = overall_judge_node(
+        {
+            "domain_judgments": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+            },
+            "sq_answers": {
+                "1.3": {
+                    "answer": "N",
+                    "support_level": "strong",
+                    "uncertainty_flag": "NORMAL",
+                }
+            },
+            "sq_support_adjudications": {
+                "D1": [
+                    {
+                        "sq_id": "1.3",
+                        "initial_answer": {
+                            "answer": "Y",
+                            "support_level": "weak",
+                        },
+                        "adjudicated_answer": {
+                            "answer": "N",
+                            "support_level": "strong",
+                        },
+                        "changed": True,
+                    }
+                ]
+            },
+        }
+    )
+
+    assert result["human_review_priority"] == "HIGH"
+
+
+def test_repeated_weak_support_patterns_raise_review_priority():
+    result = overall_judge_node(
+        {
+            "domain_judgments": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+            },
+            "sq_answers": {
+                "1.1": {
+                    "answer": "PY",
+                    "support_level": "weak",
+                    "uncertainty_flag": "NORMAL",
+                },
+                "2.1": {
+                    "answer": "PY",
+                    "support_level": "weak",
+                    "uncertainty_flag": "NORMAL",
+                },
+                "3.1": {
+                    "answer": "PY",
+                    "support_level": "weak",
+                    "uncertainty_flag": "NORMAL",
+                },
+            },
+        }
+    )
+
+    assert result["human_review_priority"] == "HIGH"
+
+
 def test_domain_nodes_do_not_override_algorithm_by_outcome_label():
     d3_state = {
         "outcome": "Progression-Free Survival",
