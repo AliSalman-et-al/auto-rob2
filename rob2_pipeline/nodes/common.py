@@ -251,3 +251,48 @@ def add_domain_judgment(
         "domain_judgments": domain_judgments,
         "domain_rationales": domain_rationales,
     }
+
+
+def add_domain_judgment_with_pivotality_tests(
+    state: dict,
+    domain: str,
+    judgment: str,
+    rationale: str,
+    judge_fn: Callable[[dict], tuple[str, str]],
+    sq_ids: tuple[str, ...],
+) -> dict:
+    update = add_domain_judgment(state, domain, judgment, rationale)
+    pivotality_tests = list(state.get("pivotality_tests", {}).get(domain, []))
+
+    for sq_id in sq_ids:
+        sq_answer = state.get("sq_answers", {}).get(sq_id)
+        if not sq_answer:
+            continue
+        support_level = sq_answer.get("support_level", "").lower()
+        if support_level not in {"weak", "unsupported"}:
+            continue
+
+        test_sq_answers = {
+            key: dict(value) for key, value in state.get("sq_answers", {}).items()
+        }
+        test_sq_answers[sq_id] = dict(test_sq_answers[sq_id])
+        test_sq_answers[sq_id]["answer"] = "NI"
+        test_judgment, _ = judge_fn(test_sq_answers)
+
+        pivotality_tests.append(
+            {
+                "sq_id": sq_id,
+                "original_answer": sq_answer.get("answer", "NI"),
+                "support_level": support_level,
+                "conservative_test_answer": "NI",
+                "original_domain_judgment": judgment,
+                "test_domain_judgment": test_judgment,
+                "pivotal": test_judgment != judgment,
+            }
+        )
+
+    if pivotality_tests:
+        all_tests = dict(state.get("pivotality_tests", {}))
+        all_tests[domain] = pivotality_tests
+        update["pivotality_tests"] = all_tests
+    return update

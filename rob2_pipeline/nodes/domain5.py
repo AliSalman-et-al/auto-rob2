@@ -1,6 +1,6 @@
 from rob2_pipeline.judges.domain5 import judge_domain5
 from rob2_pipeline.nodes.common import (
-    add_domain_judgment,
+    add_domain_judgment_with_pivotality_tests,
 )
 from rob2_pipeline.nodes.domain_context import build_domain5_context
 from rob2_pipeline.nodes.domain_helpers import DomainSqStage, run_domain_sq_stage
@@ -53,4 +53,6 @@ def domain5_sq_node(state: RoB2State) -> RoB2State:
 
 def domain5_judge_node(state: RoB2State) -> RoB2State:
     judgment, rationale = judge_domain5(state["sq_answers"])
-    return add_domain_judgment(state, "D5", judgment, rationale)
+    return add_domain_judgment_with_pivotality_tests(
+        state, "D5", judgment, rationale, judge_domain5, DOMAIN5_STAGE.sq_ids
+    )

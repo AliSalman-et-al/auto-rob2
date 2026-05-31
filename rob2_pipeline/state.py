@@ -8,6 +8,7 @@ from rob2_pipeline.types import (
     EvidenceValidationFlag,
     LLMCallLogEntry,
     OutcomeProperties,
+    PivotalityTest,
     RetrievalGrade,
     SourceDocument,
     TrialFacts,
@@ -73,6 +74,7 @@ class RoB2State(TypedDict, total=False):
     # === DOMAIN JUDGMENTS (set by deterministic nodes) ===
     domain_judgments: Annotated[dict[str, str], merge_dicts]
     domain_rationales: Annotated[dict[str, str], merge_dicts]
+    pivotality_tests: Annotated[dict[str, list[PivotalityTest]], merge_dicts]
 
     # === OVERALL ===
     overall_judgment: Annotated[str, take_latest]

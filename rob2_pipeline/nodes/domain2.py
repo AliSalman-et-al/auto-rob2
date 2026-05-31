@@ -1,6 +1,6 @@
 from rob2_pipeline.judges.domain2 import judge_domain2
 from rob2_pipeline.nodes.common import (
-    add_domain_judgment,
+    add_domain_judgment_with_pivotality_tests,
     call_node_llm,
 )
 from rob2_pipeline.nodes.domain_context import (
@@ -123,4 +123,13 @@ def domain2_judge_node(state: RoB2State) -> RoB2State:
     judgment, rationale = judge_domain2(
         state["sq_answers"], state.get("effect_of_interest", "ITT")
     )
-    return add_domain_judgment(state, "D2", judgment, rationale)
+    return add_domain_judgment_with_pivotality_tests(
+        state,
+        "D2",
+        judgment,
+        rationale,
+        lambda sq: judge_domain2(sq, state.get("effect_of_interest", "ITT")),
+        DOMAIN2_SQ12_STAGE.sq_ids
+        + DOMAIN2_CONDITIONAL_STAGE.sq_ids
+        + DOMAIN2_ANALYSIS_STAGE.sq_ids,
+    )
