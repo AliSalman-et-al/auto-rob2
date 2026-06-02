@@ -172,6 +172,22 @@ def _adjudication_summary_section(state: RoB2State) -> str:
     return "\n".join(rows)
 
 
+def _audit_limited_summary_lines(state: RoB2State) -> list[str]:
+    rows = []
+    pivotality_tests = state.get("pivotality_tests", {}) or {}
+    for domain in ["D1", "D2", "D3", "D4", "D5"]:
+        for test in pivotality_tests.get(domain, []):
+            if test.get("acceptance_status") != "audit_limited":
+                continue
+            sq_id = _clean_cell(test.get("sq_id", "?"))
+            support = _clean_cell(test.get("support_level", "unsupported")).lower()
+            pivotal_text = "pivotal " if test.get("pivotal") else ""
+            rows.append(
+                f"- Audit-limited support: {domain} SQ {sq_id} has {pivotal_text}{support} support."
+            )
+    return rows
+
+
 def report_formatter_node(state: RoB2State) -> RoB2State:
     high_uncertainty = state.get("high_uncertainty_sqs", [])
     high_uncertainty_text = ", ".join(high_uncertainty) if high_uncertainty else "None"
@@ -200,6 +216,10 @@ def report_formatter_node(state: RoB2State) -> RoB2State:
     if adjudication_summary:
         parts.append(adjudication_summary)
     parts.append(_packet_quality_section(state))
+    audit_limited_lines = _audit_limited_summary_lines(state)
+    limitation_lines = [limitations]
+    if audit_limited_lines:
+        limitation_lines.extend(["", *audit_limited_lines])
     parts.extend(
         [
             "## Overall risk of bias",
@@ -209,7 +229,7 @@ def report_formatter_node(state: RoB2State) -> RoB2State:
             f"**Rationale:** {state.get('overall_rationale', 'Not assessed')}",
             "",
             "## Limitations of this assessment",
-            limitations,
+            *limitation_lines,
             "",
             "## Quality flags",
             f"- NI answers: {state.get('ni_count', 0)}",

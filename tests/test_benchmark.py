@@ -329,6 +329,84 @@ def test_summarize_benchmark_agreement_and_confusion_dicts():
     assert summary["confusion_matrices"]["Overall"]["Low"]["High"] == 1
 
 
+def test_summarize_benchmark_counts_audit_caught_label_mismatches():
+    results = [
+        {
+            "trial": "AuditLimited",
+            "skipped": False,
+            "error": None,
+            "comparison": {
+                "D1": False,
+                "D2": True,
+                "D3": True,
+                "D4": True,
+                "D5": True,
+                "Overall": False,
+            },
+            "reference": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+                "Overall Risk": "Low",
+            },
+            "pipeline": {
+                "domain_judgments": {
+                    "D1": "Some concerns",
+                    "D2": "Low",
+                    "D3": "Low",
+                    "D4": "Low",
+                    "D5": "Low",
+                },
+                "overall_judgment": "Some concerns",
+            },
+            "audit_caught_mismatches": {"D1": True, "Overall": True},
+        },
+        {
+            "trial": "Uncaught",
+            "skipped": False,
+            "error": None,
+            "comparison": {
+                "D1": False,
+                "D2": True,
+                "D3": True,
+                "D4": True,
+                "D5": True,
+                "Overall": False,
+            },
+            "reference": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+                "Overall Risk": "Low",
+            },
+            "pipeline": {
+                "domain_judgments": {
+                    "D1": "High",
+                    "D2": "Low",
+                    "D3": "Low",
+                    "D4": "Low",
+                    "D5": "Low",
+                },
+                "overall_judgment": "High",
+            },
+            "audit_caught_mismatches": {"D1": False, "Overall": False},
+        },
+    ]
+
+    summary = summarize_benchmark(results)
+
+    assert summary["agreement_counts"]["D1"] == {"matches": 0, "total": 2}
+    assert summary["audit_caught_mismatches"]["D1"] == {"caught": 1, "total": 2}
+    assert summary["audit_caught_mismatches"]["Overall"] == {
+        "caught": 1,
+        "total": 2,
+    }
+
+
 def test_summarize_benchmark_groups_metrics_by_cohort():
     results = [
         {
@@ -939,6 +1017,55 @@ def test_write_benchmark_report_renders_adjudication_summary(tmp_path):
     assert "| Field | Initial | Final | Count |" in report
     assert "| D1 | Some concerns | Low | 1 |" in report
     assert "| Overall | Some concerns | Low | 1 |" in report
+
+
+def test_write_benchmark_report_renders_audit_caught_mismatch_summary(tmp_path):
+    results = [
+        {
+            "id": "A:OS",
+            "trial": "A",
+            "outcome": "Outcome A",
+            "cohort": "unspecified",
+            "skipped": False,
+            "error": None,
+            "notes": "",
+            "comparison": {
+                "D1": False,
+                "D2": True,
+                "D3": True,
+                "D4": True,
+                "D5": True,
+                "Overall": False,
+            },
+            "reference": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+                "Overall Risk": "Low",
+            },
+            "pipeline": {
+                "domain_judgments": {
+                    "D1": "High",
+                    "D2": "Low",
+                    "D3": "Low",
+                    "D4": "Low",
+                    "D5": "Low",
+                },
+                "overall_judgment": "High",
+            },
+            "audit_caught_mismatches": {"D1": True, "Overall": True},
+        }
+    ]
+    summary = summarize_benchmark(results)
+
+    write_benchmark_report(results, summary, tmp_path / "benchmark_report.md")
+
+    report = (tmp_path / "benchmark_report.md").read_text(encoding="utf-8")
+    assert "## Audit-Caught Mismatches" in report
+    assert "| D1 | 100.0% (1/1) |" in report
+    assert "| Overall | 100.0% (1/1) |" in report
 
 
 def test_find_supplements_for_trial_handles_spaces_and_case(tmp_path):
