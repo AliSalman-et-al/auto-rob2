@@ -117,7 +117,24 @@ clinician judged. These resolve `outcome_type`.
 
 The prompt and D4-control category derived from outcome properties. Current
 values are `patient-reported`, `clinician-graded`, `biomarker`, `vital-status`,
-and `clinician-composite`.
+and `clinician-composite`. Outcome type should carry evidence support when it
+is semantically resolved, because weak or unsupported classification can be
+pivotal to Domain 4.
+
+### Assessed-Outcome-Bound Classification
+
+Outcome classification should be driven by the assessed outcome and evidence
+specifically tied to how that outcome is measured. Trial-wide mentions of other
+endpoint families should not determine the assessed outcome's properties.
+
+### Semantic Evidence Interpretation
+
+The meaning of trial text when it requires clinical, methodological, or
+cross-specialty judgment. LLMs should handle semantic evidence interpretation;
+deterministic code should be reserved for RoB 2 algorithm tables, schema checks,
+provenance checks, contradiction flags, support gating, and explicit control
+flow. Broad deterministic heuristics should not override semantic
+classification of trial evidence.
 
 ### Effect Of Interest
 
@@ -183,6 +200,24 @@ Canonical levels are `strong`, `moderate`, `weak`, and `unsupported`. Support
 level primarily shapes the SQ answer itself; domain judging uses it as an audit
 brake when a weak or unsupported SQ answer is pivotal to the final judgment.
 
+### D3 Completeness Evidence
+
+Evidence supporting Domain 3 SQ 3.1 that outcome data were available for nearly
+all participants. Missing denominator, percentage, or count evidence is a
+provenance trigger for weak support, not a standalone domain-judgment rule.
+
+### Support Constraint
+
+A typed evidence-quality finding attached to an evidence claim, such as a
+signaling-question answer or outcome classification. Support constraints cover
+untraceable quotes, missing required evidence, wrong outcome context, and
+conflicts between semantic support and provenance checks. They do not directly
+assign RoB 2 answers or labels, and they do not overwrite the original Evidence
+Support Level. The SQ Support Audit combines constraints with Evidence Support
+Levels to decide acceptance, adjudication, or audit limitation. Initial
+constraint types are `quote_untraceable`, `missing_required_evidence`,
+`wrong_outcome_context`, and `semantic_support_conflict`.
+
 ### Pivotal SQ Answer
 
 A signaling-question answer whose more conservative interpretation would change
@@ -194,7 +229,9 @@ escalated rather than silently driving the final judgment.
 An explicit audit artifact that records whether a signaling-question answer is
 pivotal. It compares the original Domain Judgment with the judgment produced by
 a documented conservative test answer, without silently mutating the emitted SQ
-answer.
+answer. The conservative test answer is the nearest less-confident answer
+(`Y` to `PY` to `NI`, or `N` to `PN` to `NI`) unless the evidence semantically
+contradicts the original answer.
 
 ### SQ Support Adjudication
 
@@ -206,7 +243,14 @@ without re-running the whole domain judgment.
 
 The pipeline step that identifies weak or unsupported pivotal signaling-question
 answers and routes them to SQ Support Adjudication before final domain
-judgments are accepted.
+judgments are accepted. It gates acceptance of final judgments rather than
+changing the deterministic RoB 2 decision tables directly. The acceptance gate
+applies across D1-D5, not only to domains with known benchmark failures.
+
+### Acceptance Status
+
+The support-audit state for an evidence claim. Canonical statuses are
+`accepted`, `needs_adjudication`, and `audit_limited`.
 
 ### DomainEvidenceContext
 
@@ -234,17 +278,40 @@ not just whether one cited fact exists.
 The deterministic D1-D5 judgment produced by a Python judge from SQ answers.
 LLMs do not directly assign final domain labels.
 
+### Final Domain Judgment
+
+The accepted D1-D5 judgment after pivotal weak or unsupported SQ answers have
+been audited and, when needed, adjudicated. Benchmark agreement should compare
+against final domain judgments, not pre-audit initial judgments. RoB 2 labels
+remain `Low`, `Some concerns`, or `High`; unresolved pivotal weak support is
+reported as an audit limitation and human-review signal, not as a fourth domain
+label.
+
 ### Overall Judgment
 
 The deterministic overall RoB 2 label derived from D1-D5 domain judgments.
 The default policy follows official RoB 2-style escalation. The benchmark
 reference policy can be more permissive for benchmark comparison.
 
+### Methodology Authority
+
+The hierarchy used when assessment outputs disagree. RoB 2 methodology is the
+governing authority, benchmark references are calibration fixtures, and current
+pipeline output is evidence to inspect rather than a source of truth.
+
+### Benchmark Agreement
+
+The comparison between benchmark reference labels and final RoB 2 labels.
+Agreement scoring compares labels directly, while benchmark reports may also
+measure whether label mismatches were caught as audit-limited or high-priority
+human-review cases.
+
 ### Verification Flag
 
 An audit warning produced after SQ answering. Current flags cover unsupported
 quotes, fragile SQ answers, and packet verification failures. Verification
-flags can produce retry or escalation actions.
+flags should be represented as Support Constraints when they affect SQ
+acceptance or adjudication.
 
 ### Human Review Priority
 
@@ -299,8 +366,8 @@ Some-concerns domains.
   safety outcomes to per-protocol.
 - `rob2_pipeline/registration_api.py` fetches and formats ClinicalTrials.gov
   outcomes, design, description, and participant flow.
-- `rob2_pipeline/nodes/outcome_resolver.py` infers outcome properties and
-  normalizes `outcome_type`.
+- `rob2_pipeline/nodes/outcome_resolver.py` semantically resolves assessed-
+  outcome-bound properties and normalizes `outcome_type`.
 - `rob2_pipeline/nodes/trial_facts.py` extracts reusable snippets for prompt
   context.
 
