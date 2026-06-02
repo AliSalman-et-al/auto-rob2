@@ -196,3 +196,37 @@ def test_markdown_report_marks_unresolved_sq_support_adjudication():
     assert "D3 SQ 3.3 triggered adjudication (uncertainty remains)" in report
     assert "support Weak -> Weak" in report
     assert "Missingness reasons remain incompletely reported." in report
+
+
+def test_markdown_report_summarizes_audit_limited_support_limitations():
+    state = {
+        "sq_answers": {
+            "3.3": {
+                "answer": "PY",
+                "quote": "Reasons for missingness were incompletely reported.",
+                "justification": "Missingness could depend on outcome values.",
+                "support_level": "weak",
+                "support_rationale": "Only indirect missingness evidence was available.",
+            }
+        },
+        "domain_judgments": {"D3": "Some concerns"},
+        "domain_rationales": {"D3": "Missingness evidence remains limited."},
+        "pivotality_tests": {
+            "D3": [
+                {
+                    "sq_id": "3.3",
+                    "support_level": "weak",
+                    "pivotal": True,
+                    "acceptance_status": "audit_limited",
+                    "original_domain_judgment": "Some concerns",
+                    "test_domain_judgment": "High",
+                }
+            ]
+        },
+    }
+
+    report = report_formatter_node(state)["markdown_report"]
+
+    assert "Audit-limited support: D3 SQ 3.3" in report
+    assert "pivotal weak support" in report
+    assert "acceptance_status" not in report

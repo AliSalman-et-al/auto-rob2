@@ -450,6 +450,33 @@ def _summarize_adjudication_metrics(
     }
 
 
+def _audit_limited_domains(pipeline_output: dict[str, Any]) -> set[str]:
+    domains = set()
+    for domain, test in _iter_domain_records(pipeline_output.get("pivotality_tests")):
+        if domain in DOMAINS and test.get("acceptance_status") == "audit_limited":
+            domains.add(domain)
+    return domains
+
+
+def _audit_caught_mismatches(
+    comparison: dict[str, bool],
+    audit_limited_domains: set[str],
+    human_review_priority: object,
+) -> dict[str, bool]:
+    high_priority = _strip(human_review_priority).casefold() == "high"
+    caught = {}
+    for field in [*DOMAINS, "Overall"]:
+        if comparison.get(field) is not False:
+            continue
+        audit_limited = (
+            field in audit_limited_domains
+            if field in DOMAINS
+            else bool(audit_limited_domains)
+        )
+        caught[field] = high_priority or audit_limited
+    return caught
+
+
 def run_benchmark(
     pdf_dir,
     reference_csvs,
@@ -624,6 +651,11 @@ def run_benchmark(
             trial_result["comparison"] = compare_judgments(
                 trial_result["pipeline"], reference_row_entry["row"]
             )
+            trial_result["audit_caught_mismatches"] = _audit_caught_mismatches(
+                trial_result["comparison"],
+                _audit_limited_domains(pipeline_output),
+                pipeline_output.get("human_review_priority"),
+            )
         except Exception as exc:  # noqa: BLE001
             trial_result["error"] = str(exc)
             trial_result["notes"] = str(exc)
@@ -642,6 +674,7 @@ def _empty_confusion() -> dict[str, dict[str, int]]:
 def _summarize_results_subset(results) -> dict:
     fields = [*DOMAINS, "Overall"]
     counts = {field: {"matches": 0, "total": 0} for field in fields}
+    audit_caught = {field: {"caught": 0, "total": 0} for field in fields}
     confusion = {field: _empty_confusion() for field in fields}
 
     evaluated_trials = 0
@@ -671,6 +704,13 @@ def _summarize_results_subset(results) -> dict:
         if overall_ref in JUDGMENT_ORDER and overall_pred in JUDGMENT_ORDER:
             confusion["Overall"][overall_ref][overall_pred] += 1
 
+        caught_mismatches = result.get("audit_caught_mismatches") or {}
+        for field in fields:
+            if comparison.get(field) is False:
+                audit_caught[field]["total"] += 1
+                if caught_mismatches.get(field):
+                    audit_caught[field]["caught"] += 1
+
     rates = {}
     for field, field_counts in counts.items():
         total = field_counts["total"]
@@ -680,6 +720,7 @@ def _summarize_results_subset(results) -> dict:
         "evaluated_trials": evaluated_trials,
         "agreement_counts": counts,
         "agreement_rates": rates,
+        "audit_caught_mismatches": audit_caught,
         "confusion_matrices": confusion,
         "judgment_order": list(JUDGMENT_ORDER),
     }
@@ -967,6 +1008,24 @@ def write_benchmark_report(results, summary, output_path):
         lines.append(
             f"| {field} | {rate:.1f}% ({counts['matches']}/{counts['total']}) |"
         )
+
+    audit_caught = summary.get("audit_caught_mismatches") or {}
+    if any(counts.get("total", 0) for counts in audit_caught.values()):
+        lines.extend(
+            [
+                "",
+                "## Audit-Caught Mismatches",
+                "",
+                "| Field | Audit-caught label mismatches |",
+                "| --- | ---: |",
+            ]
+        )
+        for field in fields:
+            counts = audit_caught.get(field, {"caught": 0, "total": 0})
+            total = counts.get("total", 0)
+            caught = counts.get("caught", 0)
+            rate = (caught / total * 100) if total else 0.0
+            lines.append(f"| {field} | {rate:.1f}% ({caught}/{total}) |")
 
     if has_meaningful_cohort and summary.get("cohorts"):
         lines.extend(
