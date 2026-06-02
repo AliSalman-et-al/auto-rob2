@@ -147,7 +147,10 @@ def test_domain2_prompt_does_not_treat_missing_deviation_reporting_as_reassuring
 
     assert "absence of clear reporting" in PROMPT_DOMAIN2_CONDITIONAL
     assert "is not automatically reassuring" in PROMPT_DOMAIN2_CONDITIONAL
-    assert "do not answer N or PN solely because no deviations are reported" in PROMPT_DOMAIN2_CONDITIONAL
+    assert (
+        "do not answer N or PN solely because no deviations are reported"
+        in PROMPT_DOMAIN2_CONDITIONAL
+    )
 
 
 def test_domain3_prompt_requests_completeness_evidence_without_mechanical_denominator_rule():

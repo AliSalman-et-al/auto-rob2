@@ -76,7 +76,9 @@ def apply_domain4_control(
     updated = dict(sq_answers)
     outcome_type = state.get("outcome_type", "clinician-composite")
     classification_support = state.get("outcome_classification_support", {})
-    classification_support_level = classification_support.get("support_level", "moderate")
+    classification_support_level = classification_support.get(
+        "support_level", "moderate"
+    )
     classification_support_rationale = classification_support.get(
         "support_rationale", "Derived from objective outcome classification."
     )

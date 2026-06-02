@@ -22,12 +22,30 @@ def _state(outcome: str, measurement_text: str = ""):
 def _mock_llm(response: str, calls: list[dict]):
     def fake_call(state, prompt, node_name):
         calls.append({"state": state, "prompt": prompt, "node_name": node_name})
-        return response, [{"node": node_name, "prompt_length_chars": len(prompt), "response_length_chars": len(response), "latency_ms": 0, "cache_hit": False}], None
+        return (
+            response,
+            [
+                {
+                    "node": node_name,
+                    "prompt_length_chars": len(prompt),
+                    "response_length_chars": len(response),
+                    "latency_ms": 0,
+                    "cache_hit": False,
+                }
+            ],
+            None,
+        )
 
     return fake_call
 
 
-def _response(outcome_type: str, support_level: str, rationale: str, props: dict[str, bool], quote: str):
+def _response(
+    outcome_type: str,
+    support_level: str,
+    rationale: str,
+    props: dict[str, bool],
+    quote: str,
+):
     def flag(name: str) -> str:
         return str(props.get(name, False)).lower()
 
@@ -108,25 +126,38 @@ def test_resolver_uses_assessed_outcome_bound_llm_evidence(monkeypatch):
     assert calls[0]["node_name"] == "outcome_resolver"
 
 
-def test_invalid_llm_output_falls_back_to_unsupported_without_regex_semantics(monkeypatch):
+def test_invalid_llm_output_falls_back_to_unsupported_without_regex_semantics(
+    monkeypatch,
+):
     monkeypatch.setattr(
         outcome_resolver,
         "call_node_llm",
-        _mock_llm("<outcome_resolution><outcome_type>vital-status</outcome_type></outcome_resolution>", []),
+        _mock_llm(
+            "<outcome_resolution><outcome_type>vital-status</outcome_type></outcome_resolution>",
+            [],
+        ),
     )
 
     result = outcome_resolver.outcome_resolver_node(
-        _state("Overall survival", "Overall survival was defined as time from randomization to death from any cause.")
+        _state(
+            "Overall survival",
+            "Overall survival was defined as time from randomization to death from any cause.",
+        )
     )
 
     assert result["outcome_type"] == "clinician-composite"
     assert result["outcome_properties"] == outcome_resolver.DEFAULT_OUTCOME_PROPERTIES
     assert result["outcome_classification_support"]["support_level"] == "unsupported"
-    assert result["support_constraints"][0]["constraint_type"] == "missing_required_evidence"
+    assert (
+        result["support_constraints"][0]["constraint_type"]
+        == "missing_required_evidence"
+    )
     assert "outcome resolver output" in result["support_constraints"][0]["reason"]
 
 
-def test_untraceable_quote_creates_constraint_and_unsupported_classification(monkeypatch):
+def test_untraceable_quote_creates_constraint_and_unsupported_classification(
+    monkeypatch,
+):
     monkeypatch.setattr(
         outcome_resolver,
         "call_node_llm",
@@ -198,7 +229,9 @@ def test_clinician_composite_progression_outcome(monkeypatch):
 
 
 def test_safety_outcome_resolves_to_clinician_graded(monkeypatch):
-    quote = "Serious adverse events were graded by study clinicians using CTCAE criteria."
+    quote = (
+        "Serious adverse events were graded by study clinicians using CTCAE criteria."
+    )
     monkeypatch.setattr(
         outcome_resolver,
         "call_node_llm",
@@ -239,9 +272,7 @@ def test_patient_reported_outcome_resolves_to_patient_reported(monkeypatch):
         ),
     )
 
-    result = outcome_resolver.outcome_resolver_node(
-        _state("Quality of life", quote)
-    )
+    result = outcome_resolver.outcome_resolver_node(_state("Quality of life", quote))
 
     assert result["outcome_type"] == "patient-reported"
     assert result["outcome_properties"]["patient_reported"] is True

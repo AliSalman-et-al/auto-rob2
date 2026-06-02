@@ -173,9 +173,7 @@ def test_unresolved_pivotal_weak_answer_is_audit_limited(monkeypatch):
 
     assert result["initial_domain_judgments"]["D1"] == "Some concerns"
     assert result["domain_judgments"]["D1"] == "Some concerns"
-    assert (
-        result["pivotality_tests"]["D1"][0]["acceptance_status"] == "audit_limited"
-    )
+    assert result["pivotality_tests"]["D1"][0]["acceptance_status"] == "audit_limited"
 
 
 @pytest.mark.parametrize(
@@ -205,7 +203,11 @@ def test_adjudication_records_answer_and_support_change_flags(
     def fake_call_fn(
         state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources=None
     ):
-        return "", [{"node": node_name, "cache_hit": False}], {"1.3": adjudicated_answer}
+        return (
+            "",
+            [{"node": node_name, "cache_hit": False}],
+            {"1.3": adjudicated_answer},
+        )
 
     monkeypatch.setattr("rob2_pipeline.nodes.common.call_node_llm", fake_call_fn)
 
@@ -226,9 +228,7 @@ def test_adjudication_records_answer_and_support_change_flags(
     attempt = result["sq_support_adjudications"]["D1"][0]
     assert attempt["changed_answer"] is expected_changed_answer
     assert attempt["changed_support"] is expected_changed_support
-    assert attempt["changed"] is (
-        expected_changed_answer or expected_changed_support
-    )
+    assert attempt["changed"] is (expected_changed_answer or expected_changed_support)
     assert attempt["rationale"] == "adjudicated support"
     assert attempt["provenance"]["llm_node"] == "sq_support_adjudication_D1_1_3"
     assert (

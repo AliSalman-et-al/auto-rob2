@@ -144,7 +144,9 @@ def _constraint(
     return data
 
 
-def support_constraints_from_verification(state: RoB2State, flags: list[dict]) -> list[dict]:
+def support_constraints_from_verification(
+    state: RoB2State, flags: list[dict]
+) -> list[dict]:
     constraints = []
     seen = set()
 
@@ -203,7 +205,9 @@ def support_constraints_from_verification(state: RoB2State, flags: list[dict]) -
         elif "packet_verification_failed" in issue:
             packet = (state.get("evidence_packets") or {}).get(sq_id, {})
             grade = packet.get("packet_grade") or {}
-            for label in grade.get("missing_evidence") or packet.get("missing_evidence") or []:
+            for label in (
+                grade.get("missing_evidence") or packet.get("missing_evidence") or []
+            ):
                 add(
                     _constraint(
                         "missing_required_evidence",
@@ -234,7 +238,9 @@ def support_constraints_from_verification(state: RoB2State, flags: list[dict]) -
                 )
 
     for constraint in list(constraints):
-        support_level = str(constraint.get("claim", {}).get("support_level", "")).lower()
+        support_level = str(
+            constraint.get("claim", {}).get("support_level", "")
+        ).lower()
         if support_level in _SUPPORTED_LEVELS and constraint["constraint_type"] in {
             "quote_untraceable",
             "missing_required_evidence",

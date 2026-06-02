@@ -394,7 +394,12 @@ def test_run_benchmark_regression_fixtures_cover_known_undercalling_patterns(
 
     assert by_trial["PEACE-1"]["pipeline"]["domain_judgments"]["D2"] == "Some concerns"
     assert by_trial["PEACE-1"]["pipeline"]["initial_domain_judgments"]["D2"] == "Low"
-    assert by_trial["PEACE-1"]["adjudication_metrics"]["sq_support_adjudications"]["changed_answer"] == 1
+    assert (
+        by_trial["PEACE-1"]["adjudication_metrics"]["sq_support_adjudications"][
+            "changed_answer"
+        ]
+        == 1
+    )
     assert by_trial["PEACE-1"]["pipeline"]["human_review_priority"] == "HIGH"
 
     assert by_trial["STAMPEDE"]["pipeline"]["domain_judgments"]["D3"] == "Some concerns"

@@ -118,8 +118,11 @@ def _parse_resolution(raw: str) -> dict:
     for constraint_el in root.findall("./constraints/constraint"):
         constraints.append(
             {
-                "constraint_type": constraint_el.attrib.get("type", "semantic_support_conflict"),
-                "reason": (constraint_el.text or "").strip() or "LLM reported a support constraint.",
+                "constraint_type": constraint_el.attrib.get(
+                    "type", "semantic_support_conflict"
+                ),
+                "reason": (constraint_el.text or "").strip()
+                or "LLM reported a support constraint.",
             }
         )
     return {
@@ -136,10 +139,15 @@ def _parse_resolution(raw: str) -> dict:
 
 def _quote_is_traceable(quote: str, sections: dict[str, str]) -> bool:
     normalized_quote = " ".join(quote.casefold().split())
-    return any(normalized_quote in " ".join(text.casefold().split()) for text in sections.values())
+    return any(
+        normalized_quote in " ".join(text.casefold().split())
+        for text in sections.values()
+    )
 
 
-def _unsupported(reason: str, constraint_type: str = "missing_required_evidence") -> dict:
+def _unsupported(
+    reason: str, constraint_type: str = "missing_required_evidence"
+) -> dict:
     return {
         "outcome_type": "clinician-composite",
         "outcome_properties": dict(DEFAULT_OUTCOME_PROPERTIES),
@@ -170,7 +178,9 @@ def _validate_resolution(resolution: dict, sections: dict[str, str]) -> dict:
                 }
             )
     if constraints:
-        fallback = _unsupported(constraints[0]["reason"], constraints[0]["constraint_type"])
+        fallback = _unsupported(
+            constraints[0]["reason"], constraints[0]["constraint_type"]
+        )
         fallback["outcome_classification_support"]["constraints"] = constraints
         return fallback
     resolution["outcome_classification_support"] = resolution.pop("support")
@@ -190,7 +200,9 @@ def outcome_resolver_node(state: RoB2State) -> RoB2State:
         resolution = _unsupported(f"Invalid outcome resolver output: {exc}")
 
     support_constraints = list(state.get("support_constraints", []))
-    for constraint in resolution["outcome_classification_support"].get("constraints", []):
+    for constraint in resolution["outcome_classification_support"].get(
+        "constraints", []
+    ):
         support_constraints.append(
             {
                 **constraint,

@@ -231,8 +231,7 @@ def test_unsupported_answers_receive_pivotality_tests():
 
     assert result["pivotality_tests"]["D5"][0]["support_level"] == "unsupported"
     assert (
-        result["pivotality_tests"]["D5"][0]["acceptance_status"]
-        == "needs_adjudication"
+        result["pivotality_tests"]["D5"][0]["acceptance_status"] == "needs_adjudication"
     )
 
 

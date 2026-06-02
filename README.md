@@ -6,7 +6,8 @@ assessments for randomized controlled trial reports.
 The pipeline ingests a primary study PDF, optionally adds supplementary PDFs
 such as protocols or appendices, enriches the record with ClinicalTrials.gov
 data when available, retrieves targeted evidence, asks LLMs to answer RoB 2
-signaling questions, and then applies deterministic Python judges for the final
+signaling questions with evidence-support ratings, audits pivotal weak or
+constrained answers, and then applies deterministic Python judges for the final
 D1-D5 and overall judgments.
 
 The output is a reviewer-facing draft plus detailed JSON diagnostics. It is
@@ -141,6 +142,9 @@ Useful JSON fields:
 | -------------------------------------- | ---------------------------------------------------- |
 | `domain_judgments`, `overall_judgment` | Final deterministic RoB 2 labels                     |
 | `sq_answers`                           | Parsed LLM signaling-question answers                |
+| `initial_domain_judgments`             | Pre-adjudication deterministic domain labels          |
+| `pivotality_tests`                     | Conservative tests for weak or constrained SQ answers |
+| `sq_support_adjudications`             | Targeted LLM re-checks for pivotal weak or constrained SQ answers |
 | `evidence`                             | Structured evidence extracted from the primary paper |
 | `source_documents`                     | Primary and supplement parse inventory               |
 | `supplement_warnings`                  | Non-fatal supplement ingestion issues                |
@@ -148,6 +152,7 @@ Useful JSON fields:
 | `evidence_packets`                     | Evidence selected for each signaling question        |
 | `retrieval_grades`, `packet_grades`    | Retrieval and packet quality diagnostics             |
 | `evidence_validation_flags`            | Quote-support and quality flags                      |
+| `support_constraints`                  | Typed support issues such as untraceable quotes or missing required evidence |
 | `verification_actions`                 | Suggested retry or review actions                    |
 
 Useful trace JSON fields:
@@ -216,9 +221,19 @@ Benchmark outputs:
 Benchmark results include timing data for each attempted assessment. Each
 per-result `timing` object reports total wall time, trace availability, total
 LLM latency, estimated non-LLM time, LLM call/cache/repair counts, slowest
-nodes, and LLM latency grouped by node. `benchmark_report.md` also includes a
-`Timing Summary` section with aggregate wall-clock timing, slowest runs, and
-node timing totals.
+nodes, adjudication LLM calls, and LLM latency grouped by node.
+`benchmark_report.md` also includes a `Timing Summary` section with aggregate
+wall-clock timing, slowest runs, and node timing totals.
+
+When the same trial is benchmarked for multiple outcomes, benchmark execution
+reuses trial-level ingestion artifacts and retrieval indexes for later outcomes
+with the same primary PDF and supplements. Outcome resolution, evidence
+packets, SQ answers, support adjudication, and judgments remain
+outcome-specific.
+
+Benchmark reports also include an `Adjudication Summary` when support audit
+artifacts are present. It counts weak and unsupported SQ answers, pivotality
+tests, targeted SQ support adjudications, and initial-vs-final judgment deltas.
 
 Timing data is instrumentation-only. It does not change prompts, provider
 selection, graph behavior, cache policy, or benchmark accuracy calculations.
@@ -297,6 +312,7 @@ Key files:
 | `rob2_pipeline/nodes/domain_context.py`   | Prompt-ready D1-D5 evidence context              |
 | `rob2_pipeline/nodes/domain_helpers.py`   | Shared `DomainSqStage` SQ-stage runner           |
 | `rob2_pipeline/nodes/evidence_packets.py` | SQ-specific evidence packets                     |
+| `rob2_pipeline/nodes/verification.py`     | Quote, packet, and support-constraint checks     |
 | `rob2_pipeline/judges/`                   | Deterministic RoB 2 judgment logic               |
 | `rob2_pipeline/providers/`                | LLM provider adapters                            |
 | `CONTEXT.md`                              | Shared domain vocabulary and change-path map     |
@@ -316,6 +332,10 @@ state = run_assessment(
 
 print(state["overall_judgment"])
 ```
+
+`run_assessment()` also accepts `precomputed_ingestion` and
+`trial_retrieval_indexes` for benchmark-style reuse across multiple outcomes
+from the same trial. Normal callers should usually leave those unset.
 
 ## Development
 
@@ -349,6 +369,7 @@ uv run python -m py_compile rob2_pipeline/benchmark.py benchmark.py
 | Missing evidence            | `evidence`, `rag_sources`, `evidence_packets`                    |
 | Prompt evidence mismatch    | `rob2_pipeline/nodes/domain_context.py` and relevant `DomainSqStage` |
 | Weak D3/D5 support          | `packet_grades`, `verification_actions`, supplement sources      |
+| Unexpected final-vs-initial label | `pivotality_tests`, `sq_support_adjudications`, `initial_domain_judgments` |
 | Supplement parse errors     | `source_documents`, `supplement_warnings`                        |
 | ClinicalTrials.gov mismatch | Registered endpoint fields and CT.gov-derived `evidence_packets` |
 | Empty RAG output            | embedding model availability and `evidence.warnings`             |

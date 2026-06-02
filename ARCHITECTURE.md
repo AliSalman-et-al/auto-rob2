@@ -18,8 +18,9 @@ modules.
    parsed into chunks, retrieved, and packaged so domain prompts receive
    targeted evidence rather than whole documents.
 3. **LLMs do not make final labels directly.** LLMs answer structured RoB 2
-   signaling questions. Deterministic judges convert those answers into D1-D5
-   and overall judgments.
+   signaling questions and rate evidence support. Domain judge nodes audit
+   pivotal weak or constrained answers before deterministic judges produce
+   final D1-D5 and overall judgments.
 4. **Outputs must be auditable.** Reports are accompanied by JSON diagnostics,
    source provenance, retrieval grades, evidence packets, LLM traces, and
    timing traces.
@@ -37,15 +38,15 @@ pdf_ingest
   -> rag_retrieval
   -> evidence_packet_builder
   -> D1-D5 signaling-question nodes
-  -> deterministic domain judges
+  -> support audit and deterministic domain judges
   -> quote_verifier
   -> overall_judge
   -> report_formatter
 ```
 
 The RCT screener can stop the graph early. Otherwise, the run proceeds through
-ingestion, evidence selection, signaling-question answering, deterministic
-judgment, verification, and report formatting.
+ingestion, evidence selection, signaling-question answering, support audit,
+deterministic judgment, verification, and report formatting.
 
 `rob2_pipeline/pipeline.py` owns the public `run_assessment()` API and writes
 the Markdown report, data JSON, and trace JSON after graph execution. Graph
@@ -84,6 +85,11 @@ the main article. Supplement ingestion is best-effort unless benchmark
 optional supplement chunks. Supplement chunks are added to retrieval with
 explicit metadata; supplement text is not appended to `full_text`.
 
+Benchmark runs can pass `precomputed_ingestion` back into the ingestion node
+when the primary PDF and selected supplements match a previous outcome run.
+That reuse is trial-level only; outcome-specific resolution and judgments still
+run independently.
+
 ### Trial Metadata And Registry Enrichment
 
 `preliminary_info` extracts trial metadata such as intervention, comparator,
@@ -119,6 +125,11 @@ chunks within a token budget, and writes both prompt-facing text
 (`rag_contexts`) and JSON-facing metadata (`rag_chunk_metadata`, emitted as
 `rag_sources`).
 
+`rag_retrieval_node` stores built indexes in `trial_retrieval_indexes` so
+benchmark runs can reuse the same trial-level FAISS indexes across multiple
+outcomes for the same primary PDF and supplements. Retrieved contexts and
+evidence packets are still rebuilt per assessed outcome.
+
 If vector retrieval fails, downstream nodes still receive deterministic
 fallback sections extracted from the primary paper.
 
@@ -151,9 +162,9 @@ evidence-packet blocks, RAG compatibility text, trial facts, and registry
 fields into dataclass values consumed by the domain SQ nodes.
 
 Domain prompt context is intentionally not responsible for source selection,
-retrieval, signaling-question branching, NA control logic, or deterministic
-judging. Those remain in the evidence-packet, retrieval, domain-node, and judge
-modules.
+retrieval, signaling-question branching, NA control logic, support audit, or
+deterministic judging. Those remain in the evidence-packet, retrieval,
+domain-node, verification, and judge modules.
 
 | File | Responsibility |
 | --- | --- |
@@ -171,6 +182,8 @@ post-processing in one place while leaving prompt assembly in
 All graph LLM calls go through `call_node_llm()` in
 `rob2_pipeline/nodes/common.py`. That layer handles provider selection, prompt
 caching, XML parsing and repair, trace logging, and error normalization.
+Signaling-question responses are parsed into answer code, quote,
+justification, uncertainty flag, support level, and support rationale.
 
 | File | Responsibility |
 | --- | --- |
@@ -211,8 +224,20 @@ time as `max(total_wall_ms - llm_total_ms, 0)`.
 | `rob2_pipeline/nodes/reporter.py` | Markdown report payload |
 
 The domain judges consume parsed signaling-question answers, not raw free-form
-model text. The quote verifier adds audit flags and suggested actions when
-evidence support looks weak or packet quality is low.
+model text. Each domain judge records the initial deterministic label, runs
+pivotality tests for weak, unsupported, or constrained SQ answers, and may call
+a targeted SQ support adjudication LLM node before writing the final domain
+label.
+
+Pivotality tests do not silently rewrite labels. They record the conservative
+answer that would change the domain judgment and an acceptance status:
+`accepted`, `needs_adjudication`, or `audit_limited`. Targeted adjudication may
+change an SQ answer or only its support level. Both the initial and final
+domain judgments are emitted to JSON when available.
+
+The quote verifier adds post-judgment audit flags, typed support constraints,
+and suggested actions when quotes are not traceable, packet quality is low, or
+required evidence is missing.
 
 ## State Model
 
@@ -223,15 +248,17 @@ Important state groups:
 
 | Group | Representative keys |
 | --- | --- |
-| Inputs | `pdf_path`, `supplementary_paths` |
+| Inputs | `pdf_path`, `supplementary_paths`, `precomputed_ingestion` |
 | Primary ingestion | `full_text`, `evidence`, `docling_doc`, `docling_chunks` |
 | Source inventory | `source_documents`, `supplement_warnings` |
 | Trial metadata | `intervention`, `comparator`, `outcome`, `registration_number` |
+| Outcome resolution | `outcome_type`, `outcome_properties`, `outcome_classification_support` |
 | Registry enrichment | `registered_endpoint`, `ctgov_outcomes`, `ctgov_design`, `ctgov_flow` |
-| Retrieval | `rag_contexts`, `rag_chunk_metadata`, `retrieval_grades` |
+| Retrieval | `rag_contexts`, `rag_chunk_metadata`, `retrieval_grades`, `trial_retrieval_indexes` |
 | Packets | `evidence_packets`, `evidence_facts`, `packet_grades` |
 | Prompt context | Derived in `domain_context.py`; not persisted in state |
-| Judgments | `sq_answers`, `domain_judgments`, `overall_judgment` |
+| Judgments | `sq_answers`, `initial_domain_judgments`, `domain_judgments`, `overall_judgment` |
+| Support audit | `pivotality_tests`, `sq_support_adjudications`, `support_constraints` |
 | Quality | `evidence_validation_flags`, `verification_actions`, `human_review_priority` |
 | Diagnostics | `errors`, `llm_call_log`, `verifier_trace` |
 
@@ -320,9 +347,16 @@ Primary PDFs resolve from `inputs/benchmark/<TRIAL>.pdf`. When
 `inputs/benchmark/supplement/<TRIAL>/*.pdf` unless another supplement directory
 is supplied.
 
+Benchmark orchestration caches trial-level ingestion artifacts and retrieval
+indexes by primary PDF identity plus selected supplement identities. If the
+same trial is assessed for multiple outcomes in one run, later outcomes reuse
+the cached primary text, evidence, Docling chunks, source inventory, supplement
+warnings, and FAISS indexes. Outcome resolution, retrieved contexts, evidence
+packets, SQ answers, support audit, and judgments remain outcome-specific.
+
 Benchmark results include the reference row, pipeline judgments, agreement
-comparisons, supplement counts, errors, aggregate confusion matrices, and
-timing summaries.
+comparisons, supplement counts, errors, aggregate confusion matrices, timing
+summaries, audit-caught mismatch metrics, and adjudication metrics.
 
 Each benchmark result gets a `timing` object when an assessment is attempted or
 fails before execution in a non-skipped path. It includes:
@@ -331,13 +365,15 @@ fails before execution in a non-skipped path. It includes:
 - whether the assessment trace was available
 - total graph-node duration
 - total LLM latency, LLM call count, cache hits, repairs, and parse errors
+- adjudication LLM calls, latency, and token counts
 - estimated non-LLM time
 - slowest nodes
 - LLM latency grouped by node
 
 `benchmark_report.md` renders a `Timing Summary` section with aggregate
-wall-clock timing, slowest runs, and node timing totals. Raw per-node span
-payloads remain in the per-assessment trace JSON rather than the public
+wall-clock timing, slowest runs, and node timing totals. It also renders an
+`Adjudication Summary` when support-audit artifacts are present. Raw per-node
+span payloads remain in the per-assessment trace JSON rather than the public
 benchmark summary JSON.
 
 ## Configuration Reference
@@ -371,12 +407,13 @@ uv run python -m pytest tests/test_supplements.py -q
 For a wrong judgment, inspect in this order:
 
 1. `domain_judgments` and `domain_rationales`
-2. relevant `sq_answers`
-3. relevant `evidence_packets`
-4. relevant `DomainEvidenceContext` builder in `nodes/domain_context.py`
-5. domain `rag_sources`
-6. `retrieval_grades` and `packet_grades`
-7. `evidence_validation_flags` and `verification_actions`
+2. `initial_domain_judgments`, `pivotality_tests`, and `sq_support_adjudications`
+3. relevant `sq_answers`
+4. relevant `evidence_packets`
+5. relevant `DomainEvidenceContext` builder in `nodes/domain_context.py`
+6. domain `rag_sources`
+7. `retrieval_grades` and `packet_grades`
+8. `support_constraints`, `evidence_validation_flags`, and `verification_actions`
 
 For ingestion problems, inspect:
 
@@ -398,6 +435,7 @@ Common failure modes:
 | Supplement parse issue | `source_documents`, `supplement_warnings` |
 | `std::bad_alloc` from Docling | Supplement window warnings; reduce page-window size |
 | Empty RAG output | embedding availability and primary evidence warnings |
+| Unexpected final-vs-initial label | `pivotality_tests`, `sq_support_adjudications`, and adjudication LLM trace |
 | Slow benchmark run | `benchmark_report.md` Timing Summary, per-result `timing`, and trace `node_spans` |
 
 ## Extension Guide
@@ -413,7 +451,10 @@ Common failure modes:
 7. Update the relevant `DomainSqStage` prompt builder, SQ IDs, or
    stage-local control flow in the domain node.
 8. Update the deterministic judge if final-label behavior changes.
-9. Add tests for stage behavior, context, parsing, packets, and judge behavior.
+9. Update support-audit expectations if the SQ can be pivotal when weak or
+   unsupported.
+10. Add tests for stage behavior, context, parsing, packets, pivotality, and
+    judge behavior.
 
 ### Add A New Evidence Source
 
@@ -442,6 +483,8 @@ graph.
 - Rate limiting is lock-protected for concurrent graph fan-out.
 - Timing instrumentation is always on and additive; it does not alter pipeline
   decisions or benchmark accuracy calculations.
+- Support audit can add targeted adjudication calls and initial-vs-final
+  judgment deltas; final labels still use standard RoB 2 labels.
 - ClinicalTrials.gov evidence is supporting evidence; it may disagree with
   protocols or publications.
 - Supplement ingestion is intentionally tolerant in normal runs and stricter in
