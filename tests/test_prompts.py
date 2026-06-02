@@ -142,6 +142,31 @@ def test_domain4_prompt_guides_outcome_specific_q44_reasoning():
     assert "mechanical" in result
 
 
+def test_domain2_prompt_does_not_treat_missing_deviation_reporting_as_reassuring():
+    from rob2_pipeline.prompts import PROMPT_DOMAIN2_CONDITIONAL
+
+    assert "absence of clear reporting" in PROMPT_DOMAIN2_CONDITIONAL
+    assert "is not automatically reassuring" in PROMPT_DOMAIN2_CONDITIONAL
+    assert "do not answer N or PN solely because no deviations are reported" in PROMPT_DOMAIN2_CONDITIONAL
+
+
+def test_domain3_prompt_requests_completeness_evidence_without_mechanical_denominator_rule():
+    from rob2_pipeline.prompts import PROMPT_DOMAIN3
+
+    assert "identify the numerator and denominator" in PROMPT_DOMAIN3
+    assert "missing denominator, percentage, or count evidence" in PROMPT_DOMAIN3
+    assert "provenance and support concern" in PROMPT_DOMAIN3
+    assert "If >= 10% of randomised participants are excluded" not in PROMPT_DOMAIN3
+
+
+def test_domain4_prompt_avoids_objectivity_assumption_for_open_label_clinician_outcomes():
+    from rob2_pipeline.prompts import PROMPT_DOMAIN4
+
+    assert "open-label clinician-assessed or composite outcomes" in PROMPT_DOMAIN4
+    assert "do not assume objectivity" in PROMPT_DOMAIN4
+    assert "assessed-outcome-bound" in PROMPT_DOMAIN4
+
+
 def test_domain_prompts_include_canonical_methodology_blocks():
     from rob2_pipeline.prompts import (
         PROMPT_DOMAIN1,
