@@ -275,6 +275,36 @@ def test_constrained_answers_receive_visible_non_blocking_audit_records():
     }
 
 
+def test_domain4_consumes_outcome_classification_constraints_for_derived_sq44():
+    result = domain4_judge_node(
+        {
+            "sq_answers": {
+                "4.1": _answer("N", "strong"),
+                "4.2": _answer("N", "strong"),
+                "4.3": _answer("Y", "strong"),
+                "4.4": _answer("N", "strong"),
+            },
+            "support_constraints": [
+                {
+                    "constraint_type": "quote_untraceable",
+                    "sq_id": "outcome_classification",
+                    "reason": "Outcome classification quote was not traceable.",
+                }
+            ],
+            "domain_judgments": {},
+            "domain_rationales": {},
+        }
+    )
+
+    assert result["pivotality_tests"]["D4"][0]["sq_id"] == "4.4"
+    assert result["pivotality_tests"]["D4"][0]["pivotal"] is True
+    assert result["pivotality_tests"]["D4"][0]["constraints"][0]["sq_id"] == "4.4"
+    assert (
+        result["pivotality_tests"]["D4"][0]["constraints"][0]["constraint_type"]
+        == "quote_untraceable"
+    )
+
+
 def test_pivotality_tests_are_in_json_output():
     state = {
         "pivotality_tests": {

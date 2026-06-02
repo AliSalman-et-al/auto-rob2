@@ -39,6 +39,28 @@ def domain4_sq_node(state: RoB2State) -> RoB2State:
 
 def domain4_judge_node(state: RoB2State) -> RoB2State:
     judgment, rationale = judge_domain4(state["sq_answers"])
+    state = _with_outcome_classification_constraints_for_d4(state)
     return add_domain_judgment_with_pivotality_tests(
         state, "D4", judgment, rationale, judge_domain4, DOMAIN4_STAGE.sq_ids
     )
+
+
+def _with_outcome_classification_constraints_for_d4(state: RoB2State) -> RoB2State:
+    constraints = list(state.get("support_constraints", []))
+    mapped = []
+    for constraint in constraints:
+        if constraint.get("sq_id") != "outcome_classification":
+            continue
+        mapped.append(
+            {
+                **constraint,
+                "sq_id": "4.4",
+                "reason": (
+                    constraint.get("reason", "")
+                    or "Outcome classification support constrains derived SQ 4.4."
+                ),
+            }
+        )
+    if not mapped:
+        return state
+    return {**state, "support_constraints": constraints + mapped}

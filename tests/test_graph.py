@@ -100,6 +100,28 @@ def _response_by_node(node_name: str):
           <registered_analysis><value>ITT</value><quote>"intention-to-treat" (Methods)</quote></registered_analysis>
         </preliminary_info>
         """,
+        "outcome_resolver": """
+        <outcome_resolution>
+          <outcome_type>vital-status</outcome_type>
+          <support_level>strong</support_level>
+          <support_rationale>Mortality is defined as a death-only endpoint.</support_rationale>
+          <properties>
+            <patient_reported>false</patient_reported>
+            <safety_harm>false</safety_harm>
+            <time_to_event>true</time_to_event>
+            <death_only_objective_event>true</death_only_objective_event>
+            <composite>false</composite>
+            <lab_or_imaging_threshold>false</lab_or_imaging_threshold>
+            <blinded_adjudication>false</blinded_adjudication>
+            <objective_event>true</objective_event>
+            <clinician_judged>false</clinician_judged>
+          </properties>
+          <quotes>
+            <quote source="d4_outcome_meas">The primary outcome was mortality.</quote>
+          </quotes>
+          <constraints></constraints>
+        </outcome_resolution>
+        """,
         "domain1_sq": """
         <domain1>
           <sq_1_1><answer>Y</answer><quote>"computer-generated sequence" (Methods)</quote><justification>Random sequence stated.</justification></sq_1_1>
@@ -154,6 +176,8 @@ def _node_from_prompt(prompt: str) -> str:
         return "rct_screener"
     if "<preliminary_info>" in prompt:
         return "preliminary_info"
+    if "<outcome_resolution>" in prompt:
+        return "outcome_resolver"
     if "<domain1>" in prompt:
         return "domain1_sq"
     if "<domain2_part1>" in prompt:
@@ -212,6 +236,28 @@ def _pfs_response_by_node(node_name: str):
           <registered_secondary_endpoints>Not reported</registered_secondary_endpoints>
           <registered_analysis><value>ITT</value></registered_analysis>
         </preliminary_info>
+        """,
+        outcome_resolver="""
+        <outcome_resolution>
+          <outcome_type>clinician-composite</outcome_type>
+          <support_level>strong</support_level>
+          <support_rationale>Progression-free survival combines progression and death.</support_rationale>
+          <properties>
+            <patient_reported>false</patient_reported>
+            <safety_harm>false</safety_harm>
+            <time_to_event>true</time_to_event>
+            <death_only_objective_event>false</death_only_objective_event>
+            <composite>true</composite>
+            <lab_or_imaging_threshold>true</lab_or_imaging_threshold>
+            <blinded_adjudication>false</blinded_adjudication>
+            <objective_event>false</objective_event>
+            <clinician_judged>true</clinician_judged>
+          </properties>
+          <quotes>
+            <quote source="d4_outcome_meas">Progression-free survival was biochemical, symptomatic, or radiographic progression.</quote>
+          </quotes>
+          <constraints></constraints>
+        </outcome_resolution>
         """,
         domain1_sq="""
         <domain1>
@@ -383,8 +429,8 @@ def test_graph_happy_path_with_mocked_llm(tmp_path):
     assert "1.1" in state["evidence_facts"]
     assert "# RoB 2 Assessment" in state["markdown_report"]
     assert "## Verified evidence packets" in state["markdown_report"]
-    assert len(state["llm_call_log"]) == 9
-    assert provider.complete.call_count == 9
+    assert len(state["llm_call_log"]) == 10
+    assert provider.complete.call_count == 10
 
 
 def test_graph_pfs_composite_endpoint_d4_some_concerns_d5_low(tmp_path):

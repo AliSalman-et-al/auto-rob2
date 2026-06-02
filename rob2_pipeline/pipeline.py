@@ -17,6 +17,7 @@ JSON_OUTPUT_KEYS = (
     "outcome",
     "outcome_type",
     "outcome_properties",
+    "outcome_classification_support",
     "numerical_result",
     "effect_of_interest",
     "registration_number",
