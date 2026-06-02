@@ -300,6 +300,8 @@ Because 2.1 or 2.2 was Y/PY/NI, answer the conditional Domain 2 questions for th
 If 2.3 is N/PN, answer 2.4 and 2.5 as NA. If 2.3 is Y/PY/NI, answer 2.4.
 
 If 2.4 is N/PN/NI/NA, answer 2.5 as NA. If 2.4 is Y/PY, answer 2.5.
+
+For open-label trials, absence of clear reporting about deviations, concomitant interventions, contamination, nonadherence, or protocol departures is not automatically reassuring; do not answer N or PN solely because no deviations are reported. Answer NI when the evidence does not actively support that deviations were absent or unlikely.
 """
     + SQ_SUPPORT_METADATA_INSTRUCTION
     + """
@@ -497,7 +499,7 @@ Answer Domain 3 signaling questions: Bias due to missing outcome data.
     + DOMAIN3_METHODOLOGY_TEXT
     + """
 
-Before answering, calculate the percentage of randomised participants whose outcome data are included in the analysis: (analysis N / randomised N) x 100. If >= 10% of randomised participants are excluded from or absent in the analysis, answer N or PN rather than Y or PY. Report this calculation in the <completeness_calculation> field.
+Before answering Q3.1, identify the numerator and denominator for outcome-data completeness when the evidence permits it: participants with outcome data analysed for the assessed outcome over participants randomized or otherwise eligible for that analysis. Report the calculation in the <completeness_calculation> field. Treat missing denominator, percentage, or count evidence as a provenance and support concern; do not turn missing arithmetic alone into a mechanical domain judgment rule.
 
 If ClinicalTrials.gov participant flow data is provided above, use it as supporting participant disposition evidence for Q3.1. Do not assume treatment completion equals outcome-data availability; compare it with paper text about the assessed outcome and missing outcome data.
 
@@ -564,6 +566,12 @@ Answer Domain 4 signaling questions: Bias in measurement of the outcome.
     + """
 
 Outcome-specific instruction: first identify the outcome currently being assessed: {outcome}. When the outcome_measurement evidence contains definitions for multiple outcomes, answer based only on the definition for {outcome}. Do not anchor Domain 4 reasoning to a different endpoint, even if that endpoint is described first or in more detail.
+
+For open-label clinician-assessed or composite outcomes, do not assume objectivity
+from generic terms such as progression, response, clinical event, or composite
+endpoint. Use assessed-outcome-bound evidence about who measured the outcome,
+whether adjudication was blinded, and whether knowledge of assignment could
+influence assessment of that specific outcome.
 
 If 4.1 or 4.2 is Y/PY, answer 4.3-4.5 as NA.
 
