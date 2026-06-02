@@ -116,6 +116,16 @@ class EvidenceValidationFlag(TypedDict):
     quote: str
 
 
+class SupportConstraint(TypedDict, total=False):
+    constraint_type: str
+    sq_id: str
+    claim: dict
+    evidence_label: str
+    evidence: str
+    reason: str
+    provenance: dict
+
+
 class VerifierTraceEntry(TypedDict, total=False):
     node: str
     sq_id: str

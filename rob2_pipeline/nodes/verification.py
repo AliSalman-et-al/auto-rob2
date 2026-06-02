@@ -5,6 +5,7 @@ from rob2_pipeline.state import RoB2State
 
 
 _BYPASS_QUOTES = {"", "not applicable", "no relevant text found", "not reported"}
+_SUPPORTED_LEVELS = {"strong", "moderate"}
 
 
 def _normalize_text(text: str) -> str:
@@ -106,6 +107,156 @@ def verify_packet_evidence(state: RoB2State) -> list[dict]:
     return flags
 
 
+def _claim_for_sq(state: RoB2State, sq_id: str) -> dict:
+    answer = (state.get("sq_answers") or {}).get(sq_id, {})
+    return {
+        key: answer[key]
+        for key in (
+            "answer",
+            "quote",
+            "justification",
+            "support_level",
+            "support_rationale",
+        )
+        if key in answer
+    }
+
+
+def _constraint(
+    constraint_type: str,
+    sq_id: str,
+    claim: dict,
+    evidence_label: str,
+    evidence: str,
+    reason: str,
+    provenance: dict | None = None,
+) -> dict:
+    data = {
+        "constraint_type": constraint_type,
+        "sq_id": sq_id,
+        "claim": claim,
+        "evidence_label": evidence_label,
+        "evidence": evidence,
+        "reason": reason,
+    }
+    if provenance:
+        data["provenance"] = provenance
+    return data
+
+
+def support_constraints_from_verification(state: RoB2State, flags: list[dict]) -> list[dict]:
+    constraints = []
+    seen = set()
+
+    def add(constraint: dict) -> None:
+        key = (
+            constraint.get("constraint_type"),
+            constraint.get("sq_id"),
+            constraint.get("evidence_label"),
+            constraint.get("reason"),
+        )
+        if key not in seen:
+            constraints.append(constraint)
+            seen.add(key)
+
+    for flag in flags:
+        sq_id = flag.get("sq_id", "")
+        issue = flag.get("issue", "")
+        claim = _claim_for_sq(state, sq_id)
+        quote = flag.get("quote", "")
+        if issue == "quote_not_found_in_source_context":
+            add(
+                _constraint(
+                    "quote_untraceable",
+                    sq_id,
+                    claim,
+                    "quote",
+                    quote,
+                    issue,
+                    {"source": "quote_verifier"},
+                )
+            )
+        elif "lacks a denominator or percentage" in issue:
+            add(
+                _constraint(
+                    "missing_required_evidence",
+                    sq_id,
+                    claim,
+                    "d3_completeness_denominator",
+                    quote,
+                    issue,
+                    {"source": "fragility_check"},
+                )
+            )
+        elif "multiple eligible measurements or analyses" in issue:
+            add(
+                _constraint(
+                    "missing_required_evidence",
+                    sq_id,
+                    claim,
+                    "eligible_measurements_or_analyses",
+                    quote,
+                    issue,
+                    {"source": "fragility_check"},
+                )
+            )
+        elif "packet_verification_failed" in issue:
+            packet = (state.get("evidence_packets") or {}).get(sq_id, {})
+            grade = packet.get("packet_grade") or {}
+            for label in grade.get("missing_evidence") or packet.get("missing_evidence") or []:
+                add(
+                    _constraint(
+                        "missing_required_evidence",
+                        sq_id,
+                        claim,
+                        label,
+                        "",
+                        issue,
+                        {"source": "evidence_packet", "packet_grade": grade},
+                    )
+                )
+            for label in packet.get("negative_flags") or []:
+                constraint_type = (
+                    "wrong_outcome_context"
+                    if label == "possible_wrong_outcome_context"
+                    else "semantic_support_conflict"
+                )
+                add(
+                    _constraint(
+                        constraint_type,
+                        sq_id,
+                        claim,
+                        label,
+                        "",
+                        issue,
+                        {"source": "evidence_packet", "packet_grade": grade},
+                    )
+                )
+
+    for constraint in list(constraints):
+        support_level = str(constraint.get("claim", {}).get("support_level", "")).lower()
+        if support_level in _SUPPORTED_LEVELS and constraint["constraint_type"] in {
+            "quote_untraceable",
+            "missing_required_evidence",
+            "wrong_outcome_context",
+        }:
+            add(
+                _constraint(
+                    "semantic_support_conflict",
+                    constraint["sq_id"],
+                    constraint["claim"],
+                    constraint["evidence_label"],
+                    constraint["evidence"],
+                    (
+                        f"{support_level} semantic support conflicts with "
+                        f"{constraint['constraint_type']}"
+                    ),
+                    constraint.get("provenance"),
+                )
+            )
+    return constraints
+
+
 def _verification_actions_from_flags(flags: list[dict]) -> list[dict]:
     actions = []
     for flag in flags:
@@ -133,6 +284,7 @@ def quote_verifier_node(state: RoB2State) -> RoB2State:
     flags = verify_sq_evidence(state)
     trace = list(state.get("verifier_trace", []))
     actions = _verification_actions_from_flags(flags)
+    constraints = support_constraints_from_verification(state, flags)
     if flags:
         trace.append(
             {
@@ -143,6 +295,7 @@ def quote_verifier_node(state: RoB2State) -> RoB2State:
         )
     return {
         "evidence_validation_flags": flags,
+        "support_constraints": constraints,
         "verifier_trace": trace,
         "verification_actions": actions,
     }

@@ -46,3 +46,23 @@ def test_assessment_json_preserves_sq_support_metadata():
         data["sq_answers"]["1.1"]["support_rationale"]
         == "Direct quote supports the answer."
     )
+
+
+def test_assessment_json_preserves_support_constraints():
+    state = {
+        "support_constraints": [
+            {
+                "constraint_type": "quote_untraceable",
+                "sq_id": "1.1",
+                "claim": {"answer": "Y", "support_level": "strong"},
+                "evidence_label": "quote",
+                "evidence": "Randomized centrally.",
+                "reason": "quote_not_found_in_source_context",
+            }
+        ],
+        "rag_chunk_metadata": {},
+    }
+
+    data = _assessment_json(state)
+
+    assert data["support_constraints"] == state["support_constraints"]
