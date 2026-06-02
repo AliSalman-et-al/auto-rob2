@@ -14,6 +14,7 @@ dependencies = [
     "langchain-openai>=0.3.16",
     "langchain-openrouter>=0.2.3",
     "langgraph>=1.1.10",
+    "liteparse>=2.0.4",
     "lxml>=6.1.0",
     "pydantic>=2.13.3",
     "pytest>=9.0.3",
