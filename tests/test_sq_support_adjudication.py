@@ -125,6 +125,59 @@ def test_non_pivotal_weak_answer_does_not_trigger_adjudication(monkeypatch):
     assert "sq_support_adjudications" not in result
 
 
+def test_unresolved_pivotal_weak_answer_is_audit_limited(monkeypatch):
+    def fake_call_fn(
+        state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources=None
+    ):
+        return (
+            "",
+            [{"node": node_name, "cache_hit": False}],
+            {
+                "1.3": {
+                    "answer": "Y",
+                    "quote": "No direct baseline table was available.",
+                    "justification": "The concern remains weakly supported.",
+                    "uncertainty_flag": "HIGH",
+                    "support_level": "weak",
+                    "support_rationale": "Evidence remains indirect.",
+                    "residual_uncertainty": "The pivotal concern is unresolved.",
+                }
+            },
+        )
+
+    monkeypatch.setattr("rob2_pipeline.nodes.common.call_node_llm", fake_call_fn)
+
+    result = domain1_judge_node(
+        {
+            "outcome": "overall survival",
+            "sq_answers": {
+                "1.1": _answer("Y", "strong"),
+                "1.2": _answer("Y", "strong"),
+                "1.3": _answer("Y", "weak"),
+            },
+            "domain_judgments": {},
+            "domain_rationales": {},
+            "evidence_packets": {
+                "1.3": {
+                    "sources": [
+                        {
+                            "text": "No direct baseline table was available.",
+                            "section": "Results",
+                            "page_numbers": [5],
+                        }
+                    ]
+                }
+            },
+        }
+    )
+
+    assert result["initial_domain_judgments"]["D1"] == "Some concerns"
+    assert result["domain_judgments"]["D1"] == "Some concerns"
+    assert (
+        result["pivotality_tests"]["D1"][0]["acceptance_status"] == "audit_limited"
+    )
+
+
 def test_assessment_json_includes_adjudication_audit_and_final_sq_state():
     state = {
         "sq_answers": {"1.3": _answer("N", "strong")},
