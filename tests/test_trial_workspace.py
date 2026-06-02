@@ -11,7 +11,9 @@ from rob2_pipeline.trial_workspace import (
     build_trial_workspace_manifest,
     evaluate_artifact_status,
     file_sha256,
+    load_trial_workspace_artifacts,
     read_trial_workspace_manifest,
+    write_parse_trial_workspace,
     write_trial_workspace_manifest,
 )
 
@@ -201,3 +203,71 @@ def test_config_hash_change_marks_artifact_stale():
     )
 
     assert status == "stale"
+
+
+def test_parse_trial_workspace_persists_loadable_artifacts_and_diagnostics(tmp_path):
+    primary = tmp_path / "trial.pdf"
+    primary.write_bytes(b"primary trial report")
+    parse_artifact = {
+        "source_identity": {
+            "document_id": "primary",
+            "document_name": "trial.pdf",
+            "document_role": "primary",
+            "source_kind": "rag_chunk",
+            "path": str(primary),
+            "is_primary": True,
+            "status": "parsed",
+        },
+        "pages": [
+            {
+                "page_number": 1,
+                "text": "Methods\nParticipants were randomized.\nResults\nDone.",
+                "width": 612.0,
+                "height": 792.0,
+            }
+        ],
+        "diagnostics": [],
+        "parse_time_ms": 17,
+        "provenance": {
+            "parser_name": "liteparse",
+            "parser_version": "2.0.4",
+            "adapter_name": "liteparse",
+            "artifact_schema_version": "parse-artifact-v1",
+            "config": {"ocr_enabled": False},
+        },
+    }
+
+    manifest = write_parse_trial_workspace(
+        trial_id="trial-001",
+        workspace_dir=tmp_path / "workspace",
+        source_documents=[parse_artifact["source_identity"]],
+        parse_artifacts=[parse_artifact],
+    )
+
+    loaded = load_trial_workspace_artifacts(tmp_path / "workspace")
+    diagnostic = loaded["diagnostics"]["primary"]
+
+    assert (tmp_path / "workspace" / "sources" / "primary.json").exists()
+    assert loaded["parse_artifacts"]["primary"] == parse_artifact
+    assert loaded["page_artifacts"]["primary"]["sections"][0]["heading"] == "Methods"
+    assert loaded["page_artifacts"]["primary"]["chunks"][0]["source_id"] == "primary"
+    assert diagnostic == {
+        "source_id": "primary",
+        "parse_time_ms": 17,
+        "page_count": 1,
+        "text_character_count": 51,
+        "parser": {
+            "name": "liteparse",
+            "version": "2.0.4",
+            "adapter": "liteparse",
+        },
+        "diagnostics": [],
+    }
+    assert read_trial_workspace_manifest(
+        tmp_path / "workspace" / "trial-workspace-manifest.json"
+    ) == manifest
+    assert {artifact.artifact_id for artifact in manifest.artifacts} == {
+        "primary:parse-artifact",
+        "primary:page-aware-artifacts",
+        "primary:parser-diagnostics",
+    }

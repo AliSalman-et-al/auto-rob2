@@ -567,6 +567,14 @@ def test_run_assessment_writes_outputs(tmp_path):
     assert state["overall_judgment"] == "Low"
     assert (output_dir / "trial_rob2_report.md").exists()
     assert (output_dir / "trial_rob2_data.json").exists()
+    assert (
+        output_dir
+        / "trial_trial_workspace"
+        / "trial-workspace-manifest.json"
+    ).exists()
+    assert (
+        output_dir / "trial_trial_workspace" / "diagnostics" / "primary.json"
+    ).exists()
     data = json.loads((output_dir / "trial_rob2_data.json").read_text(encoding="utf-8"))
     assert data["evidence"]["extraction_method"] == "docling_llm"
     assert "computer-generated sequence" in data["evidence"]["d1_randomization"]["text"]

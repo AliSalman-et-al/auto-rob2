@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import asdict, dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -52,12 +53,14 @@ class SourceParseArtifact:
     pages: list[ParsedPageArtifact]
     diagnostics: list[ParserDiagnostic]
     provenance: ParserProvenance
+    parse_time_ms: int = 0
 
     def to_dict(self) -> dict:
         return {
             "source_identity": dict(self.source_identity),
             "pages": [dict(page) for page in self.pages],
             "diagnostics": [asdict(diagnostic) for diagnostic in self.diagnostics],
+            "parse_time_ms": self.parse_time_ms,
             "provenance": asdict(self.provenance),
         }
 
@@ -151,19 +154,23 @@ class LiteParseSourceParser:
 def parse_source_with_adapter(
     source: SourceDocument, parser: SourceParserAdapter
 ) -> SourceParseArtifact:
+    started = time.perf_counter()
     try:
         parse_source = getattr(parser, "parse_source", None)
         if parse_source is not None:
             artifact = parse_source(source)
         else:
             artifact = parser.parse(source["path"])
+        parse_time_ms = max(0, round((time.perf_counter() - started) * 1000))
         return SourceParseArtifact(
             source_identity=mark_parsed(source),
             pages=artifact.pages,
             diagnostics=artifact.diagnostics,
             provenance=artifact.provenance,
+            parse_time_ms=parse_time_ms,
         )
     except Exception as error:  # noqa: BLE001
+        parse_time_ms = max(0, round((time.perf_counter() - started) * 1000))
         return SourceParseArtifact(
             source_identity=mark_failed(source, str(error)),
             pages=[],
@@ -177,6 +184,7 @@ def parse_source_with_adapter(
                 artifact_schema_version=PARSE_ARTIFACT_SCHEMA_VERSION,
                 config=dict(getattr(parser, "config", {})),
             ),
+            parse_time_ms=parse_time_ms,
         )
 
 

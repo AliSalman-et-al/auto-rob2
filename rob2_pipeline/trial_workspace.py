@@ -2,9 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
+
+from rob2_pipeline.ingestion.parse_artifacts import (
+    ParserDiagnostic,
+    ParserProvenance,
+    SourceParseArtifact,
+    build_page_aware_artifacts,
+)
+from rob2_pipeline.types import SourceDocument
 
 
 TRIAL_WORKSPACE_MANIFEST_SCHEMA_VERSION = "trial-workspace-manifest-v1"
@@ -148,6 +157,100 @@ def read_trial_workspace_manifest(path: str | Path) -> TrialWorkspaceManifest:
     )
 
 
+def write_parse_trial_workspace(
+    *,
+    trial_id: str,
+    workspace_dir: str | Path,
+    source_documents: list[SourceDocument],
+    parse_artifacts: list[dict],
+) -> TrialWorkspaceManifest:
+    root = Path(workspace_dir)
+    artifact_identities: list[ArtifactIdentity] = []
+    sources = [_source_identity_from_document(source) for source in source_documents]
+    source_hashes = {source.document_id: source.content_hash for source in sources}
+
+    for source in source_documents:
+        source_id = source.get("document_id", "")
+        filename = _artifact_filename(source_id)
+        _write_json(root / "sources" / filename, dict(source))
+
+    for parse_artifact in parse_artifacts:
+        source_id = parse_artifact["source_identity"]["document_id"]
+        filename = _artifact_filename(source_id)
+        parse_path = root / "parse_artifacts" / filename
+        _write_json(parse_path, parse_artifact)
+        artifact_identities.append(
+            _file_artifact_identity(
+                artifact_id=f"{source_id}:parse-artifact",
+                schema_version=parse_artifact["provenance"]["artifact_schema_version"],
+                producer=parse_artifact["provenance"]["parser_name"],
+                producer_version=parse_artifact["provenance"]["parser_version"],
+                config=parse_artifact["provenance"].get("config", {}),
+                upstream_artifact_hashes={
+                    f"source:{source_id}": source_hashes.get(source_id, "")
+                },
+                path=parse_path,
+            )
+        )
+
+        page_artifacts = build_page_aware_artifacts(
+            _source_parse_artifact_from_dict(parse_artifact)
+        )
+        page_path = root / "page_artifacts" / filename
+        _write_json(page_path, page_artifacts.to_dict())
+        artifact_identities.append(
+            _file_artifact_identity(
+                artifact_id=f"{source_id}:page-aware-artifacts",
+                schema_version=page_artifacts.artifact_schema_version,
+                producer=parse_artifact["provenance"]["parser_name"],
+                producer_version=parse_artifact["provenance"]["parser_version"],
+                config=parse_artifact["provenance"].get("config", {}),
+                upstream_artifact_hashes={
+                    f"{source_id}:parse-artifact": file_sha256(parse_path)
+                },
+                path=page_path,
+            )
+        )
+
+        diagnostics = _parser_diagnostic_summary(parse_artifact)
+        diagnostics_path = root / "diagnostics" / filename
+        _write_json(diagnostics_path, diagnostics)
+        artifact_identities.append(
+            _file_artifact_identity(
+                artifact_id=f"{source_id}:parser-diagnostics",
+                schema_version="parser-diagnostics-v1",
+                producer=parse_artifact["provenance"]["parser_name"],
+                producer_version=parse_artifact["provenance"]["parser_version"],
+                config=parse_artifact["provenance"].get("config", {}),
+                upstream_artifact_hashes={
+                    f"{source_id}:parse-artifact": file_sha256(parse_path)
+                },
+                path=diagnostics_path,
+            )
+        )
+
+    manifest = build_trial_workspace_manifest(
+        trial_id=trial_id,
+        sources=sources,
+        artifacts=sorted(
+            artifact_identities,
+            key=lambda artifact: artifact.artifact_id,
+        ),
+    )
+    write_trial_workspace_manifest(manifest, root / "trial-workspace-manifest.json")
+    return manifest
+
+
+def load_trial_workspace_artifacts(workspace_dir: str | Path) -> dict[str, dict]:
+    root = Path(workspace_dir)
+    return {
+        "sources": _load_artifact_directory(root / "sources"),
+        "parse_artifacts": _load_artifact_directory(root / "parse_artifacts"),
+        "page_artifacts": _load_artifact_directory(root / "page_artifacts"),
+        "diagnostics": _load_artifact_directory(root / "diagnostics"),
+    }
+
+
 def _find_artifact(
     manifest: TrialWorkspaceManifest,
     artifact_id: str,
@@ -183,6 +286,102 @@ def _manifest_to_dict(manifest: TrialWorkspaceManifest) -> dict:
     return payload
 
 
+def _source_identity_from_document(source: SourceDocument) -> SourceIdentity:
+    path = Path(source.get("path", ""))
+    if path.exists():
+        content_hash = file_sha256(path)
+    else:
+        content_hash = ""
+    return SourceIdentity(
+        document_id=source.get("document_id", ""),
+        document_name=source.get("document_name", path.name),
+        document_role=source.get("document_role", ""),
+        path=str(path),
+        content_hash=content_hash,
+    )
+
+
+def _source_parse_artifact_from_dict(payload: dict) -> SourceParseArtifact:
+    provenance = payload["provenance"]
+    return SourceParseArtifact(
+        source_identity=payload["source_identity"],
+        pages=payload.get("pages", []),
+        diagnostics=[
+            ParserDiagnostic(**diagnostic)
+            for diagnostic in payload.get("diagnostics", [])
+        ],
+        provenance=ParserProvenance(**provenance),
+        parse_time_ms=payload.get("parse_time_ms", 0),
+    )
+
+
+def _parser_diagnostic_summary(parse_artifact: dict) -> dict:
+    pages = parse_artifact.get("pages", [])
+    provenance = parse_artifact["provenance"]
+    return {
+        "source_id": parse_artifact["source_identity"]["document_id"],
+        "parse_time_ms": parse_artifact.get("parse_time_ms", 0),
+        "page_count": len(pages),
+        "text_character_count": sum(len(page.get("text", "")) for page in pages),
+        "parser": {
+            "name": provenance["parser_name"],
+            "version": provenance["parser_version"],
+            "adapter": provenance["adapter_name"],
+        },
+        "diagnostics": parse_artifact.get("diagnostics", []),
+    }
+
+
+def _file_artifact_identity(
+    *,
+    artifact_id: str,
+    schema_version: str,
+    producer: str,
+    producer_version: str,
+    config: dict,
+    upstream_artifact_hashes: dict[str, str],
+    path: Path,
+) -> ArtifactIdentity:
+    return artifact_identity(
+        artifact_id=artifact_id,
+        schema_version=schema_version,
+        producer=producer,
+        producer_version=producer_version,
+        config_hash=config_sha256(config),
+        upstream_artifact_hashes=upstream_artifact_hashes,
+        content_hash=file_sha256(path),
+    )
+
+
+def _write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _load_artifact_directory(path: Path) -> dict[str, dict]:
+    if not path.exists():
+        return {}
+    artifacts = {}
+    for artifact_path in sorted(path.glob("*.json")):
+        payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+        source_id = (
+            payload.get("source_id")
+            or payload.get("source_identity", {}).get("document_id")
+            or payload.get("document_id")
+        )
+        if not source_id:
+            continue
+        artifacts[source_id] = payload
+    return artifacts
+
+
+def _artifact_filename(artifact_id: str) -> str:
+    return f"{re.sub(r'[^A-Za-z0-9_.-]+', '_', artifact_id)}.json"
+
+
 __all__ = [
     "ArtifactIdentity",
     "ArtifactStatus",
@@ -195,6 +394,8 @@ __all__ = [
     "content_sha256",
     "evaluate_artifact_status",
     "file_sha256",
+    "load_trial_workspace_artifacts",
     "read_trial_workspace_manifest",
+    "write_parse_trial_workspace",
     "write_trial_workspace_manifest",
 ]
