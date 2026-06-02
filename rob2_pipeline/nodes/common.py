@@ -17,6 +17,13 @@ SYSTEM_MESSAGE = (
     "Do not add preamble, explanation, or markdown code fences around your XML."
 )
 VALID_SQ_ANSWERS = ("Y", "PY", "PN", "N", "NI", "NA")
+WEAK_SUPPORT_LEVELS = {"weak", "unsupported"}
+LESS_CONFIDENT_ANSWERS = {
+    "Y": "PY",
+    "PY": "NI",
+    "N": "PN",
+    "PN": "NI",
+}
 
 NA_ANSWER = {
     "answer": "NA",
@@ -264,38 +271,59 @@ def add_domain_judgment_with_pivotality_tests(
     judge_fn: Callable[[dict], tuple[str, str]],
     sq_ids: tuple[str, ...],
 ) -> dict:
+    initial_judgment = judgment
+    initial_rationale = rationale
+    initial_sq_answers = {
+        key: dict(value) for key, value in state.get("sq_answers", {}).items()
+    }
     state, judgment, rationale = _adjudicate_pivotal_sq_answers(
         state, domain, judgment, rationale, judge_fn, sq_ids
     )
     update = add_domain_judgment(state, domain, judgment, rationale)
+    initial_domain_judgments = dict(state.get("initial_domain_judgments", {}))
+    initial_domain_rationales = dict(state.get("initial_domain_rationales", {}))
+    initial_domain_judgments[domain] = initial_judgment
+    initial_domain_rationales[domain] = initial_rationale
+    update["initial_domain_judgments"] = initial_domain_judgments
+    update["initial_domain_rationales"] = initial_domain_rationales
     pivotality_tests = list(state.get("pivotality_tests", {}).get(domain, []))
 
     for sq_id in sq_ids:
-        sq_answer = state.get("sq_answers", {}).get(sq_id)
+        sq_answer = initial_sq_answers.get(sq_id)
         if not sq_answer:
             continue
         support_level = sq_answer.get("support_level", "").lower()
-        if support_level not in {"weak", "unsupported"}:
+        constraints = _constraints_for_sq(state, sq_id)
+        if support_level not in WEAK_SUPPORT_LEVELS and not constraints:
             continue
 
-        test_sq_answers = {
-            key: dict(value) for key, value in state.get("sq_answers", {}).items()
-        }
-        test_sq_answers[sq_id] = dict(test_sq_answers[sq_id])
-        test_sq_answers[sq_id]["answer"] = "NI"
-        test_judgment, _ = judge_fn(test_sq_answers)
-
-        pivotality_tests.append(
-            {
-                "sq_id": sq_id,
-                "original_answer": sq_answer.get("answer", "NI"),
-                "support_level": support_level,
-                "conservative_test_answer": "NI",
-                "original_domain_judgment": judgment,
-                "test_domain_judgment": test_judgment,
-                "pivotal": test_judgment != judgment,
-            }
+        conservative_answer, test_judgment = _conservative_pivotality_test(
+            initial_sq_answers,
+            sq_id,
+            initial_judgment,
+            judge_fn,
         )
+        pivotal = test_judgment != initial_judgment
+
+        test_record = {
+            "sq_id": sq_id,
+            "original_answer": sq_answer.get("answer", "NI"),
+            "support_level": support_level or "constrained",
+            "conservative_test_answer": conservative_answer,
+            "original_domain_judgment": initial_judgment,
+            "test_domain_judgment": test_judgment,
+            "pivotal": pivotal,
+            "acceptance_status": _acceptance_status(
+                pivotal,
+                state.get("sq_answers", {}).get(sq_id, sq_answer),
+                state,
+                domain,
+                sq_id,
+            ),
+        }
+        if constraints:
+            test_record["constraints"] = constraints
+        pivotality_tests.append(test_record)
 
     if pivotality_tests:
         all_tests = dict(state.get("pivotality_tests", {}))
@@ -308,6 +336,59 @@ def add_domain_judgment_with_pivotality_tests(
     if state.get("_sq_adjudication_llm_call_log"):
         update["llm_call_log"] = state["_sq_adjudication_llm_call_log"]
     return update
+
+
+def _conservative_pivotality_test(
+    sq_answers: dict,
+    sq_id: str,
+    initial_judgment: str,
+    judge_fn: Callable[[dict], tuple[str, str]],
+) -> tuple[str, str]:
+    original_answer = sq_answers[sq_id].get("answer", "NI")
+    fallback_answer = "NI"
+    fallback_judgment = initial_judgment
+    next_answer = LESS_CONFIDENT_ANSWERS.get(original_answer, "NI")
+    while next_answer:
+        test_sq_answers = {key: dict(value) for key, value in sq_answers.items()}
+        test_sq_answers[sq_id] = dict(test_sq_answers[sq_id])
+        test_sq_answers[sq_id]["answer"] = next_answer
+        test_judgment, _ = judge_fn(test_sq_answers)
+        fallback_answer = next_answer
+        fallback_judgment = test_judgment
+        if test_judgment != initial_judgment:
+            return next_answer, test_judgment
+        if next_answer == "NI":
+            break
+        next_answer = LESS_CONFIDENT_ANSWERS.get(next_answer)
+    return fallback_answer, fallback_judgment
+
+
+def _constraints_for_sq(state: dict, sq_id: str) -> list[dict]:
+    return [
+        constraint
+        for constraint in state.get("support_constraints", [])
+        if constraint.get("sq_id") == sq_id
+    ]
+
+
+def _acceptance_status(
+    pivotal: bool, final_answer: dict, state: dict, domain: str, sq_id: str
+) -> str:
+    if not pivotal:
+        return "accepted"
+    adjudicated = _adjudication_for_sq(state, domain, sq_id)
+    if not adjudicated:
+        return "needs_adjudication"
+    if final_answer.get("support_level", "").lower() in WEAK_SUPPORT_LEVELS:
+        return "audit_limited"
+    return "accepted"
+
+
+def _adjudication_for_sq(state: dict, domain: str, sq_id: str) -> dict | None:
+    for attempt in state.get("sq_support_adjudications", {}).get(domain, []):
+        if attempt.get("sq_id") == sq_id:
+            return attempt
+    return None
 
 
 def _adjudicate_pivotal_sq_answers(

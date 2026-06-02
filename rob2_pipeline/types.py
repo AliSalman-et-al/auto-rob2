@@ -143,6 +143,8 @@ class PivotalityTest(TypedDict):
     original_domain_judgment: str
     test_domain_judgment: str
     pivotal: bool
+    acceptance_status: str
+    constraints: NotRequired[list[SupportConstraint]]
 
 
 class SqSupportAdjudication(TypedDict, total=False):

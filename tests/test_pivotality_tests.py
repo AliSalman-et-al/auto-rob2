@@ -37,6 +37,7 @@ def test_domain_judge_records_pivotality_test_without_mutating_sq_answer():
     )
 
     assert sq_answers == original
+    assert result["initial_domain_judgments"]["D1"] == "Some concerns"
     assert result["domain_judgments"]["D1"] == "Some concerns"
     assert result["pivotality_tests"]["D1"] == [
         {
@@ -47,6 +48,7 @@ def test_domain_judge_records_pivotality_test_without_mutating_sq_answer():
             "original_domain_judgment": "Some concerns",
             "test_domain_judgment": "Low",
             "pivotal": True,
+            "acceptance_status": "needs_adjudication",
         }
     ]
 
@@ -127,6 +129,7 @@ def test_pivotal_weak_answers_are_audited_for_each_domain(
             "original_domain_judgment": original,
             "test_domain_judgment": tested,
             "pivotal": True,
+            "acceptance_status": "needs_adjudication",
         }
     ]
 
@@ -197,6 +200,7 @@ def test_non_pivotal_weak_answers_are_audited_for_each_domain(
         "original_domain_judgment": judgment,
         "test_domain_judgment": judgment,
         "pivotal": False,
+        "acceptance_status": "accepted",
     }
 
 
@@ -226,6 +230,49 @@ def test_unsupported_answers_receive_pivotality_tests():
     )
 
     assert result["pivotality_tests"]["D5"][0]["support_level"] == "unsupported"
+    assert (
+        result["pivotality_tests"]["D5"][0]["acceptance_status"]
+        == "needs_adjudication"
+    )
+
+
+def test_constrained_answers_receive_visible_non_blocking_audit_records():
+    result = domain1_judge_node(
+        {
+            "sq_answers": {
+                "1.1": _answer("Y", "strong"),
+                "1.2": _answer("Y", "strong"),
+                "1.3": _answer("N", "strong"),
+            },
+            "support_constraints": [
+                {
+                    "constraint_type": "quote_untraceable",
+                    "sq_id": "1.1",
+                    "reason": "The cited quote was not found in source text.",
+                }
+            ],
+            "domain_judgments": {},
+            "domain_rationales": {},
+        }
+    )
+
+    assert result["pivotality_tests"]["D1"][0] == {
+        "sq_id": "1.1",
+        "original_answer": "Y",
+        "support_level": "strong",
+        "conservative_test_answer": "NI",
+        "original_domain_judgment": "Low",
+        "test_domain_judgment": "Low",
+        "pivotal": False,
+        "acceptance_status": "accepted",
+        "constraints": [
+            {
+                "constraint_type": "quote_untraceable",
+                "sq_id": "1.1",
+                "reason": "The cited quote was not found in source text.",
+            }
+        ],
+    }
 
 
 def test_pivotality_tests_are_in_json_output():
@@ -240,6 +287,7 @@ def test_pivotality_tests_are_in_json_output():
                     "original_domain_judgment": "Some concerns",
                     "test_domain_judgment": "Low",
                     "pivotal": True,
+                    "acceptance_status": "needs_adjudication",
                 }
             ]
         }
