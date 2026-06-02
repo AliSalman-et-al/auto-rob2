@@ -11,6 +11,7 @@ from rob2_pipeline.trial_workspace import (
     build_trial_workspace_manifest,
     evaluate_artifact_status,
     file_sha256,
+    load_parse_trial_workspace,
     load_trial_workspace_artifacts,
     read_trial_workspace_manifest,
     write_parse_trial_workspace,
@@ -270,4 +271,177 @@ def test_parse_trial_workspace_persists_loadable_artifacts_and_diagnostics(tmp_p
         "primary:parse-artifact",
         "primary:page-aware-artifacts",
         "primary:parser-diagnostics",
+    }
+
+
+def test_load_parse_trial_workspace_reuses_valid_existing_artifacts(tmp_path):
+    primary = tmp_path / "trial.pdf"
+    primary.write_bytes(b"primary trial report")
+    source_document = _source_document(primary)
+    parse_artifact = _parse_artifact(primary)
+    workspace_dir = tmp_path / "workspace"
+    write_parse_trial_workspace(
+        trial_id="trial-001",
+        workspace_dir=workspace_dir,
+        source_documents=[source_document],
+        parse_artifacts=[parse_artifact],
+    )
+
+    loaded = load_parse_trial_workspace(
+        workspace_dir=workspace_dir,
+        source_documents=[source_document],
+        parser_metadata={
+            "parser_name": "liteparse",
+            "parser_version": "2.0.4",
+            "artifact_schema_version": "parse-artifact-v1",
+            "config": {"ocr_enabled": False},
+        },
+    )
+
+    assert loaded.artifact_statuses == {
+        "primary:parse-artifact": "reusable",
+        "primary:page-aware-artifacts": "reusable",
+        "primary:parser-diagnostics": "reusable",
+    }
+    assert loaded.stale_artifact_ids == []
+    assert loaded.reusable_artifacts["parse_artifacts"]["primary"] == parse_artifact
+
+
+def test_load_parse_trial_workspace_marks_changed_source_dependents_stale(tmp_path):
+    primary = tmp_path / "trial.pdf"
+    primary.write_bytes(b"primary trial report")
+    source_document = _source_document(primary)
+    workspace_dir = tmp_path / "workspace"
+    write_parse_trial_workspace(
+        trial_id="trial-001",
+        workspace_dir=workspace_dir,
+        source_documents=[source_document],
+        parse_artifacts=[_parse_artifact(primary)],
+    )
+    primary.write_bytes(b"updated primary trial report")
+
+    loaded = load_parse_trial_workspace(
+        workspace_dir=workspace_dir,
+        source_documents=[source_document],
+        parser_metadata=_parser_metadata(),
+    )
+
+    assert loaded.artifact_statuses == {
+        "primary:parse-artifact": "stale",
+        "primary:page-aware-artifacts": "stale",
+        "primary:parser-diagnostics": "stale",
+    }
+    assert loaded.reusable_artifacts["parse_artifacts"] == {}
+    assert loaded.stale_artifact_ids == [
+        "primary:page-aware-artifacts",
+        "primary:parse-artifact",
+        "primary:parser-diagnostics",
+    ]
+
+
+def test_load_parse_trial_workspace_marks_parser_metadata_change_stale(tmp_path):
+    primary = tmp_path / "trial.pdf"
+    primary.write_bytes(b"primary trial report")
+    source_document = _source_document(primary)
+    workspace_dir = tmp_path / "workspace"
+    write_parse_trial_workspace(
+        trial_id="trial-001",
+        workspace_dir=workspace_dir,
+        source_documents=[source_document],
+        parse_artifacts=[_parse_artifact(primary)],
+    )
+
+    loaded = load_parse_trial_workspace(
+        workspace_dir=workspace_dir,
+        source_documents=[source_document],
+        parser_metadata={
+            **_parser_metadata(),
+            "parser_version": "2.0.5",
+        },
+    )
+
+    assert loaded.artifact_statuses["primary:parse-artifact"] == "stale"
+    assert loaded.artifact_statuses["primary:page-aware-artifacts"] == "stale"
+    assert loaded.artifact_statuses["primary:parser-diagnostics"] == "stale"
+
+
+def test_load_parse_trial_workspace_reuses_only_unaffected_artifacts(tmp_path):
+    primary = tmp_path / "trial.pdf"
+    primary.write_bytes(b"primary trial report")
+    protocol = tmp_path / "protocol.pdf"
+    protocol.write_bytes(b"protocol report")
+    primary_source = _source_document(primary)
+    protocol_source = _source_document(
+        protocol,
+        document_id="protocol",
+        document_role="protocol",
+    )
+    workspace_dir = tmp_path / "workspace"
+    write_parse_trial_workspace(
+        trial_id="trial-001",
+        workspace_dir=workspace_dir,
+        source_documents=[primary_source, protocol_source],
+        parse_artifacts=[
+            _parse_artifact(primary),
+            _parse_artifact(
+                protocol,
+                document_id="protocol",
+                document_role="protocol",
+            ),
+        ],
+    )
+    protocol.write_bytes(b"updated protocol report")
+
+    loaded = load_parse_trial_workspace(
+        workspace_dir=workspace_dir,
+        source_documents=[primary_source, protocol_source],
+        parser_metadata=_parser_metadata(),
+    )
+
+    assert loaded.artifact_statuses["primary:parse-artifact"] == "reusable"
+    assert loaded.artifact_statuses["primary:page-aware-artifacts"] == "reusable"
+    assert loaded.artifact_statuses["protocol:parse-artifact"] == "stale"
+    assert loaded.artifact_statuses["protocol:page-aware-artifacts"] == "stale"
+    assert set(loaded.reusable_artifacts["parse_artifacts"]) == {"primary"}
+
+
+def _source_document(path, *, document_id="primary", document_role="primary"):
+    return {
+        "document_id": document_id,
+        "document_name": path.name,
+        "document_role": document_role,
+        "source_kind": "rag_chunk",
+        "path": str(path),
+        "is_primary": document_role == "primary",
+        "status": "parsed",
+    }
+
+
+def _parse_artifact(path, *, document_id="primary", document_role="primary"):
+    return {
+        "source_identity": _source_document(
+            path,
+            document_id=document_id,
+            document_role=document_role,
+        ),
+        "pages": [
+            {
+                "page_number": 1,
+                "text": "Methods\nParticipants were randomized.\nResults\nDone.",
+                "width": 612.0,
+                "height": 792.0,
+            }
+        ],
+        "diagnostics": [],
+        "parse_time_ms": 17,
+        "provenance": {**_parser_metadata(), "adapter_name": "liteparse"},
+    }
+
+
+def _parser_metadata():
+    return {
+        "parser_name": "liteparse",
+        "parser_version": "2.0.4",
+        "artifact_schema_version": "parse-artifact-v1",
+        "config": {"ocr_enabled": False},
     }

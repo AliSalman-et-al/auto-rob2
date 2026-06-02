@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from rob2_pipeline.ingestion.parse_artifacts import (
+    PAGE_AWARE_ARTIFACT_SCHEMA_VERSION,
     ParserDiagnostic,
     ParserProvenance,
     SourceParseArtifact,
@@ -65,6 +66,14 @@ class TrialWorkspaceManifest:
     sources: list[SourceIdentity]
     artifacts: list[ArtifactIdentity]
     manifest_schema_version: str = TRIAL_WORKSPACE_MANIFEST_SCHEMA_VERSION
+
+
+@dataclass(frozen=True)
+class LoadedTrialWorkspace:
+    manifest: TrialWorkspaceManifest
+    artifact_statuses: dict[str, ArtifactStatus]
+    reusable_artifacts: dict[str, dict[str, dict]]
+    stale_artifact_ids: list[str]
 
 
 def file_sha256(path: str | Path) -> str:
@@ -251,6 +260,72 @@ def load_trial_workspace_artifacts(workspace_dir: str | Path) -> dict[str, dict]
     }
 
 
+def load_parse_trial_workspace(
+    *,
+    workspace_dir: str | Path,
+    source_documents: list[SourceDocument],
+    parser_metadata: dict,
+) -> LoadedTrialWorkspace:
+    root = Path(workspace_dir)
+    manifest = read_trial_workspace_manifest(root / "trial-workspace-manifest.json")
+    current_sources = [
+        _source_identity_from_document(source) for source in source_documents
+    ]
+    source_hashes = {source.document_id: source.content_hash for source in current_sources}
+    artifact_statuses: dict[str, ArtifactStatus] = {}
+
+    for source in current_sources:
+        source_id = source.document_id
+        parse_id = f"{source_id}:parse-artifact"
+        parse_path = root / "parse_artifacts" / _artifact_filename(source_id)
+        parse_status = _evaluate_existing_file_artifact(
+            manifest=manifest,
+            artifact_id=parse_id,
+            schema_version=parser_metadata["artifact_schema_version"],
+            producer=parser_metadata["parser_name"],
+            producer_version=parser_metadata["parser_version"],
+            config=parser_metadata.get("config", {}),
+            upstream_artifact_hashes={f"source:{source_id}": source_hashes[source_id]},
+            path=parse_path,
+        )
+        artifact_statuses[parse_id] = parse_status
+
+        parse_hash = file_sha256(parse_path) if parse_path.exists() else ""
+        for suffix, directory, schema_version in (
+            ("page-aware-artifacts", "page_artifacts", PAGE_AWARE_ARTIFACT_SCHEMA_VERSION),
+            ("parser-diagnostics", "diagnostics", "parser-diagnostics-v1"),
+        ):
+            artifact_id = f"{source_id}:{suffix}"
+            path = root / directory / _artifact_filename(source_id)
+            if parse_status != "reusable":
+                artifact_statuses[artifact_id] = "stale"
+                continue
+            artifact_statuses[artifact_id] = _evaluate_existing_file_artifact(
+                manifest=manifest,
+                artifact_id=artifact_id,
+                schema_version=schema_version,
+                producer=parser_metadata["parser_name"],
+                producer_version=parser_metadata["parser_version"],
+                config=parser_metadata.get("config", {}),
+                upstream_artifact_hashes={f"{source_id}:parse-artifact": parse_hash},
+                path=path,
+            )
+
+    reusable_artifacts = load_trial_workspace_artifacts(root)
+    _filter_reusable_artifacts(reusable_artifacts, artifact_statuses)
+    stale_artifact_ids = [
+        artifact_id
+        for artifact_id, status in sorted(artifact_statuses.items())
+        if status == "stale"
+    ]
+    return LoadedTrialWorkspace(
+        manifest=manifest,
+        artifact_statuses=artifact_statuses,
+        reusable_artifacts=reusable_artifacts,
+        stale_artifact_ids=stale_artifact_ids,
+    )
+
+
 def _find_artifact(
     manifest: TrialWorkspaceManifest,
     artifact_id: str,
@@ -259,6 +334,49 @@ def _find_artifact(
         if artifact.artifact_id == artifact_id:
             return artifact
     return None
+
+
+def _evaluate_existing_file_artifact(
+    *,
+    manifest: TrialWorkspaceManifest,
+    artifact_id: str,
+    schema_version: str,
+    producer: str,
+    producer_version: str,
+    config: dict,
+    upstream_artifact_hashes: dict[str, str],
+    path: Path,
+) -> ArtifactStatus:
+    if not path.exists():
+        return "stale"
+    return evaluate_artifact_status(
+        manifest,
+        artifact_identity(
+            artifact_id=artifact_id,
+            schema_version=schema_version,
+            producer=producer,
+            producer_version=producer_version,
+            config_hash=config_sha256(config),
+            upstream_artifact_hashes=upstream_artifact_hashes,
+            content_hash=file_sha256(path),
+        ),
+    )
+
+
+def _filter_reusable_artifacts(
+    artifacts: dict[str, dict[str, dict]],
+    artifact_statuses: dict[str, ArtifactStatus],
+) -> None:
+    artifact_groups = {
+        "parse_artifacts": "parse-artifact",
+        "page_artifacts": "page-aware-artifacts",
+        "diagnostics": "parser-diagnostics",
+    }
+    for group_name, artifact_suffix in artifact_groups.items():
+        group = artifacts[group_name]
+        for source_id in list(group):
+            if artifact_statuses.get(f"{source_id}:{artifact_suffix}") != "reusable":
+                del group[source_id]
 
 
 def _is_same_reusable_identity(
@@ -385,6 +503,7 @@ def _artifact_filename(artifact_id: str) -> str:
 __all__ = [
     "ArtifactIdentity",
     "ArtifactStatus",
+    "LoadedTrialWorkspace",
     "SourceIdentity",
     "TRIAL_WORKSPACE_MANIFEST_SCHEMA_VERSION",
     "TrialWorkspaceManifest",
@@ -394,6 +513,7 @@ __all__ = [
     "content_sha256",
     "evaluate_artifact_status",
     "file_sha256",
+    "load_parse_trial_workspace",
     "load_trial_workspace_artifacts",
     "read_trial_workspace_manifest",
     "write_parse_trial_workspace",
