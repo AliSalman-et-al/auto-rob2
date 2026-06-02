@@ -178,6 +178,119 @@ def test_unresolved_pivotal_weak_answer_is_audit_limited(monkeypatch):
     )
 
 
+@pytest.mark.parametrize(
+    (
+        "adjudicated_answer",
+        "expected_changed_answer",
+        "expected_changed_support",
+        "expected_acceptance_status",
+    ),
+    [
+        (_answer("N", "weak"), True, False, "audit_limited"),
+        (_answer("Y", "strong"), False, True, "accepted"),
+        (_answer("N", "strong"), True, True, "accepted"),
+        (_answer("Y", "weak"), False, False, "audit_limited"),
+    ],
+)
+def test_adjudication_records_answer_and_support_change_flags(
+    monkeypatch,
+    adjudicated_answer,
+    expected_changed_answer,
+    expected_changed_support,
+    expected_acceptance_status,
+):
+    adjudicated_answer = dict(adjudicated_answer)
+    adjudicated_answer["support_rationale"] = "adjudicated support"
+
+    def fake_call_fn(
+        state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources=None
+    ):
+        return "", [{"node": node_name, "cache_hit": False}], {"1.3": adjudicated_answer}
+
+    monkeypatch.setattr("rob2_pipeline.nodes.common.call_node_llm", fake_call_fn)
+
+    result = domain1_judge_node(
+        {
+            "outcome": "overall survival",
+            "sq_answers": {
+                "1.1": _answer("Y", "strong"),
+                "1.2": _answer("Y", "strong"),
+                "1.3": _answer("Y", "weak"),
+            },
+            "domain_judgments": {},
+            "domain_rationales": {},
+            "evidence_packets": {"1.3": {"sources": []}},
+        }
+    )
+
+    attempt = result["sq_support_adjudications"]["D1"][0]
+    assert attempt["changed_answer"] is expected_changed_answer
+    assert attempt["changed_support"] is expected_changed_support
+    assert attempt["changed"] is (
+        expected_changed_answer or expected_changed_support
+    )
+    assert attempt["rationale"] == "adjudicated support"
+    assert attempt["provenance"]["llm_node"] == "sq_support_adjudication_D1_1_3"
+    assert (
+        result["pivotality_tests"]["D1"][0]["acceptance_status"]
+        == expected_acceptance_status
+    )
+
+
+def test_pivotal_support_constraint_is_included_in_adjudication_prompt(monkeypatch):
+    calls = []
+
+    def fake_call_fn(
+        state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources=None
+    ):
+        calls.append(prompt)
+        return (
+            "",
+            [{"node": node_name, "cache_hit": False}],
+            {"1.3": _answer("N", "strong")},
+        )
+
+    monkeypatch.setattr("rob2_pipeline.nodes.common.call_node_llm", fake_call_fn)
+
+    result = domain1_judge_node(
+        {
+            "outcome": "overall survival",
+            "sq_answers": {
+                "1.1": _answer("Y", "strong"),
+                "1.2": _answer("Y", "strong"),
+                "1.3": _answer("Y", "strong"),
+            },
+            "support_constraints": [
+                {
+                    "constraint_type": "quote_untraceable",
+                    "sq_id": "1.3",
+                    "evidence_label": "baseline table",
+                    "reason": "The cited quote was not found in source text.",
+                    "provenance": {"node": "quote_verifier"},
+                }
+            ],
+            "domain_judgments": {},
+            "domain_rationales": {},
+            "evidence_packets": {"1.3": {"sources": []}},
+        }
+    )
+
+    assert result["sq_support_adjudications"]["D1"][0]["constraints"] == [
+        {
+            "constraint_type": "quote_untraceable",
+            "sq_id": "1.3",
+            "evidence_label": "baseline table",
+            "reason": "The cited quote was not found in source text.",
+            "provenance": {"node": "quote_verifier"},
+        }
+    ]
+    assert "Support constraints:" in calls[0]
+    assert "quote_untraceable" in calls[0]
+    assert "The cited quote was not found in source text." in calls[0]
+    assert "Original domain judgment" not in calls[0]
+    assert "Alternative-answer domain judgment" not in calls[0]
+
+
 def test_assessment_json_includes_adjudication_audit_and_final_sq_state():
     state = {
         "sq_answers": {"1.3": _answer("N", "strong")},

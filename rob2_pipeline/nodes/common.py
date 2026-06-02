@@ -417,7 +417,8 @@ def _adjudicate_pivotal_sq_answers(
         if sq_answer.get("answer") == "NA":
             continue
         support_level = sq_answer.get("support_level", "").lower()
-        if support_level not in {"weak", "unsupported"}:
+        constraints = _constraints_for_sq(updated_state, sq_id)
+        if support_level not in {"weak", "unsupported"} and not constraints:
             continue
         if (
             sq_answer.get("support_rationale")
@@ -454,7 +455,9 @@ def _adjudicate_pivotal_sq_answers(
             "residual_uncertainty",
             adjudicated.get("support_rationale", "No residual uncertainty reported."),
         )
-        changed = _answer_or_support_changed(sq_answer, adjudicated)
+        changed_answer = sq_answer.get("answer") != adjudicated.get("answer")
+        changed_support = _support_level(sq_answer) != _support_level(adjudicated)
+        changed = changed_answer or changed_support
         if changed:
             sq_answers[sq_id] = adjudicated
             updated_state["sq_answers"] = sq_answers
@@ -472,6 +475,17 @@ def _adjudicate_pivotal_sq_answers(
                     "test_domain_judgment": impact["test_domain_judgment"],
                 },
                 "changed": changed,
+                "changed_answer": changed_answer,
+                "changed_support": changed_support,
+                "rationale": adjudicated.get("support_rationale")
+                or adjudicated.get("justification", ""),
+                "constraints": constraints,
+                "provenance": {
+                    "llm_node": node_name,
+                    "chunk_sources": format_chunk_sources(
+                        updated_state, _source_domain_for(domain)
+                    ),
+                },
                 "llm_node": node_name,
             }
         )
@@ -495,9 +509,8 @@ def _source_domain_for(domain: str) -> str:
     return domain.lower()
 
 
-def _answer_or_support_changed(initial: dict, adjudicated: dict) -> bool:
-    keys = ("answer", "support_level", "support_rationale", "quote", "justification")
-    return any(initial.get(key) != adjudicated.get(key) for key in keys)
+def _support_level(answer: dict) -> str:
+    return str(answer.get("support_level", "")).lower()
 
 
 def _adjudication_domain_impact(
@@ -570,10 +583,8 @@ Selected evidence packet sources:
 Quote/provenance warnings:
 {packet.get("missing_evidence", [])}
 
-Domain-judgment impact:
-Original domain judgment: {judgment}
-Alternative SQ answer tested for impact: {test_answer}
-Alternative-answer domain judgment: {test_judgment}
+Support constraints:
+{_render_support_constraints(_constraints_for_sq(state, sq_id))}
 
 Return one adjudicated answer for SQ {sq_id}. Include answer code, quote, justification, support level, support rationale, and residual uncertainty.
 Respond in this exact XML format:
@@ -586,6 +597,25 @@ Respond in this exact XML format:
   <support_rationale>brief support rationale</support_rationale>
   <residual_uncertainty>brief residual uncertainty</residual_uncertainty>
 </sq_{sq_id.replace(".", "_")}>"""
+
+
+def _render_support_constraints(constraints: list[dict]) -> str:
+    if not constraints:
+        return "No support constraints were recorded for this SQ."
+    rendered = []
+    for constraint in constraints:
+        parts = [
+            f"type={constraint.get('constraint_type', 'unknown')}",
+            f"reason={constraint.get('reason', 'No reason recorded')}",
+        ]
+        if constraint.get("evidence_label"):
+            parts.append(f"evidence_label={constraint['evidence_label']}")
+        if constraint.get("evidence"):
+            parts.append(f"evidence={constraint['evidence']}")
+        if constraint.get("provenance"):
+            parts.append(f"provenance={constraint['provenance']}")
+        rendered.append("- " + "; ".join(parts))
+    return "\n".join(rendered)
 
 
 def _parse_adjudication_passthrough(raw: str, sq_ids: list[str]) -> dict[str, dict]:
