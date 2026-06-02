@@ -29,6 +29,32 @@ def _result():
     return type("Result", (), {"document": object()})()
 
 
+def _parse_artifact(source):
+    return type(
+        "Artifact",
+        (),
+        {
+            "to_dict": lambda self: {
+                "source_identity": dict(source),
+                "pages": [
+                    {
+                        "page_number": 1,
+                        "text": f"{source['document_id']} parse text",
+                    }
+                ],
+                "diagnostics": [],
+                "provenance": {
+                    "parser_name": "liteparse",
+                    "parser_version": "2.0.0",
+                    "adapter_name": "liteparse",
+                    "artifact_schema_version": "parse-artifact-v1",
+                    "config": {},
+                },
+            }
+        },
+    )()
+
+
 def _patch_primary_success(
     monkeypatch,
     assessment,
@@ -75,6 +101,7 @@ def test_assessment_ingestion_result_to_state_update_omits_empty_llm_log():
         "docling_doc": None,
         "docling_chunks": [],
         "source_documents": [],
+        "parse_artifacts": [],
         "supplement_warnings": [],
     }
 
@@ -109,6 +136,9 @@ def test_ingest_assessment_documents_returns_primary_structural_result_when_remo
     )
     monkeypatch.setattr(assessment, "allow_remote_evidence_extraction", lambda: False)
     monkeypatch.setattr(assessment, "ingest_supplements", lambda paths: ([], [], []))
+    monkeypatch.setattr(
+        assessment, "parse_sources", lambda sources: [_parse_artifact(sources[0])]
+    )
 
     result = assessment.ingest_assessment_documents("primary.pdf", [])
 
@@ -129,6 +159,8 @@ def test_ingest_assessment_documents_returns_primary_structural_result_when_remo
     ]
     assert result.supplement_warnings == []
     assert result.llm_call_log == []
+    assert result.parse_artifacts[0]["source_identity"]["document_id"] == "primary"
+    assert result.parse_artifacts[0]["pages"][0]["text"] == "primary parse text"
 
 
 def test_ingest_assessment_documents_preserves_primary_when_supplement_ingestion_escapes(
@@ -158,6 +190,47 @@ def test_ingest_assessment_documents_preserves_primary_when_supplement_ingestion
     assert result.supplement_warnings == [
         "Supplement ingestion failed: unexpected supplement error"
     ]
+
+
+def test_ingest_assessment_documents_persists_primary_and_supplement_parse_artifacts(
+    monkeypatch,
+):
+    import rob2_pipeline.ingestion.assessment as assessment
+
+    _patch_primary_success(monkeypatch, assessment)
+    monkeypatch.setattr(assessment, "allow_remote_evidence_extraction", lambda: False)
+    monkeypatch.setattr(
+        assessment,
+        "ingest_supplements",
+        lambda paths: (
+            [],
+            [
+                {
+                    "document_id": "supplement:001",
+                    "document_name": "protocol.pdf",
+                    "document_role": "protocol",
+                    "source_kind": "rag_chunk",
+                    "path": "protocol.pdf",
+                    "is_primary": False,
+                    "status": "parsed",
+                }
+            ],
+            [],
+        ),
+    )
+    monkeypatch.setattr(
+        assessment,
+        "parse_sources",
+        lambda sources: [_parse_artifact(source) for source in sources],
+    )
+
+    result = assessment.ingest_assessment_documents("primary.pdf", ["protocol.pdf"])
+
+    assert [
+        artifact["source_identity"]["document_id"]
+        for artifact in result.parse_artifacts
+    ] == ["primary", "supplement:001"]
+    assert result.to_state_update()["parse_artifacts"] == result.parse_artifacts
 
 
 def test_ingest_assessment_documents_skips_remote_extraction_for_apparent_non_rct(

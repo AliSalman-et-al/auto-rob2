@@ -8,6 +8,7 @@ from rob2_pipeline.types import (
     EvidenceValidationFlag,
     LLMCallLogEntry,
     OutcomeProperties,
+    ParseArtifact,
     PivotalityTest,
     RetrievalGrade,
     SourceDocument,
@@ -39,6 +40,7 @@ class RoB2State(TypedDict, total=False):
     trial_retrieval_indexes: Annotated[dict, take_latest]
     supplementary_paths: Annotated[list[str], take_latest]
     source_documents: Annotated[list[SourceDocument], take_latest]
+    parse_artifacts: Annotated[list[ParseArtifact], take_latest]
     supplement_warnings: Annotated[list[str], take_latest]
     rag_contexts: Annotated[dict[str, str], take_latest]
     rag_chunk_metadata: Annotated[dict, merge_dicts]

@@ -26,6 +26,7 @@ JSON_OUTPUT_KEYS = (
     "n_randomized",
     "supplementary_paths",
     "source_documents",
+    "parse_artifacts",
     "supplement_warnings",
     "evidence",
     "rag_sources",

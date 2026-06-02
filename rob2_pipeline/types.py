@@ -38,6 +38,13 @@ class SourceDocument(TypedDict, total=False):
     error: str
 
 
+class ParseArtifact(TypedDict, total=False):
+    source_identity: SourceDocument
+    pages: list[dict]
+    diagnostics: list[dict]
+    provenance: dict
+
+
 class OutcomeProperties(TypedDict):
     objective_event: bool
     clinician_judged: bool

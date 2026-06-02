@@ -638,6 +638,7 @@ def test_pdf_ingest_node_adapts_assessment_ingestion_result(monkeypatch):
         "docling_doc": None,
         "docling_chunks": [],
         "source_documents": [],
+        "parse_artifacts": [],
         "supplement_warnings": ["warning"],
         "llm_call_log": [llm_log],
     }
