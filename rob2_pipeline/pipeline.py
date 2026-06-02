@@ -6,6 +6,7 @@ from rob2_pipeline.graph import build_rob2_graph
 from rob2_pipeline.state import RoB2State
 from rob2_pipeline.state_factory import create_initial_state
 from rob2_pipeline.trace import end_trace, start_trace
+from rob2_pipeline.trial_workspace import write_parse_trial_workspace
 
 
 JSON_OUTPUT_KEYS = (
@@ -26,6 +27,7 @@ JSON_OUTPUT_KEYS = (
     "n_randomized",
     "supplementary_paths",
     "source_documents",
+    "parse_artifacts",
     "supplement_warnings",
     "evidence",
     "rag_sources",
@@ -107,6 +109,13 @@ def run_assessment(
             json.dumps(json_data, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
+        if state.get("source_documents") and state.get("parse_artifacts"):
+            write_parse_trial_workspace(
+                trial_id=base,
+                workspace_dir=output_path / f"{base}_trial_workspace",
+                source_documents=state["source_documents"],
+                parse_artifacts=state["parse_artifacts"],
+            )
         return state
     finally:
         trace = end_trace()

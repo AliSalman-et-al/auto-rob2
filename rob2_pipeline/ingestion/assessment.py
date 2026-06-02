@@ -20,6 +20,7 @@ from rob2_pipeline.ingestion.evidence import (
     paper_evidence_from_sections,
     parse_sections,
 )
+from rob2_pipeline.ingestion.parse_artifacts import parse_sources
 from rob2_pipeline.ingestion.settings import (
     MIN_EXTRACTED_CHARS,
     allow_remote_evidence_extraction,
@@ -45,6 +46,7 @@ class AssessmentIngestionResult:
     docling_chunks: list[Document]
     source_documents: list[SourceDocument]
     supplement_warnings: list[str]
+    parse_artifacts: list[dict] = field(default_factory=list)
     llm_call_log: list[LLMCallLogEntry] = field(default_factory=list)
 
     def to_state_update(self, include_llm_call_log: bool = True) -> dict:
@@ -54,6 +56,7 @@ class AssessmentIngestionResult:
             "docling_doc": self.docling_doc,
             "docling_chunks": self.docling_chunks,
             "source_documents": self.source_documents,
+            "parse_artifacts": self.parse_artifacts,
             "supplement_warnings": self.supplement_warnings,
         }
         if include_llm_call_log and self.llm_call_log:
@@ -83,6 +86,9 @@ def ingest_assessment_documents(
             supplement_warnings = [f"Supplement ingestion failed: {error}"]
         docling_chunks = [*docling_chunks, *supplement_chunks]
         source_documents = [primary_source, *supplement_documents]
+        parse_artifacts = [
+            artifact.to_dict() for artifact in parse_sources(source_documents)
+        ]
 
         if not doc_repr.full_text:
             doc_repr.full_text = full_text
@@ -98,6 +104,7 @@ def ingest_assessment_documents(
                 docling_doc=conv_result,
                 docling_chunks=docling_chunks,
                 source_documents=source_documents,
+                parse_artifacts=parse_artifacts,
                 supplement_warnings=supplement_warnings,
             )
 
@@ -111,6 +118,7 @@ def ingest_assessment_documents(
                 docling_doc=conv_result,
                 docling_chunks=docling_chunks,
                 source_documents=source_documents,
+                parse_artifacts=parse_artifacts,
                 supplement_warnings=supplement_warnings,
             )
 
@@ -122,6 +130,7 @@ def ingest_assessment_documents(
                 docling_doc=conv_result,
                 docling_chunks=docling_chunks,
                 source_documents=source_documents,
+                parse_artifacts=parse_artifacts,
                 supplement_warnings=supplement_warnings,
                 llm_call_log=log,
             )
@@ -134,6 +143,7 @@ def ingest_assessment_documents(
                 docling_doc=conv_result,
                 docling_chunks=docling_chunks,
                 source_documents=source_documents,
+                parse_artifacts=parse_artifacts,
                 supplement_warnings=supplement_warnings,
             )
     except Exception as error:
@@ -151,12 +161,17 @@ def ingest_assessment_documents(
             supplementary_paths,
             f"primary Docling structural extraction failed: {error}",
         )
+        source_documents = [primary_source, *supplement_documents]
+        parse_artifacts = [
+            artifact.to_dict() for artifact in parse_sources(source_documents)
+        ]
         return AssessmentIngestionResult(
             full_text=full_text,
             evidence=evidence,
             docling_doc=None,
             docling_chunks=[],
-            source_documents=[primary_source, *supplement_documents],
+            source_documents=source_documents,
+            parse_artifacts=parse_artifacts,
             supplement_warnings=supplement_warnings,
         )
 

@@ -13,6 +13,24 @@ def test_assessment_json_includes_supplement_fields():
                 "status": "parsed",
             }
         ],
+        "parse_artifacts": [
+            {
+                "source_identity": {
+                    "document_id": "primary",
+                    "document_name": "paper.pdf",
+                    "document_role": "primary",
+                },
+                "pages": [{"page_number": 1, "text": "Primary text"}],
+                "diagnostics": [],
+                "provenance": {
+                    "parser_name": "liteparse",
+                    "parser_version": "2.0.0",
+                    "adapter_name": "liteparse",
+                    "artifact_schema_version": "parse-artifact-v1",
+                    "config": {},
+                },
+            }
+        ],
         "supplement_warnings": [],
         "rag_chunk_metadata": {},
     }
@@ -21,6 +39,7 @@ def test_assessment_json_includes_supplement_fields():
 
     assert data["supplementary_paths"] == ["protocol.pdf"]
     assert data["source_documents"][0]["document_name"] == "protocol.pdf"
+    assert data["parse_artifacts"][0]["provenance"]["parser_name"] == "liteparse"
     assert data["supplement_warnings"] == []
 
 
