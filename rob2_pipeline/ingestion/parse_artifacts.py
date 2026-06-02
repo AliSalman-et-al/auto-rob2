@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import asdict, dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -10,6 +12,15 @@ from rob2_pipeline.types import SourceDocument
 
 
 PARSE_ARTIFACT_SCHEMA_VERSION = "parse-artifact-v1"
+PAGE_AWARE_ARTIFACT_SCHEMA_VERSION = "page-aware-artifacts-v1"
+MIN_SECTION_TEXT_CHARS = 20
+
+SECTION_HEADING_RE = re.compile(
+    r"^\s*(?:#+\s*)?(abstract|introduction|background|methods?|results?|discussion|"
+    r"conclusions?|randomi[sz]ation|masking|blinding|outcomes?|endpoints?|"
+    r"statistical analysis|baseline characteristics)\s*:?\s*$",
+    re.IGNORECASE,
+)
 
 
 class ParsedPageArtifact(TypedDict, total=False):
@@ -48,6 +59,44 @@ class SourceParseArtifact:
             "pages": [dict(page) for page in self.pages],
             "diagnostics": [asdict(diagnostic) for diagnostic in self.diagnostics],
             "provenance": asdict(self.provenance),
+        }
+
+
+@dataclass(frozen=True)
+class PageAwareSectionArtifact:
+    section_id: str
+    source_id: str
+    heading: str
+    page_numbers: list[int]
+    text: str
+
+
+@dataclass(frozen=True)
+class PageAwareChunkArtifact:
+    chunk_id: str
+    source_id: str
+    document_role: str
+    section_id: str
+    section_heading: str
+    page_numbers: list[int]
+    text: str
+
+
+@dataclass(frozen=True)
+class PageAwareArtifacts:
+    source_id: str
+    document_role: str
+    artifact_schema_version: str
+    sections: list[PageAwareSectionArtifact]
+    chunks: list[PageAwareChunkArtifact]
+
+    def to_dict(self) -> dict:
+        return {
+            "source_id": self.source_id,
+            "document_role": self.document_role,
+            "artifact_schema_version": self.artifact_schema_version,
+            "sections": [asdict(section) for section in self.sections],
+            "chunks": [asdict(chunk) for chunk in self.chunks],
         }
 
 
@@ -139,6 +188,91 @@ def parse_sources(
     return [parse_source_with_adapter(source, parser) for source in sources]
 
 
+def build_page_aware_artifacts(
+    artifact: SourceParseArtifact,
+) -> PageAwareArtifacts:
+    source_id = artifact.source_identity.get("document_id", "")
+    document_role = artifact.source_identity.get("document_role", "unknown_supplement")
+    sections = _build_page_aware_sections(artifact, source_id)
+    chunks = [
+        PageAwareChunkArtifact(
+            chunk_id=f"{source_id}:chunk:{index:04d}",
+            source_id=source_id,
+            document_role=document_role,
+            section_id=section.section_id,
+            section_heading=section.heading,
+            page_numbers=section.page_numbers,
+            text=section.text,
+        )
+        for index, section in enumerate(sections, start=1)
+        if section.text.strip()
+    ]
+    return PageAwareArtifacts(
+        source_id=source_id,
+        document_role=document_role,
+        artifact_schema_version=PAGE_AWARE_ARTIFACT_SCHEMA_VERSION,
+        sections=sections,
+        chunks=chunks,
+    )
+
+
+def write_page_aware_artifacts(
+    artifacts: PageAwareArtifacts,
+    path: str | Path,
+) -> None:
+    artifact_path = Path(path)
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(
+        json.dumps(artifacts.to_dict(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _build_page_aware_sections(
+    artifact: SourceParseArtifact,
+    source_id: str,
+) -> list[PageAwareSectionArtifact]:
+    sections: list[PageAwareSectionArtifact] = []
+    current_heading = "Unsectioned"
+    current_lines: list[str] = []
+    current_pages: list[int] = []
+
+    def flush() -> None:
+        nonlocal current_lines, current_pages
+        text = "\n".join(current_lines).strip()
+        if len(text) < MIN_SECTION_TEXT_CHARS:
+            current_lines = []
+            current_pages = []
+            return
+        sections.append(
+            PageAwareSectionArtifact(
+                section_id=f"{source_id}:section:{len(sections) + 1:04d}",
+                source_id=source_id,
+                heading=current_heading,
+                page_numbers=sorted(set(current_pages)),
+                text=text,
+            )
+        )
+        current_lines = []
+        current_pages = []
+
+    for page in artifact.pages:
+        page_number = int(page.get("page_number", 0))
+        for raw_line in page.get("text", "").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if SECTION_HEADING_RE.match(line):
+                flush()
+                current_heading = line.lstrip("#").strip().rstrip(":")
+                continue
+            current_lines.append(line)
+            if page_number:
+                current_pages.append(page_number)
+    flush()
+    return sections
+
+
 def _package_version(package_name: str) -> str:
     try:
         return version(package_name)
@@ -148,12 +282,18 @@ def _package_version(package_name: str) -> str:
 
 __all__ = [
     "PARSE_ARTIFACT_SCHEMA_VERSION",
+    "PAGE_AWARE_ARTIFACT_SCHEMA_VERSION",
     "LiteParseSourceParser",
+    "PageAwareArtifacts",
+    "PageAwareChunkArtifact",
+    "PageAwareSectionArtifact",
     "ParsedPageArtifact",
     "ParserDiagnostic",
     "ParserProvenance",
     "SourceParseArtifact",
     "SourceParserAdapter",
+    "build_page_aware_artifacts",
     "parse_source_with_adapter",
     "parse_sources",
+    "write_page_aware_artifacts",
 ]
