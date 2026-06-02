@@ -14,6 +14,71 @@ from rob2_pipeline.benchmark import (
 )
 
 
+def _benchmark_fixture_output(
+    *,
+    final_domains: dict[str, str],
+    overall: str,
+    human_review_priority: str,
+    adjudication_domain: str | None = None,
+    sq_id: str | None = None,
+    initial_answer: str = "",
+    final_answer: str = "",
+    initial_support: str = "",
+    final_support: str = "",
+    original_domain_judgment: str = "",
+    test_domain_judgment: str = "",
+    acceptance_status: str = "",
+    support_constraints: list[dict] | None = None,
+) -> dict:
+    output = {
+        "domain_judgments": final_domains,
+        "overall_judgment": overall,
+        "human_review_priority": human_review_priority,
+        "source_documents": [],
+        "support_constraints": support_constraints or [],
+    }
+    if adjudication_domain is None:
+        return output
+
+    assert sq_id is not None
+    output["pivotality_tests"] = {
+        adjudication_domain: [
+            {
+                "sq_id": sq_id,
+                "original_answer": initial_answer,
+                "support_level": initial_support,
+                "conservative_test_answer": "NI",
+                "original_domain_judgment": original_domain_judgment,
+                "test_domain_judgment": test_domain_judgment,
+                "pivotal": True,
+                "acceptance_status": acceptance_status,
+            }
+        ]
+    }
+    output["sq_support_adjudications"] = {
+        adjudication_domain: [
+            {
+                "sq_id": sq_id,
+                "initial_answer": {
+                    "answer": initial_answer,
+                    "support_level": initial_support,
+                },
+                "adjudicated_answer": {
+                    "answer": final_answer,
+                    "support_level": final_support,
+                },
+                "domain_impact": {
+                    "original_domain_judgment": original_domain_judgment,
+                    "test_domain_judgment": test_domain_judgment,
+                },
+                "changed": initial_answer != final_answer
+                or initial_support != final_support,
+            }
+        ]
+    }
+    return output
+
+
 def test_load_reference_strips_whitespace():
     csv_text = (
         "Trial,D1,D2,D3,D4,D5,Overall Risk\n"
@@ -191,6 +256,161 @@ def test_run_benchmark_scores_final_judgments_and_records_adjudication_metrics(
     assert summary["adjudication_metrics"]["weak_sq_answers"] == 1
     assert summary["adjudication_metrics"]["unsupported_sq_answers"] == 1
     assert summary["timing"]["total_adjudication_llm_calls"] == 1
+
+
+def test_run_benchmark_regression_fixtures_cover_known_undercalling_patterns(
+    tmp_path, monkeypatch
+):
+    pdf_dir = tmp_path / "benchmark"
+    pdf_dir.mkdir()
+    for trial in ("PEACE-1", "STAMPEDE", "ARASENS", "TITAN"):
+        (pdf_dir / f"{trial}.pdf").write_bytes(b"pdf")
+
+    reference_csv = tmp_path / "ref.csv"
+    reference_csv.write_text(
+        "\n".join(
+            [
+                "Trial,D1,D2,D3,D4,D5,Overall Risk",
+                "PEACE-1,Low,Some concerns,Low,Low,Low,Some concerns",
+                "STAMPEDE,Low,Low,Some concerns,Low,Low,Some concerns",
+                "ARASENS,Low,Low,Low,Some concerns,Low,Some concerns",
+                "TITAN,Low,Low,Low,Low,Low,Low",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    fixtures = {
+        ("PEACE-1", "OS"): _benchmark_fixture_output(
+            final_domains={
+                "D1": "Low",
+                "D2": "Some concerns",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+            },
+            overall="Some concerns",
+            human_review_priority="HIGH",
+            adjudication_domain="D2",
+            sq_id="2.6",
+            initial_answer="Y",
+            final_answer="NI",
+            initial_support="weak",
+            final_support="strong",
+            original_domain_judgment="Low",
+            test_domain_judgment="High",
+            acceptance_status="accepted",
+        ),
+        ("STAMPEDE", "OS"): _benchmark_fixture_output(
+            final_domains={
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Some concerns",
+                "D4": "Low",
+                "D5": "Low",
+            },
+            overall="Some concerns",
+            human_review_priority="HIGH",
+            adjudication_domain="D3",
+            sq_id="3.1",
+            initial_answer="Y",
+            final_answer="PY",
+            initial_support="unsupported",
+            final_support="unsupported",
+            original_domain_judgment="Low",
+            test_domain_judgment="Some concerns",
+            acceptance_status="audit_limited",
+        ),
+        ("ARASENS", "OS"): _benchmark_fixture_output(
+            final_domains={
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+            },
+            overall="Low",
+            human_review_priority="LOW",
+        ),
+        ("TITAN", "OS"): _benchmark_fixture_output(
+            final_domains={
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Some concerns",
+                "D5": "Low",
+            },
+            overall="Some concerns",
+            human_review_priority="HIGH",
+            adjudication_domain="D4",
+            sq_id="4.4",
+            initial_answer="N",
+            final_answer="Y",
+            initial_support="weak",
+            final_support="strong",
+            original_domain_judgment="Low",
+            test_domain_judgment="Some concerns",
+            acceptance_status="accepted",
+            support_constraints=[
+                {
+                    "constraint_type": "wrong_outcome_context",
+                    "sq_id": "outcome_classification",
+                    "reason": "Trial-wide PFS language contaminated the assessed adverse-event outcome classification.",
+                }
+            ],
+        ),
+    }
+
+    def fake_run_assessment(**kwargs):
+        pdf_path = Path(kwargs["pdf_path"])
+        outcome_code = "OS"
+        assessment_dir = Path(kwargs["output_dir"])
+        assessment_dir.mkdir(parents=True)
+        assessment_dir.joinpath(f"{pdf_path.stem}_rob2_data.json").write_text(
+            json.dumps(fixtures[(pdf_path.stem, outcome_code)]),
+            encoding="utf-8",
+        )
+        assessment_dir.joinpath(f"{pdf_path.stem}_trace.json").write_text(
+            json.dumps({"llm_calls": [], "node_spans": []}),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr("rob2_pipeline.benchmark.run_assessment", fake_run_assessment)
+
+    results = run_benchmark(
+        pdf_dir=pdf_dir,
+        reference_csvs={"OS": reference_csv},
+        outcome_map=[
+            {"trial": "PEACE-1", "outcome_code": "OS"},
+            {"trial": "STAMPEDE", "outcome_code": "OS"},
+            {"trial": "ARASENS", "outcome_code": "OS"},
+            {"trial": "TITAN", "outcome_code": "OS"},
+        ],
+        output_dir=tmp_path / "out",
+    )
+    by_trial = {result["trial"]: result for result in results}
+    summary = summarize_benchmark(results)
+
+    assert by_trial["PEACE-1"]["pipeline"]["domain_judgments"]["D2"] == "Some concerns"
+    assert by_trial["PEACE-1"]["pipeline"]["initial_domain_judgments"]["D2"] == "Low"
+    assert by_trial["PEACE-1"]["adjudication_metrics"]["sq_support_adjudications"]["changed_answer"] == 1
+    assert by_trial["PEACE-1"]["pipeline"]["human_review_priority"] == "HIGH"
+
+    assert by_trial["STAMPEDE"]["pipeline"]["domain_judgments"]["D3"] == "Some concerns"
+    assert by_trial["STAMPEDE"]["adjudication_metrics"]["unsupported_sq_answers"] == 1
+    assert by_trial["STAMPEDE"]["audit_caught_mismatches"] == {}
+
+    assert by_trial["ARASENS"]["comparison"]["D4"] is False
+    assert by_trial["ARASENS"]["audit_caught_mismatches"]["D4"] is False
+
+    assert by_trial["TITAN"]["comparison"]["D4"] is False
+    assert by_trial["TITAN"]["audit_caught_mismatches"]["D4"] is True
+    assert by_trial["TITAN"]["pipeline"]["human_review_priority"] == "HIGH"
+
+    assert summary["audit_caught_mismatches"]["D4"] == {"caught": 1, "total": 2}
+    assert summary["adjudication_metrics"]["weak_sq_answers"] == 2
+    assert summary["adjudication_metrics"]["unsupported_sq_answers"] == 1
 
 
 def test_run_benchmark_reuses_trial_artifacts_across_outcomes(tmp_path, monkeypatch):

@@ -640,6 +640,7 @@ def run_benchmark(
                 "overall_judgment": final_overall_judgment,
                 "initial_domain_judgments": initial_domain_judgments,
                 "initial_overall_judgment": initial_overall_judgment,
+                "human_review_priority": pipeline_output.get("human_review_priority"),
             }
             trial_result["adjudication_metrics"] = _summarize_adjudication_metrics(
                 pipeline_output,
