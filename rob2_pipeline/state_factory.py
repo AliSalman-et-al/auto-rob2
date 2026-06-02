@@ -69,6 +69,7 @@ def create_initial_state(
         "high_uncertainty_sqs": [],
         "human_review_priority": "HIGH",
         "evidence_validation_flags": [],
+        "support_constraints": [],
         "verifier_trace": [],
         "overall_policy": kwargs.get("overall_policy", "official_rob2"),
         "markdown_report": "",

@@ -12,6 +12,7 @@ from rob2_pipeline.types import (
     RetrievalGrade,
     SourceDocument,
     SqSupportAdjudication,
+    SupportConstraint,
     TrialFacts,
     VerifierTraceEntry,
 )
@@ -89,6 +90,7 @@ class RoB2State(TypedDict, total=False):
     high_uncertainty_sqs: Annotated[list[str], take_latest]
     human_review_priority: Annotated[str, take_latest]
     evidence_validation_flags: Annotated[list[EvidenceValidationFlag], take_latest]
+    support_constraints: Annotated[list[SupportConstraint], take_latest]
     verifier_trace: Annotated[list[VerifierTraceEntry], take_latest]
     overall_policy: Annotated[str, take_latest]
 

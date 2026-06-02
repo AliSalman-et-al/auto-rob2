@@ -45,6 +45,7 @@ JSON_OUTPUT_KEYS = (
     "high_uncertainty_sqs",
     "human_review_priority",
     "evidence_validation_flags",
+    "support_constraints",
     "verifier_trace",
     "verification_actions",
     "overall_policy",
