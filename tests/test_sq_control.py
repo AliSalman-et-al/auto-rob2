@@ -81,3 +81,29 @@ def test_domain4_open_label_patient_reported_outcome_sets_assessor_awareness():
     assert result["4.3"]["quote"] == "Open-label study"
     assert result["4.3"]["support_level"] == "moderate"
     assert result["4.3"]["support_rationale"]
+
+
+def test_domain4_objective_outcome_control_inherits_classification_support():
+    sq_answers = {
+        "4.1": {"answer": "N", "quote": "No measurement issue"},
+        "4.2": {"answer": "N", "quote": "No definition issue"},
+        "4.3": {"answer": "NI"},
+        "4.4": {"answer": "NI"},
+    }
+    state = {
+        "outcome_type": "vital-status",
+        "outcome_classification_support": {
+            "support_level": "weak",
+            "support_rationale": "Only indirect evidence supports vital-status classification.",
+        },
+        "sq_answers": {},
+    }
+
+    result = apply_domain4_control(state, sq_answers)
+
+    assert result["4.4"]["answer"] == "N"
+    assert result["4.4"]["support_level"] == "weak"
+    assert (
+        result["4.4"]["support_rationale"]
+        == "Only indirect evidence supports vital-status classification."
+    )

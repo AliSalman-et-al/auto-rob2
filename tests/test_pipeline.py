@@ -66,3 +66,22 @@ def test_assessment_json_preserves_support_constraints():
     data = _assessment_json(state)
 
     assert data["support_constraints"] == state["support_constraints"]
+
+
+def test_assessment_json_preserves_outcome_classification_support():
+    state = {
+        "outcome_classification_support": {
+            "support_level": "strong",
+            "support_rationale": "Direct outcome-bound quote.",
+            "quotes": [{"quote": "Overall survival was death from any cause."}],
+            "constraints": [],
+        },
+        "rag_chunk_metadata": {},
+    }
+
+    data = _assessment_json(state)
+
+    assert (
+        data["outcome_classification_support"]
+        == state["outcome_classification_support"]
+    )

@@ -75,6 +75,11 @@ def apply_domain4_control(
 ) -> dict[str, dict]:
     updated = dict(sq_answers)
     outcome_type = state.get("outcome_type", "clinician-composite")
+    classification_support = state.get("outcome_classification_support", {})
+    classification_support_level = classification_support.get("support_level", "moderate")
+    classification_support_rationale = classification_support.get(
+        "support_rationale", "Derived from objective outcome classification."
+    )
     sq_2_1 = state.get("sq_answers", {}).get("2.1", {}).get("answer", "NI")
     sq_2_2 = state.get("sq_answers", {}).get("2.2", {}).get("answer", "NI")
     trial_is_open_label = sq_2_1 in ("Y", "PY") or sq_2_2 in ("Y", "PY")
@@ -142,8 +147,8 @@ def apply_domain4_control(
                 or "No relevant text found",
                 "justification": "The outcome is inherently objective, so knowledge of intervention assignment is unlikely to influence assessment.",
                 "uncertainty_flag": "NORMAL",
-                "support_level": "moderate",
-                "support_rationale": "Derived from objective outcome classification.",
+                "support_level": classification_support_level,
+                "support_rationale": classification_support_rationale,
             }
             s44 = "N"
         if (
