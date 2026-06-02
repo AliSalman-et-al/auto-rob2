@@ -153,4 +153,9 @@ class SqSupportAdjudication(TypedDict, total=False):
     adjudicated_answer: dict
     domain_impact: dict
     changed: bool
+    changed_answer: bool
+    changed_support: bool
+    rationale: str
+    constraints: list[SupportConstraint]
+    provenance: dict
     llm_node: str
