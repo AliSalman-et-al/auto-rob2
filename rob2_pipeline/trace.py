@@ -26,6 +26,7 @@ class LlmNodeTrace:
     system_prompt: str
     user_prompt: str
     response: str
+    provider: str | None
     model: str | None
     input_tokens: int | None
     output_tokens: int | None
@@ -39,6 +40,12 @@ class LlmNodeTrace:
     # Used at categorization time to tell whether the model reasoned over the
     # retrieved chunks or ignored them. None when the provider does not emit one.
     reasoning_content: str | None = None
+    prompt_version: str | None = None
+    schema_version: str | None = None
+    parse_status: str | None = None
+    validation_status: str | None = None
+    validation_error: str | None = None
+    fallback_artifact: dict[str, Any] | None = None
 
 
 @dataclass
@@ -115,6 +122,13 @@ def append_llm_call(
     parsed_answers: dict[str, Any] | None = None,
     is_repair: bool = False,
     reasoning_content: str | None = None,
+    provider: str | None = None,
+    prompt_version: str | None = None,
+    schema_version: str | None = None,
+    parse_status: str | None = None,
+    validation_status: str | None = None,
+    validation_error: str | None = None,
+    fallback_artifact: dict[str, Any] | None = None,
 ) -> None:
     if _CURRENT_TRACE is None:
         return
@@ -124,6 +138,7 @@ def append_llm_call(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             response=response,
+            provider=provider,
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -134,6 +149,12 @@ def append_llm_call(
             parsed_answers=parsed_answers,
             is_repair=is_repair,
             reasoning_content=reasoning_content,
+            prompt_version=prompt_version,
+            schema_version=schema_version,
+            parse_status=parse_status,
+            validation_status=validation_status,
+            validation_error=validation_error,
+            fallback_artifact=fallback_artifact,
         )
     )
 
