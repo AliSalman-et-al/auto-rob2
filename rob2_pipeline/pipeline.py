@@ -75,6 +75,7 @@ JSON_OUTPUT_KEYS = (
     "ni_count",
     "high_uncertainty_sqs",
     "human_review_priority",
+    "reviewer_report",
     "evidence_validation_flags",
     "support_constraints",
     "verifier_trace",
@@ -129,6 +130,10 @@ def run_assessment(
         if state.get("markdown_report"):
             (output_path / f"{base}_rob2_report.md").write_text(
                 state["markdown_report"], encoding="utf-8"
+            )
+        if state.get("reviewer_report"):
+            (output_path / f"{base}_reviewer_report.md").write_text(
+                state["reviewer_report"], encoding="utf-8"
             )
         json_data = _assessment_json(state)
         (output_path / f"{base}_rob2_data.json").write_text(

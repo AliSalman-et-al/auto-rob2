@@ -290,6 +290,163 @@ def _audit_limited_summary_lines(state: RoB2State) -> list[str]:
     return rows
 
 
+def _domain_artifact(state: RoB2State, domain: str) -> dict:
+    key = f"{domain.lower()}_judgment_artifact"
+    artifact = state.get(key) or {}
+    return artifact if isinstance(artifact, dict) else {}
+
+
+def _domain_confidence(state: RoB2State, domain: str) -> list[str]:
+    artifact = _domain_artifact(state, domain)
+    confidence = artifact.get("automation_confidence")
+    if not confidence:
+        confidence = (state.get("automation_confidence") or {}).get(domain)
+    if not confidence:
+        return ["- Automation confidence: not reported"]
+    if isinstance(confidence, dict):
+        status = _clean_cell(confidence.get("status", "not reported"))
+        rationale = _clean_cell(confidence.get("rationale", ""))
+        line = f"- Automation confidence: {status}"
+        if rationale:
+            line = f"{line} ({rationale})"
+        return [line]
+    return [f"- Automation confidence: {_clean_cell(str(confidence))}"]
+
+
+def _domain_key_evidence(state: RoB2State, domain: str) -> list[dict]:
+    artifact = _domain_artifact(state, domain)
+    evidence = [
+        item for item in artifact.get("key_evidence", []) if isinstance(item, dict)
+    ]
+    packets = state.get("evidence_packets") or {}
+    sq_answers = state.get("sq_answers") or {}
+    for sq_id in DOMAIN_SQS[domain]:
+        packet = packets.get(sq_id, {})
+        if isinstance(packet, dict):
+            for fact in packet.get("evidence_facts") or packet.get("candidate_facts") or []:
+                if isinstance(fact, dict):
+                    evidence.append(fact)
+        answer = sq_answers.get(sq_id, {})
+        if isinstance(answer, dict) and (
+            answer.get("quote") or answer.get("justification")
+        ):
+            evidence.append(
+                {
+                    "claim": answer.get("justification"),
+                    "quote": answer.get("quote"),
+                    "support_level": answer.get("support_level", "unsupported"),
+                }
+            )
+    return evidence
+
+
+def _domain_contradictions(state: RoB2State, domain: str) -> list[str]:
+    artifact = _domain_artifact(state, domain)
+    contradictions = [
+        _list_item_text(item) for item in artifact.get("contradictions", [])
+    ]
+    for constraint in state.get("support_constraints") or []:
+        if not isinstance(constraint, dict):
+            continue
+        if _clean_cell(constraint.get("domain", "")).upper() != domain:
+            continue
+        constraint_type = _clean_cell(constraint.get("constraint_type", "constraint"))
+        reason = _clean_cell(constraint.get("reason", "No relevant text found"))
+        contradictions.append(f"{constraint_type}: {reason}")
+    return contradictions
+
+
+def _domain_audit_limitations(state: RoB2State, domain: str) -> list[str]:
+    artifact = _domain_artifact(state, domain)
+    limitations = [
+        _list_item_text(item) for item in artifact.get("audit_limitations", [])
+    ]
+    for test in (state.get("pivotality_tests") or {}).get(domain, []):
+        if not isinstance(test, dict):
+            continue
+        if test.get("acceptance_status") != "audit_limited":
+            continue
+        sq_id = _clean_cell(test.get("sq_id", "?"))
+        support = _clean_cell(test.get("support_level", "unsupported")).lower()
+        pivotal_text = "pivotal " if test.get("pivotal") else ""
+        limitations.append(
+            f"Audit-limited support: {domain} SQ {sq_id} has {pivotal_text}{support} support."
+        )
+    return limitations
+
+
+def _reviewer_report(state: RoB2State) -> str:
+    rows = [
+        "# Reviewer RoB 2 Report",
+        "",
+        "## Trial information",
+        f"- Trial: {state.get('intervention', 'Not reported')} vs {state.get('comparator', 'Not reported')}",
+        f"- Outcome assessed: {state.get('outcome', 'Not reported')}",
+        f"- Effect of interest: {_effect_label(state)}",
+        "",
+    ]
+    judgments = state.get("domain_judgments") or {}
+    rationales = state.get("domain_rationales") or {}
+    for domain in ["D1", "D2", "D3", "D4", "D5"]:
+        artifact = _domain_artifact(state, domain)
+        judgment = (
+            artifact.get("judgment")
+            or artifact.get("label")
+            or judgments.get(domain, "Not assessed")
+        )
+        rationale = artifact.get("rationale") or rationales.get(domain, "Not assessed")
+        rows.extend(
+            [
+                f"## {domain}: {DOMAIN_TITLES[domain]}",
+                "",
+                f"**Judgment: {_clean_cell(judgment)}**",
+                f"**Support:** {_clean_cell(rationale)}",
+                "",
+                "### Automation confidence",
+                *_domain_confidence(state, domain),
+                "",
+                "### Key evidence",
+            ]
+        )
+        evidence_items = _domain_key_evidence(state, domain)
+        if evidence_items:
+            for item in evidence_items[:8]:
+                support = _clean_cell(item.get("support_level", "unsupported")).title()
+                claim = _list_item_text(item)
+                quote = _clean_cell(item.get("quote", ""))
+                line = f"- **{support}**: {claim}"
+                if quote and quote != claim:
+                    line = f"{line} Quote: {quote}"
+                rows.append(line)
+        else:
+            rows.append("- No key evidence artifact reported.")
+
+        contradictions = _domain_contradictions(state, domain)
+        rows.extend(["", "### Contradictions"])
+        if contradictions:
+            rows.extend(f"- {item}" for item in contradictions)
+        else:
+            rows.append("- None reported.")
+
+        limitations = _domain_audit_limitations(state, domain)
+        rows.extend(["", "### Audit limitations"])
+        if limitations:
+            rows.extend(f"- {item}" for item in limitations)
+        else:
+            rows.append("- None reported.")
+        rows.append("")
+
+    rows.extend(
+        [
+            "## Overall risk of bias",
+            "",
+            f"**Overall judgment: {state.get('overall_judgment', 'Not assessed')}**",
+            f"**Rationale:** {state.get('overall_rationale', 'Not assessed')}",
+        ]
+    )
+    return "\n".join(rows)
+
+
 def report_formatter_node(state: RoB2State) -> RoB2State:
     high_uncertainty = state.get("high_uncertainty_sqs", [])
     high_uncertainty_text = ", ".join(high_uncertainty) if high_uncertainty else "None"
@@ -343,4 +500,4 @@ def report_formatter_node(state: RoB2State) -> RoB2State:
         ]
     )
     markdown_report = "\n".join(parts)
-    return {"markdown_report": markdown_report}
+    return {"markdown_report": markdown_report, "reviewer_report": _reviewer_report(state)}

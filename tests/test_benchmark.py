@@ -1762,6 +1762,111 @@ def test_write_benchmark_report_renders_adjudication_summary(tmp_path):
     assert "| Overall | Some concerns | Low | 1 |" in report
 
 
+def test_write_benchmark_report_renders_separate_engineering_report(tmp_path):
+    results = [
+        {
+            "id": "TITAN:OS",
+            "trial": "TITAN",
+            "outcome": "Overall Survival",
+            "outcome_code": "OS",
+            "cohort": "calibration",
+            "skipped": False,
+            "error": None,
+            "notes": "",
+            "assessment_artifacts": {
+                "rob2_data_json": str(tmp_path / "TITAN_rob2_data.json"),
+            },
+            "comparison": {
+                "D1": True,
+                "D2": False,
+                "D3": True,
+                "D4": True,
+                "D5": True,
+                "Overall": False,
+            },
+            "reference": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+                "Overall Risk": "Low",
+            },
+            "pipeline": {
+                "domain_judgments": {
+                    "D1": "Low",
+                    "D2": "High",
+                    "D3": "Low",
+                    "D4": "Low",
+                    "D5": "Low",
+                },
+                "overall_judgment": "High",
+            },
+            "packet_quality": {
+                "D2": {
+                    "packet_grade": "insufficient",
+                    "packet_readiness": {"status": "needs_retrieval_repair"},
+                }
+            },
+            "schema_failures": [{"domain": "D2", "error": "missing sq answer"}],
+            "support_constraints": [
+                {
+                    "constraint_type": "quote_untraceable",
+                    "sq_id": "2.6",
+                    "domain": "D2",
+                    "reason": "quote was not found",
+                }
+            ],
+            "mismatch_classification": {
+                "D2": {"category": "packet", "signals": ["packet_grade:insufficient"]},
+                "Overall": {
+                    "category": "reference_ambiguity",
+                    "signals": ["audit_caught_mismatch"],
+                },
+            },
+            "timing": {
+                "total_wall_ms": 1200,
+                "llm_total_ms": 400,
+                "llm_calls": 3,
+                "llm_cache_hits": 1,
+                "llm_repairs": 1,
+                "llm_parse_errors": 0,
+                "llm_input_tokens": 100,
+                "llm_output_tokens": 25,
+                "llm_cost_usd": 0.02,
+                "slowest_nodes": [
+                    {"node": "domain2_analysis", "duration_ms": 300, "status": "ok"}
+                ],
+                "_node_spans": [
+                    {"node": "domain2_analysis", "duration_ms": 300, "status": "ok"}
+                ],
+            },
+        }
+    ]
+    summary = summarize_benchmark(results)
+
+    write_benchmark_report(results, summary, tmp_path / "benchmark_report.md")
+
+    engineering_report = (tmp_path / "engineering_report.md").read_text(
+        encoding="utf-8"
+    )
+    assert engineering_report.startswith("# Engineering Benchmark Report")
+    assert "## Agreement" in engineering_report
+    assert "| D2 | 0.0% (0/1) |" in engineering_report
+    assert "## Mismatch Diagnostics" in engineering_report
+    assert "| D2 | packet | packet_grade:insufficient |" in engineering_report
+    assert "## Artifact Status" in engineering_report
+    assert "| TITAN:OS | rob2_data_json |" in engineering_report
+    assert "## Packet Quality" in engineering_report
+    assert "| TITAN:OS | D2 | needs_retrieval_repair | insufficient |" in engineering_report
+    assert "## Timing, Cache, Model, And Cost Diagnostics" in engineering_report
+    assert "- Total LLM calls: 3" in engineering_report
+    assert "- Total cache hits: 1" in engineering_report
+    assert "- Estimated LLM cost: $0.0200" in engineering_report
+    assert "quote_untraceable: 1" in engineering_report
+    assert "_node_spans" not in engineering_report
+
+
 def test_write_benchmark_report_renders_audit_caught_mismatch_summary(tmp_path):
     results = [
         {

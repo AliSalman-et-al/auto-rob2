@@ -877,6 +877,134 @@ def _benchmark_schema_envelope(
     }
 
 
+def _format_cost(value: object) -> str:
+    cost = _coerce_float(value)
+    return f"${cost:.4f}" if cost else "not reported"
+
+
+def _engineering_report(results: list[dict[str, Any]], summary: dict[str, Any]) -> str:
+    fields = [*DOMAINS, "Overall"]
+    diagnostics = summary.get("diagnostics") or {}
+    timing = summary.get("timing") or {}
+    cost = diagnostics.get("cost_metadata") or {}
+    traceability = diagnostics.get("quote_traceability") or {}
+    lines = [
+        "# Engineering Benchmark Report",
+        "",
+        "## Agreement",
+        "",
+        "| Field | Agreement |",
+        "| --- | ---: |",
+    ]
+    for field in fields:
+        counts = summary.get("agreement_counts", {}).get(
+            field, {"matches": 0, "total": 0}
+        )
+        rate = summary.get("agreement_rates", {}).get(field, 0.0) * 100
+        lines.append(
+            f"| {field} | {rate:.1f}% ({counts['matches']}/{counts['total']}) |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Mismatch Diagnostics",
+            "",
+            "| Field | Category | Signals |",
+            "| --- | --- | --- |",
+        ]
+    )
+    mismatch_rows = 0
+    for result in results:
+        classifications = result.get("mismatch_classification") or {}
+        for field in fields:
+            classification = classifications.get(field)
+            if not isinstance(classification, dict):
+                continue
+            category = _strip(classification.get("category")) or "unknown"
+            signals = ", ".join(classification.get("signals") or []) or "-"
+            lines.append(f"| {field} | {category} | {signals} |")
+            mismatch_rows += 1
+    if not mismatch_rows:
+        lines.append("| - | none | - |")
+
+    lines.extend(
+        [
+            "",
+            "## Artifact Status",
+            "",
+            "| Assessment | Artifact | Status | Path |",
+            "| --- | --- | --- | --- |",
+        ]
+    )
+    artifact_rows = 0
+    for result in results:
+        assessment_id = _strip(result.get("id")) or _strip(result.get("trial")) or "-"
+        artifacts = _assessment_artifact_paths(result)
+        if not artifacts:
+            lines.append(f"| {assessment_id} | - | missing | - |")
+            artifact_rows += 1
+            continue
+        for name, path in sorted(artifacts.items()):
+            exists = Path(path).exists() if path else False
+            status = "present" if exists else "referenced"
+            lines.append(f"| {assessment_id} | {name} | {status} | {path or '-'} |")
+            artifact_rows += 1
+    if not artifact_rows:
+        lines.append("| - | - | missing | - |")
+
+    lines.extend(
+        [
+            "",
+            "## Packet Quality",
+            "",
+            "| Assessment | Packet | Status | Grade |",
+            "| --- | --- | --- | --- |",
+        ]
+    )
+    packet_rows = 0
+    for result in results:
+        assessment_id = _strip(result.get("id")) or _strip(result.get("trial")) or "-"
+        for packet_id, packet in _packet_statuses(result.get("packet_quality")).items():
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        assessment_id,
+                        packet_id,
+                        _strip(packet.get("status")) or "unknown",
+                        _strip(packet.get("grade")) or "unknown",
+                    ]
+                )
+                + " |"
+            )
+            packet_rows += 1
+    if not packet_rows:
+        lines.append("| - | - | unknown | unknown |")
+
+    lines.extend(
+        [
+            "",
+            "## Timing, Cache, Model, And Cost Diagnostics",
+            "",
+            f"- Evaluated runs: {timing.get('evaluated_runs', 0)}",
+            f"- Total wall time: {_format_seconds(timing.get('total_wall_ms', 0))}",
+            f"- Total LLM latency: {_format_seconds(timing.get('total_llm_latency_ms', 0))}",
+            f"- Total LLM calls: {timing.get('total_llm_calls', 0)}",
+            f"- Total cache hits: {timing.get('total_llm_cache_hits', 0)}",
+            f"- LLM input tokens: {(diagnostics.get('llm_usage') or {}).get('input_tokens', 0)}",
+            f"- LLM output tokens: {(diagnostics.get('llm_usage') or {}).get('output_tokens', 0)}",
+            f"- Estimated LLM cost: {_format_cost(cost.get('estimated_cost_usd'))}",
+            f"- Parser repairs: {(diagnostics.get('parser_metrics') or {}).get('llm_repairs', 0)}",
+            f"- Parser errors: {(diagnostics.get('parser_metrics') or {}).get('llm_parse_errors', 0)}",
+            f"- Schema validation failures: {(diagnostics.get('parser_metrics') or {}).get('schema_validation_failures', 0)}",
+            f"- quote_untraceable: {traceability.get('quote_untraceable', 0)}",
+            f"- semantic_support_conflict: {traceability.get('semantic_support_conflict', 0)}",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
 def _iter_outcome_map(outcome_map) -> list[tuple[str, str, str]]:
     if isinstance(outcome_map, dict):
         return [(trial, code, "unspecified") for trial, code in outcome_map.items()]
@@ -1804,6 +1932,7 @@ def write_benchmark_report(results, summary, output_path):
     output_path = Path(output_path)
     report_path = output_path.parent / "benchmark_report.md"
     json_path = output_path.parent / "benchmark_results.json"
+    engineering_report_path = output_path.parent / "engineering_report.md"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     json_path.write_text(
@@ -1812,6 +1941,10 @@ def write_benchmark_report(results, summary, output_path):
             indent=2,
             ensure_ascii=False,
         ),
+        encoding="utf-8",
+    )
+    engineering_report_path.write_text(
+        _engineering_report(results, summary),
         encoding="utf-8",
     )
 
