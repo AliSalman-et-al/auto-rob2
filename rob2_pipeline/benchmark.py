@@ -2,6 +2,7 @@ import csv
 import hashlib
 import json
 import logging
+import re
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -15,6 +16,7 @@ from rob2_pipeline.pipeline import run_assessment
 
 LOGGER = logging.getLogger(__name__)
 DOMAINS = ("D1", "D2", "D3", "D4", "D5")
+REFERENCE_FIELDS = {"Trial", *DOMAINS, "Overall Risk"}
 ADJUDICATION_NODE_PREFIX = "sq_support_adjudication"
 OUTCOME_LABELS = {
     "OS": "Overall Survival",
@@ -46,6 +48,41 @@ def _normalize_judgment(value: Any) -> str:
         "high": "High",
     }
     return mapping.get(compact, raw)
+
+
+def _normalize_sq_answer(value: Any) -> str:
+    raw = _strip(value).upper()
+    return raw if raw in {"Y", "PY", "PN", "N", "NI", "NA"} else raw
+
+
+def _sq_id_from_reference_field(field: object) -> str:
+    text = _strip(field)
+    if not text:
+        return ""
+    normalized = text.replace("_", ".")
+    match = re.fullmatch(r"(?i)(?:SQ[\s.]*)?(\d+(?:\.\d+)*)", normalized)
+    return match.group(1) if match else ""
+
+
+def _reference_sq_answers(row: dict[str, Any]) -> dict[str, str]:
+    answers: dict[str, str] = {}
+    for field, value in row.items():
+        if field in REFERENCE_FIELDS:
+            continue
+        sq_id = _sq_id_from_reference_field(field)
+        answer = _normalize_sq_answer(value)
+        if sq_id and answer:
+            answers[sq_id] = answer
+    return answers
+
+
+def _pipeline_sq_answer(sq_answers: object, sq_id: str) -> str:
+    if not isinstance(sq_answers, dict):
+        return ""
+    raw = sq_answers.get(sq_id)
+    if isinstance(raw, dict):
+        return _normalize_sq_answer(raw.get("answer"))
+    return _normalize_sq_answer(raw)
 
 
 def _file_cache_identity(path: Path) -> tuple[str, int, int]:
@@ -504,7 +541,7 @@ def load_reference(csv_path: Path) -> dict[str, dict]:
             trial = _strip(row.get("Trial"))
             if not trial:
                 continue
-            references[trial] = {
+            reference_row = {
                 "D1": _strip(row.get("D1")),
                 "D2": _strip(row.get("D2")),
                 "D3": _strip(row.get("D3")),
@@ -512,6 +549,10 @@ def load_reference(csv_path: Path) -> dict[str, dict]:
                 "D5": _strip(row.get("D5")),
                 "Overall Risk": _strip(row.get("Overall Risk")),
             }
+            sq_answers = _reference_sq_answers(row)
+            if sq_answers:
+                reference_row["sq_answers"] = sq_answers
+            references[trial] = reference_row
     return references
 
 
@@ -526,6 +567,14 @@ def compare_judgments(pipeline: dict, reference: dict) -> dict[str, bool]:
     overall_pipeline = _normalize_judgment(pipeline.get("overall_judgment", ""))
     overall_ref = _normalize_judgment(reference.get("Overall Risk", ""))
     result["Overall"] = overall_pipeline.casefold() == overall_ref.casefold()
+    reference_sq_answers = reference.get("sq_answers") or {}
+    if isinstance(reference_sq_answers, dict) and reference_sq_answers:
+        pipeline_sq_answers = pipeline.get("sq_answers") or {}
+        result["SQ"] = {
+            sq_id: _pipeline_sq_answer(pipeline_sq_answers, sq_id).casefold()
+            == _normalize_sq_answer(reference_answer).casefold()
+            for sq_id, reference_answer in sorted(reference_sq_answers.items())
+        }
     return result
 
 
@@ -851,6 +900,7 @@ def run_benchmark(
             trial_result["pipeline"] = {
                 "domain_judgments": final_domain_judgments,
                 "overall_judgment": final_overall_judgment,
+                "sq_answers": pipeline_output.get("sq_answers") or {},
                 "initial_domain_judgments": initial_domain_judgments,
                 "initial_overall_judgment": initial_overall_judgment,
                 "human_review_priority": pipeline_output.get("human_review_priority"),
@@ -888,6 +938,7 @@ def _empty_confusion() -> dict[str, dict[str, int]]:
 def _summarize_results_subset(results) -> dict:
     fields = [*DOMAINS, "Overall"]
     counts = {field: {"matches": 0, "total": 0} for field in fields}
+    sq_counts: dict[str, dict[str, int]] = {}
     audit_caught = {field: {"caught": 0, "total": 0} for field in fields}
     confusion = {field: _empty_confusion() for field in fields}
 
@@ -913,6 +964,14 @@ def _summarize_results_subset(results) -> dict:
         if "Overall" in comparison:
             counts["Overall"]["total"] += 1
             counts["Overall"]["matches"] += 1 if comparison["Overall"] else 0
+        sq_comparison = comparison.get("SQ") or {}
+        if isinstance(sq_comparison, dict):
+            for sq_id, matched in sq_comparison.items():
+                sq_summary = sq_counts.setdefault(
+                    _strip(sq_id), {"matches": 0, "total": 0}
+                )
+                sq_summary["total"] += 1
+                sq_summary["matches"] += 1 if matched else 0
         overall_ref = _normalize_judgment(reference.get("Overall Risk", ""))
         overall_pred = _normalize_judgment(pipeline.get("overall_judgment", ""))
         if overall_ref in JUDGMENT_ORDER and overall_pred in JUDGMENT_ORDER:
@@ -929,11 +988,19 @@ def _summarize_results_subset(results) -> dict:
     for field, field_counts in counts.items():
         total = field_counts["total"]
         rates[field] = (field_counts["matches"] / total) if total else 0.0
+    sq_rates = {
+        sq_id: (field_counts["matches"] / field_counts["total"])
+        if field_counts["total"]
+        else 0.0
+        for sq_id, field_counts in sorted(sq_counts.items())
+    }
 
     return {
         "evaluated_trials": evaluated_trials,
         "agreement_counts": counts,
         "agreement_rates": rates,
+        "sq_agreement_counts": dict(sorted(sq_counts.items())),
+        "sq_agreement_rates": sq_rates,
         "audit_caught_mismatches": audit_caught,
         "confusion_matrices": confusion,
         "judgment_order": list(JUDGMENT_ORDER),
@@ -1219,6 +1286,23 @@ def write_benchmark_report(results, summary, output_path):
         lines.append(
             f"| {field} | {rate:.1f}% ({counts['matches']}/{counts['total']}) |"
         )
+
+    sq_counts = summary.get("sq_agreement_counts") or {}
+    if sq_counts:
+        lines.extend(
+            [
+                "",
+                "## SQ Agreement",
+                "",
+                "| SQ | Agreement |",
+                "| --- | ---: |",
+            ]
+        )
+        for sq_id, counts in sq_counts.items():
+            rate = summary.get("sq_agreement_rates", {}).get(sq_id, 0.0) * 100
+            lines.append(
+                f"| {sq_id} | {rate:.1f}% ({counts['matches']}/{counts['total']}) |"
+            )
 
     audit_caught = summary.get("audit_caught_mismatches") or {}
     if any(counts.get("total", 0) for counts in audit_caught.values()):

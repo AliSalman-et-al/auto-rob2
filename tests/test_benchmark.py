@@ -130,6 +130,78 @@ def test_compare_judgments_case_and_compact_normalization():
     }
 
 
+def test_load_reference_preserves_optional_gold_sq_labels():
+    csv_text = (
+        "Trial,D1,D2,D3,D4,D5,Overall Risk,SQ 1.1,sq_1_2,2.1\n"
+        " CHAARTED , L , S , L , L , H , Some Concerns , Y , PY , N \n"
+    )
+
+    with patch("pathlib.Path.open", return_value=StringIO(csv_text)):
+        data = load_reference(Path("dummy.csv"))
+
+    assert data["CHAARTED"]["sq_answers"] == {
+        "1.1": "Y",
+        "1.2": "PY",
+        "2.1": "N",
+    }
+
+
+def test_compare_judgments_includes_sq_agreement_only_when_gold_labels_exist():
+    pipeline = {
+        "domain_judgments": {
+            "D1": "Low",
+            "D2": "Low",
+            "D3": "Low",
+            "D4": "Low",
+            "D5": "Low",
+        },
+        "overall_judgment": "Low",
+        "sq_answers": {
+            "1.1": {"answer": "Y"},
+            "1.2": {"answer": "N"},
+            "2.1": {"answer": "PY"},
+        },
+    }
+    reference = {
+        "D1": "Low",
+        "D2": "Low",
+        "D3": "Low",
+        "D4": "Low",
+        "D5": "Low",
+        "Overall Risk": "Low",
+        "sq_answers": {"1.1": "Y", "1.2": "PY"},
+    }
+
+    comparison = compare_judgments(pipeline, reference)
+
+    assert comparison["SQ"] == {"1.1": True, "1.2": False}
+    assert "2.1" not in comparison["SQ"]
+
+
+def test_compare_judgments_omits_sq_agreement_without_gold_labels():
+    pipeline = {
+        "domain_judgments": {
+            "D1": "Low",
+            "D2": "Low",
+            "D3": "Low",
+            "D4": "Low",
+            "D5": "Low",
+        },
+        "overall_judgment": "Low",
+        "sq_answers": {"1.1": {"answer": "Y"}},
+    }
+    reference = {
+        "D1": "Low",
+        "D2": "Low",
+        "D3": "Low",
+        "D4": "Low",
+        "D5": "Low",
+        "Overall Risk": "Low",
+    }
+
+    assert "SQ" not in compare_judgments(pipeline, reference)
+
+
 def test_run_benchmark_scores_final_judgments_and_records_adjudication_metrics(
     tmp_path, monkeypatch
 ):
@@ -552,6 +624,135 @@ def test_summarize_benchmark_agreement_and_confusion_dicts():
     assert summary["confusion_matrices"]["D1"]["Low"]["Low"] == 1
     assert summary["confusion_matrices"]["D1"]["Low"]["High"] == 1
     assert summary["confusion_matrices"]["Overall"]["Low"]["High"] == 1
+
+
+def test_summarize_benchmark_counts_optional_sq_agreement():
+    results = [
+        {
+            "trial": "A",
+            "skipped": False,
+            "error": None,
+            "comparison": {
+                "D1": True,
+                "D2": True,
+                "D3": True,
+                "D4": True,
+                "D5": True,
+                "Overall": True,
+                "SQ": {"1.1": True, "1.2": False},
+            },
+            "reference": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+                "Overall Risk": "Low",
+                "sq_answers": {"1.1": "Y", "1.2": "PY"},
+            },
+            "pipeline": {
+                "domain_judgments": {
+                    "D1": "Low",
+                    "D2": "Low",
+                    "D3": "Low",
+                    "D4": "Low",
+                    "D5": "Low",
+                },
+                "overall_judgment": "Low",
+                "sq_answers": {"1.1": {"answer": "Y"}, "1.2": {"answer": "N"}},
+            },
+        },
+        {
+            "trial": "B",
+            "skipped": False,
+            "error": None,
+            "comparison": {
+                "D1": True,
+                "D2": True,
+                "D3": True,
+                "D4": True,
+                "D5": True,
+                "Overall": True,
+            },
+            "reference": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+                "Overall Risk": "Low",
+            },
+            "pipeline": {
+                "domain_judgments": {
+                    "D1": "Low",
+                    "D2": "Low",
+                    "D3": "Low",
+                    "D4": "Low",
+                    "D5": "Low",
+                },
+                "overall_judgment": "Low",
+            },
+        },
+    ]
+
+    summary = summarize_benchmark(results)
+
+    assert summary["sq_agreement_counts"] == {
+        "1.1": {"matches": 1, "total": 1},
+        "1.2": {"matches": 0, "total": 1},
+    }
+    assert summary["sq_agreement_rates"] == {"1.1": 1.0, "1.2": 0.0}
+
+
+def test_write_benchmark_report_renders_optional_sq_agreement(tmp_path):
+    results = [
+        {
+            "id": "A:OS",
+            "trial": "A",
+            "outcome": "Outcome A",
+            "cohort": "unspecified",
+            "skipped": False,
+            "error": None,
+            "notes": "",
+            "comparison": {
+                "D1": True,
+                "D2": True,
+                "D3": True,
+                "D4": True,
+                "D5": True,
+                "Overall": True,
+                "SQ": {"1.1": True, "1.2": False},
+            },
+            "reference": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+                "Overall Risk": "Low",
+                "sq_answers": {"1.1": "Y", "1.2": "PY"},
+            },
+            "pipeline": {
+                "domain_judgments": {
+                    "D1": "Low",
+                    "D2": "Low",
+                    "D3": "Low",
+                    "D4": "Low",
+                    "D5": "Low",
+                },
+                "overall_judgment": "Low",
+                "sq_answers": {"1.1": {"answer": "Y"}, "1.2": {"answer": "N"}},
+            },
+        }
+    ]
+    summary = summarize_benchmark(results)
+
+    write_benchmark_report(results, summary, tmp_path / "benchmark_report.md")
+
+    report = (tmp_path / "benchmark_report.md").read_text(encoding="utf-8")
+    assert "## SQ Agreement" in report
+    assert "| 1.1 | 100.0% (1/1) |" in report
+    assert "| 1.2 | 0.0% (0/1) |" in report
 
 
 def test_summarize_benchmark_counts_audit_caught_label_mismatches():
