@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from rob2_pipeline.benchmark import (
     _required_supplement_failures,
+    classify_mismatches,
     compare_judgments,
     find_supplements_for_trial,
     load_reference,
@@ -1597,6 +1598,151 @@ def test_write_benchmark_report_renders_audit_caught_mismatch_summary(tmp_path):
     assert "## Audit-Caught Mismatches" in report
     assert "| D1 | 100.0% (1/1) |" in report
     assert "| Overall | 100.0% (1/1) |" in report
+
+
+def test_benchmark_report_emits_deterministic_mismatch_classification(tmp_path):
+    results = [
+        {
+            "id": "A:OS",
+            "trial": "A",
+            "outcome": "Outcome A",
+            "cohort": "unspecified",
+            "skipped": False,
+            "error": None,
+            "notes": "",
+            "comparison": {
+                "D1": False,
+                "D2": False,
+                "D3": False,
+                "D4": False,
+                "D5": False,
+                "Overall": False,
+            },
+            "reference": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+                "Overall Risk": "Low",
+            },
+            "pipeline": {
+                "domain_judgments": {
+                    "D1": "High",
+                    "D2": "High",
+                    "D3": "High",
+                    "D4": "High",
+                    "D5": "High",
+                },
+                "overall_judgment": "High",
+                "sq_answers": {
+                    "1.1": {"answer": "NI", "support_level": "weak", "quote": ""},
+                    "2.1": {"answer": "Y", "support_level": "strong", "quote": "x"},
+                    "3.1": {"answer": "Y", "support_level": "strong", "quote": "x"},
+                    "4.1": {"answer": "Y", "support_level": "strong", "quote": "x"},
+                    "5.1": {"answer": "Y", "support_level": "strong", "quote": "x"},
+                },
+            },
+            "packet_quality": {
+                "D2": {
+                    "packet_grade": "insufficient",
+                    "missing_evidence": ["allocation"],
+                },
+            },
+            "schema_failures": [{"domain": "D1", "error": "schema"}],
+            "audit_caught_mismatches": {"Overall": True},
+            "mismatch_classification": {
+                "D1": {"category": "parse", "signals": ["schema_failure"]},
+                "D2": {"category": "packet", "signals": ["packet_grade:insufficient"]},
+                "D3": {"category": "retrieval", "signals": ["quote_missing"]},
+                "D4": {"category": "SQ", "signals": ["support_level:weak"]},
+                "D5": {"category": "judge", "signals": ["judge_signal"]},
+                "Overall": {
+                    "category": "reference_ambiguity",
+                    "signals": ["audit_caught_mismatch"],
+                },
+            },
+        },
+        {
+            "id": "B:OS",
+            "trial": "B",
+            "outcome": "Outcome B",
+            "cohort": "unspecified",
+            "skipped": False,
+            "error": "Required supplements not found",
+            "notes": "Required supplements not found",
+            "comparison": {},
+            "mismatch_classification": {
+                "Overall": {
+                    "category": "blocked_incomplete",
+                    "signals": ["assessment_error"],
+                }
+            },
+        },
+    ]
+    summary = summarize_benchmark(results)
+
+    write_benchmark_report(results, summary, tmp_path / "benchmark_report.md")
+
+    benchmark_json = json.loads(
+        (tmp_path / "benchmark_results.json").read_text(encoding="utf-8")
+    )
+    categories = benchmark_json["aggregate"]["mismatch_classification"]["categories"]
+    assert set(categories) >= {
+        "parse",
+        "retrieval",
+        "packet",
+        "SQ",
+        "judge",
+        "reference_ambiguity",
+        "blocked_incomplete",
+    }
+    assert benchmark_json["assessments"][0]["diagnostics"]["mismatch_classification"][
+        "D1"
+    ] == {"category": "parse", "signals": ["schema_failure"]}
+
+    report = (tmp_path / "benchmark_report.md").read_text(encoding="utf-8")
+    assert "## Mismatch Classification" in report
+    assert "| parse | 1 |" in report
+
+
+def test_classify_mismatches_uses_existing_audit_signals_without_diagnosis_agent():
+    result = {
+        "comparison": {
+            "D1": False,
+            "D2": False,
+            "D3": False,
+            "D4": False,
+            "D5": False,
+            "Overall": False,
+        },
+        "schema_failures": [{"domain": "D1", "error": "invalid xml"}],
+        "packet_quality": {
+            "D2": {"packet_grade": "insufficient"},
+            "D3": {"retrieval_confidence": "low"},
+        },
+        "pipeline": {
+            "sq_answers": {
+                "4.1": {"answer": "PY", "support_level": "weak", "quote": "x"},
+                "5.1": {"answer": "Y", "support_level": "strong", "quote": "x"},
+            }
+        },
+        "audit_caught_mismatches": {"Overall": True},
+    }
+
+    classifications = classify_mismatches(result)
+
+    assert classifications == {
+        "D1": {"category": "parse", "signals": ["schema_failure"]},
+        "D2": {"category": "packet", "signals": ["packet_grade:insufficient"]},
+        "D3": {"category": "retrieval", "signals": ["retrieval_confidence:low"]},
+        "D4": {"category": "SQ", "signals": ["support_level:weak"]},
+        "D5": {"category": "judge", "signals": ["judgment_label_mismatch"]},
+        "Overall": {
+            "category": "reference_ambiguity",
+            "signals": ["audit_caught_mismatch"],
+        },
+    }
 
 
 def test_find_supplements_for_trial_handles_spaces_and_case(tmp_path):

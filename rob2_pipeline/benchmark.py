@@ -24,6 +24,15 @@ OUTCOME_LABELS = {
     "AE": "Adverse Events",
 }
 JUDGMENT_ORDER = ("Low", "Some concerns", "High")
+MISMATCH_CATEGORIES = (
+    "parse",
+    "retrieval",
+    "packet",
+    "SQ",
+    "judge",
+    "reference_ambiguity",
+    "blocked_incomplete",
+)
 
 
 def _strip(value: Any) -> str:
@@ -468,6 +477,7 @@ def _benchmark_assessment_record(result: dict[str, Any]) -> dict[str, Any]:
         "artifacts": _assessment_artifact_paths(result),
         "diagnostics": {
             "timing": timing,
+            "mismatch_classification": result.get("mismatch_classification") or {},
             "parser_metrics": _parser_metrics_from_timing(timing),
             "cache_reuse": {
                 "llm_cache_hits": _coerce_int_ms(timing.get("llm_cache_hits")),
@@ -499,6 +509,7 @@ def _benchmark_schema_envelope(
                 "classification": "engineering_only",
                 "fields": [
                     "timing",
+                    "mismatch_classification",
                     "parser_metrics",
                     "cache_reuse",
                     "llm_latency",
@@ -723,6 +734,127 @@ def _audit_caught_mismatches(
     return caught
 
 
+def _domain_for_sq_id(sq_id: object) -> str:
+    text = _strip(sq_id)
+    if not text:
+        return ""
+    prefix = text.split(".", 1)[0]
+    return f"D{prefix}" if prefix in {"1", "2", "3", "4", "5"} else ""
+
+
+def _schema_failure_domains(schema_failures: object) -> set[str]:
+    domains = set()
+    if not isinstance(schema_failures, list):
+        return domains
+    for failure in schema_failures:
+        if not isinstance(failure, dict):
+            continue
+        domain = _strip(failure.get("domain")).upper()
+        node = _strip(failure.get("node")).casefold()
+        if domain in DOMAINS:
+            domains.add(domain)
+            continue
+        for candidate in DOMAINS:
+            if candidate.casefold() in node:
+                domains.add(candidate)
+    return domains
+
+
+def _packet_signals(packet: object) -> list[str]:
+    if not isinstance(packet, dict):
+        return []
+    signals = []
+    grade = _strip(packet.get("packet_grade") or packet.get("grade")).casefold()
+    if grade in {"insufficient", "weak", "missing", "failed"}:
+        signals.append(f"packet_grade:{grade}")
+    if packet.get("missing_evidence"):
+        signals.append("missing_evidence")
+    if packet.get("negative_flags"):
+        signals.append("negative_flags")
+    confidence = _strip(packet.get("retrieval_confidence")).casefold()
+    if confidence in {"low", "none"}:
+        signals.append(f"retrieval_confidence:{confidence}")
+    return signals
+
+
+def _sq_signals_for_domain(pipeline: dict[str, Any], domain: str) -> list[str]:
+    signals = []
+    sq_answers = pipeline.get("sq_answers") or {}
+    if not isinstance(sq_answers, dict):
+        return signals
+    for sq_id, answer in sq_answers.items():
+        if _domain_for_sq_id(sq_id) != domain or not isinstance(answer, dict):
+            continue
+        support = _support_level(answer)
+        answer_code = _normalize_sq_answer(answer.get("answer"))
+        quote = _strip(answer.get("quote"))
+        if support in {"weak", "unsupported"}:
+            signals.append(f"support_level:{support}")
+        if answer_code == "NI":
+            signals.append("answer:NI")
+        if not quote:
+            signals.append("quote_missing")
+        if answer.get("uncertain") or answer.get("uncertainty"):
+            signals.append("uncertainty_flag")
+    return signals
+
+
+def _classify_domain_mismatch(
+    result: dict[str, Any],
+    field: str,
+    schema_failure_domains: set[str],
+) -> dict[str, Any] | None:
+    if result.get("error") or result.get("skipped"):
+        return {"category": "blocked_incomplete", "signals": ["assessment_error"]}
+
+    comparison = result.get("comparison") or {}
+    if comparison.get(field) is not False:
+        return None
+
+    audit_caught = result.get("audit_caught_mismatches") or {}
+    if audit_caught.get(field):
+        return {
+            "category": "reference_ambiguity",
+            "signals": ["audit_caught_mismatch"],
+        }
+
+    if field in schema_failure_domains:
+        return {"category": "parse", "signals": ["schema_failure"]}
+
+    packet_signals = _packet_signals((result.get("packet_quality") or {}).get(field))
+    if packet_signals:
+        category = (
+            "retrieval"
+            if any(
+                signal.startswith("retrieval_confidence") for signal in packet_signals
+            )
+            else "packet"
+        )
+        return {"category": category, "signals": packet_signals}
+
+    sq_signals = _sq_signals_for_domain(result.get("pipeline") or {}, field)
+    if any(signal == "quote_missing" for signal in sq_signals):
+        return {"category": "retrieval", "signals": sq_signals}
+    if sq_signals:
+        return {"category": "SQ", "signals": sq_signals}
+
+    return {"category": "judge", "signals": ["judgment_label_mismatch"]}
+
+
+def classify_mismatches(result: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    schema_failure_domains = _schema_failure_domains(result.get("schema_failures"))
+    classifications: dict[str, dict[str, Any]] = {}
+    for field in [*DOMAINS, "Overall"]:
+        classification = _classify_domain_mismatch(
+            result,
+            field,
+            schema_failure_domains,
+        )
+        if classification:
+            classifications[field] = classification
+    return classifications
+
+
 def run_benchmark(
     pdf_dir,
     reference_csvs,
@@ -823,6 +955,7 @@ def run_benchmark(
                 0,
             )
             trial_result["timing"]["trace_error"] = "assessment not run"
+            trial_result["mismatch_classification"] = classify_mismatches(trial_result)
             results.append(trial_result)
             continue
 
@@ -861,6 +994,7 @@ def run_benchmark(
             trial_result["error"] = str(exc)
             trial_result["notes"] = str(exc)
             trial_result["comparison"] = {}
+            trial_result["mismatch_classification"] = classify_mismatches(trial_result)
             LOGGER.exception("run_assessment failed for trial %s", trial_name)
         finally:
             total_wall_ms = int((time.perf_counter() - start_wall) * 1000)
@@ -920,10 +1054,12 @@ def run_benchmark(
                 _audit_limited_domains(pipeline_output),
                 pipeline_output.get("human_review_priority"),
             )
+            trial_result["mismatch_classification"] = classify_mismatches(trial_result)
         except Exception as exc:  # noqa: BLE001
             trial_result["error"] = str(exc)
             trial_result["notes"] = str(exc)
             trial_result["comparison"] = {}
+            trial_result["mismatch_classification"] = classify_mismatches(trial_result)
             LOGGER.exception("run_assessment failed for trial %s", trial_name)
 
         results.append(trial_result)
@@ -940,10 +1076,19 @@ def _summarize_results_subset(results) -> dict:
     counts = {field: {"matches": 0, "total": 0} for field in fields}
     sq_counts: dict[str, dict[str, int]] = {}
     audit_caught = {field: {"caught": 0, "total": 0} for field in fields}
+    mismatch_categories = {category: 0 for category in MISMATCH_CATEGORIES}
     confusion = {field: _empty_confusion() for field in fields}
 
     evaluated_trials = 0
     for result in results:
+        for classification in (result.get("mismatch_classification") or {}).values():
+            if not isinstance(classification, dict):
+                continue
+            category = _strip(classification.get("category"))
+            if category:
+                mismatch_categories.setdefault(category, 0)
+                mismatch_categories[category] += 1
+
         if result.get("error") or result.get("skipped"):
             continue
         comparison = result.get("comparison") or {}
@@ -1002,6 +1147,7 @@ def _summarize_results_subset(results) -> dict:
         "sq_agreement_counts": dict(sorted(sq_counts.items())),
         "sq_agreement_rates": sq_rates,
         "audit_caught_mismatches": audit_caught,
+        "mismatch_classification": {"categories": mismatch_categories},
         "confusion_matrices": confusion,
         "judgment_order": list(JUDGMENT_ORDER),
     }
@@ -1321,6 +1467,22 @@ def write_benchmark_report(results, summary, output_path):
             caught = counts.get("caught", 0)
             rate = (caught / total * 100) if total else 0.0
             lines.append(f"| {field} | {rate:.1f}% ({caught}/{total}) |")
+
+    mismatch_categories = (summary.get("mismatch_classification") or {}).get(
+        "categories"
+    ) or {}
+    if any(mismatch_categories.values()):
+        lines.extend(
+            [
+                "",
+                "## Mismatch Classification",
+                "",
+                "| Category | Count |",
+                "| --- | ---: |",
+            ]
+        )
+        for category in MISMATCH_CATEGORIES:
+            lines.append(f"| {category} | {mismatch_categories.get(category, 0)} |")
 
     if has_meaningful_cohort and summary.get("cohorts"):
         lines.extend(
