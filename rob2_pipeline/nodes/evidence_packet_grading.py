@@ -110,6 +110,8 @@ def source_to_fact(
         "source_path": source.get("source_path", ""),
         "source_section": source.get("section", ""),
         "page_numbers": source.get("page_numbers", []),
+        "retrieval_date": source.get("retrieval_date", ""),
+        "api_response_hash": source.get("api_response_hash", ""),
     }
     return EvidenceFact(
         artifact_id=f"evidence-fact:{contract.domain}:{contract.sq_id}:{slug(contract.required_evidence[0] if contract.required_evidence else 'evidence')}",
@@ -132,6 +134,8 @@ def source_to_fact(
         document_role=source.get("document_role", ""),
         source_kind=source.get("source_kind", ""),
         source_path=source.get("source_path", ""),
+        retrieval_date=source.get("retrieval_date", ""),
+        api_response_hash=source.get("api_response_hash", ""),
         provenance=provenance,
     )
 

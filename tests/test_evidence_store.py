@@ -141,6 +141,41 @@ def test_prespecification_facts_require_structured_artifact_and_analysis_fields(
         )
 
 
+def test_registry_prespecification_fact_accepts_snapshot_provenance():
+    fact = EvidenceFactRecord.model_validate(
+        _valid_fact(
+            artifact_id="evidence-fact:d5:5.1:nct-prespecified-os",
+            fact_type="prespecified_analysis",
+            domain="d5",
+            sq_ids=["5.1"],
+            claim_type="registry",
+            claim="Overall survival was prespecified in the registry.",
+            quote="PRIMARY: Overall Survival",
+            family="prespecification",
+            family_fields={
+                "artifact_type": "registry",
+                "identifier": "NCT00309985",
+                "prespecified_outcome": "Overall Survival",
+                "prespecified_analysis": "Cox proportional hazards model",
+            },
+            provenance={
+                "document_id": "registry:NCT00309985",
+                "document_name": "ClinicalTrials.gov NCT00309985",
+                "document_role": "registry",
+                "source_kind": "ctgov",
+                "source_path": "https://clinicaltrials.gov/study/NCT00309985",
+                "source_section": "ClinicalTrials.gov",
+                "page_numbers": [],
+                "retrieval_date": "2026-06-03",
+                "api_response_hash": "a" * 64,
+            },
+        )
+    )
+
+    assert fact.provenance.retrieval_date == "2026-06-03"
+    assert fact.provenance.api_response_hash == "a" * 64
+
+
 def test_supported_evidence_fact_rejects_missing_quote_or_provenance():
     with pytest.raises(ValidationError):
         EvidenceFactRecord.model_validate(_valid_fact(quote=""))

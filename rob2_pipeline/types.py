@@ -36,6 +36,8 @@ class SourceDocument(TypedDict, total=False):
     is_primary: bool
     status: str
     error: str
+    retrieval_date: str
+    api_response_hash: str
 
 
 class ParseArtifact(TypedDict, total=False):
@@ -84,6 +86,8 @@ class PacketSource(TypedDict, total=False):
     document_name: str
     document_role: str
     source_path: str
+    retrieval_date: str
+    api_response_hash: str
 
 
 class EvidenceFact(TypedDict, total=False):
@@ -107,6 +111,8 @@ class EvidenceFact(TypedDict, total=False):
     document_role: str
     source_kind: str
     source_path: str
+    retrieval_date: str
+    api_response_hash: str
     provenance: dict
     family: str
     family_fields: dict

@@ -55,6 +55,8 @@ class EvidenceProvenance(BaseModel):
     source_path: str = Field(min_length=1)
     source_section: str = Field(min_length=1)
     page_numbers: list[int] = Field(default_factory=list)
+    retrieval_date: str = ""
+    api_response_hash: str = ""
 
 
 class EvidenceFactRecord(BaseModel):
@@ -238,6 +240,8 @@ def _selected_zones(packet: dict, max_sources: int) -> list[dict]:
                     "source_path": source.get("source_path") or "unknown",
                     "source_section": source.get("section") or "Unknown",
                     "page_numbers": source.get("page_numbers", []),
+                    "retrieval_date": source.get("retrieval_date", ""),
+                    "api_response_hash": source.get("api_response_hash", ""),
                 },
             }
         )

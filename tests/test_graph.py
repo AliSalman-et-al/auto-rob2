@@ -768,6 +768,26 @@ def test_preliminary_node_populates_ctgov_fields(monkeypatch):
     assert "RANDOMIZED" in result.get("ctgov_design", "")
     assert "PRIMARY" in result.get("ctgov_description", "")
     assert "STARTED" in result.get("ctgov_flow", "")
+    registry_sources = [
+        source
+        for source in result.get("source_documents", [])
+        if source.get("document_role") == "registry"
+    ]
+    assert registry_sources == [
+        {
+            "document_id": "registry:NCT00309985",
+            "document_name": "ClinicalTrials.gov NCT00309985",
+            "document_role": "registry",
+            "source_kind": "ctgov",
+            "path": "https://clinicaltrials.gov/study/NCT00309985",
+            "is_primary": False,
+            "status": "parsed",
+            "retrieval_date": registry_sources[0]["retrieval_date"],
+            "api_response_hash": registry_sources[0]["api_response_hash"],
+        }
+    ]
+    assert registry_sources[0]["retrieval_date"]
+    assert len(registry_sources[0]["api_response_hash"]) == 64
 
 
 def test_preliminary_node_surfaces_matching_secondary_endpoint(monkeypatch):

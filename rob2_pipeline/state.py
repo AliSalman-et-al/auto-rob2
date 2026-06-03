@@ -71,6 +71,7 @@ class RoB2State(TypedDict, total=False):
     ctgov_design: Annotated[str, take_latest]
     ctgov_description: Annotated[str, take_latest]
     ctgov_flow: Annotated[str, take_latest]
+    ctgov_registry_document: Annotated[SourceDocument, take_latest]
     n_randomized: Annotated[str, take_latest]
     sources_consulted: Annotated[list[str], take_latest]
     trial_facts: Annotated[TrialFacts, take_latest]
