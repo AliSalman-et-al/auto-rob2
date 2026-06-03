@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from rob2_pipeline.benchmark import (
     _required_supplement_failures,
+    classify_mismatches,
     compare_judgments,
     find_supplements_for_trial,
     load_reference,
@@ -128,6 +129,78 @@ def test_compare_judgments_case_and_compact_normalization():
         "D5": True,
         "Overall": True,
     }
+
+
+def test_load_reference_preserves_optional_gold_sq_labels():
+    csv_text = (
+        "Trial,D1,D2,D3,D4,D5,Overall Risk,SQ 1.1,sq_1_2,2.1\n"
+        " CHAARTED , L , S , L , L , H , Some Concerns , Y , PY , N \n"
+    )
+
+    with patch("pathlib.Path.open", return_value=StringIO(csv_text)):
+        data = load_reference(Path("dummy.csv"))
+
+    assert data["CHAARTED"]["sq_answers"] == {
+        "1.1": "Y",
+        "1.2": "PY",
+        "2.1": "N",
+    }
+
+
+def test_compare_judgments_includes_sq_agreement_only_when_gold_labels_exist():
+    pipeline = {
+        "domain_judgments": {
+            "D1": "Low",
+            "D2": "Low",
+            "D3": "Low",
+            "D4": "Low",
+            "D5": "Low",
+        },
+        "overall_judgment": "Low",
+        "sq_answers": {
+            "1.1": {"answer": "Y"},
+            "1.2": {"answer": "N"},
+            "2.1": {"answer": "PY"},
+        },
+    }
+    reference = {
+        "D1": "Low",
+        "D2": "Low",
+        "D3": "Low",
+        "D4": "Low",
+        "D5": "Low",
+        "Overall Risk": "Low",
+        "sq_answers": {"1.1": "Y", "1.2": "PY"},
+    }
+
+    comparison = compare_judgments(pipeline, reference)
+
+    assert comparison["SQ"] == {"1.1": True, "1.2": False}
+    assert "2.1" not in comparison["SQ"]
+
+
+def test_compare_judgments_omits_sq_agreement_without_gold_labels():
+    pipeline = {
+        "domain_judgments": {
+            "D1": "Low",
+            "D2": "Low",
+            "D3": "Low",
+            "D4": "Low",
+            "D5": "Low",
+        },
+        "overall_judgment": "Low",
+        "sq_answers": {"1.1": {"answer": "Y"}},
+    }
+    reference = {
+        "D1": "Low",
+        "D2": "Low",
+        "D3": "Low",
+        "D4": "Low",
+        "D5": "Low",
+        "Overall Risk": "Low",
+    }
+
+    assert "SQ" not in compare_judgments(pipeline, reference)
 
 
 def test_run_benchmark_scores_final_judgments_and_records_adjudication_metrics(
@@ -477,6 +550,125 @@ def test_run_benchmark_reuses_trial_artifacts_across_outcomes(tmp_path, monkeypa
     assert calls[1]["trial_retrieval_indexes"]
 
 
+def test_run_benchmark_scores_gold_evidence_fixtures_when_present(
+    tmp_path, monkeypatch
+):
+    pdf_dir = tmp_path / "benchmark"
+    pdf_dir.mkdir()
+    (pdf_dir / "TITAN.pdf").write_bytes(b"pdf")
+    reference_csv = tmp_path / "ref.csv"
+    reference_csv.write_text(
+        "Trial,D1,D2,D3,D4,D5,Overall Risk\nTITAN,Low,Low,Low,Low,Low,Low\n",
+        encoding="utf-8",
+    )
+    gold_evidence = tmp_path / "gold_evidence.json"
+    gold_evidence.write_text(
+        json.dumps(
+            {
+                "TITAN": {
+                    "OS": {
+                        "1.1": [
+                            {"page": 3, "snippet": "randomized centrally"},
+                            {"page": 4, "snippet": "permuted blocks"},
+                        ],
+                        "3.1": [{"page": 8, "snippet": "data were available"}],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_run_assessment(**kwargs):
+        assessment_dir = Path(kwargs["output_dir"])
+        assessment_dir.mkdir(parents=True)
+        (assessment_dir / "TITAN_rob2_data.json").write_text(
+            json.dumps(
+                {
+                    "domain_judgments": {
+                        "D1": "Low",
+                        "D2": "Low",
+                        "D3": "Low",
+                        "D4": "Low",
+                        "D5": "Low",
+                    },
+                    "overall_judgment": "Low",
+                    "rag_sources": {
+                        "D1": [
+                            {
+                                "page_numbers": [3],
+                                "text": "Trial participants were randomized centrally.",
+                            }
+                        ],
+                        "D3": [
+                            {
+                                "page_numbers": [8],
+                                "text": "Outcome data were available for most participants.",
+                            }
+                        ],
+                    },
+                    "evidence_packets": {
+                        "1.1": {
+                            "sources": [
+                                {
+                                    "page_numbers": [3],
+                                    "text": "Trial participants were randomized centrally.",
+                                }
+                            ]
+                        },
+                        "3.1": {"sources": []},
+                    },
+                    "source_documents": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr("rob2_pipeline.benchmark.run_assessment", fake_run_assessment)
+
+    results = run_benchmark(
+        pdf_dir=pdf_dir,
+        reference_csvs={"OS": reference_csv},
+        outcome_map=[
+            {"trial": "TITAN", "outcome_code": "OS"},
+            {"trial": "MISSING", "outcome_code": "OS"},
+        ],
+        output_dir=tmp_path / "out",
+        gold_evidence_path=gold_evidence,
+    )
+    summary = summarize_benchmark(results)
+    write_benchmark_report(results, summary, tmp_path / "out" / "benchmark_report.md")
+    benchmark_json = json.loads(
+        (tmp_path / "out" / "benchmark_results.json").read_text(encoding="utf-8")
+    )
+
+    assert results[0]["gold_evidence"]["fixture_found"] is True
+    assert results[0]["gold_evidence"]["retrieval_recall"] == {
+        "matched": 2,
+        "total": 3,
+        "rate": 2 / 3,
+    }
+    assert results[0]["gold_evidence"]["packet_evidence_recall"] == {
+        "matched": 1,
+        "total": 3,
+        "rate": 1 / 3,
+    }
+    assert results[1]["skipped"] is True
+    assert summary["gold_evidence"]["retrieval_recall"] == {
+        "matched": 2,
+        "total": 3,
+        "rate": 2 / 3,
+    }
+    assert benchmark_json["assessments"][0]["gold_evidence"][
+        "packet_evidence_recall"
+    ] == {"matched": 1, "total": 3, "rate": 1 / 3}
+    assert benchmark_json["aggregate"]["gold_evidence"]["fixtures_evaluated"] == 1
+    report = (tmp_path / "out" / "benchmark_report.md").read_text(encoding="utf-8")
+    assert "## Gold Evidence Recall" in report
+    assert "| Retrieval | 66.7% (2/3) |" in report
+    assert "| Packet evidence | 33.3% (1/3) |" in report
+
+
 def test_summarize_benchmark_agreement_and_confusion_dicts():
     results = [
         {
@@ -552,6 +744,135 @@ def test_summarize_benchmark_agreement_and_confusion_dicts():
     assert summary["confusion_matrices"]["D1"]["Low"]["Low"] == 1
     assert summary["confusion_matrices"]["D1"]["Low"]["High"] == 1
     assert summary["confusion_matrices"]["Overall"]["Low"]["High"] == 1
+
+
+def test_summarize_benchmark_counts_optional_sq_agreement():
+    results = [
+        {
+            "trial": "A",
+            "skipped": False,
+            "error": None,
+            "comparison": {
+                "D1": True,
+                "D2": True,
+                "D3": True,
+                "D4": True,
+                "D5": True,
+                "Overall": True,
+                "SQ": {"1.1": True, "1.2": False},
+            },
+            "reference": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+                "Overall Risk": "Low",
+                "sq_answers": {"1.1": "Y", "1.2": "PY"},
+            },
+            "pipeline": {
+                "domain_judgments": {
+                    "D1": "Low",
+                    "D2": "Low",
+                    "D3": "Low",
+                    "D4": "Low",
+                    "D5": "Low",
+                },
+                "overall_judgment": "Low",
+                "sq_answers": {"1.1": {"answer": "Y"}, "1.2": {"answer": "N"}},
+            },
+        },
+        {
+            "trial": "B",
+            "skipped": False,
+            "error": None,
+            "comparison": {
+                "D1": True,
+                "D2": True,
+                "D3": True,
+                "D4": True,
+                "D5": True,
+                "Overall": True,
+            },
+            "reference": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+                "Overall Risk": "Low",
+            },
+            "pipeline": {
+                "domain_judgments": {
+                    "D1": "Low",
+                    "D2": "Low",
+                    "D3": "Low",
+                    "D4": "Low",
+                    "D5": "Low",
+                },
+                "overall_judgment": "Low",
+            },
+        },
+    ]
+
+    summary = summarize_benchmark(results)
+
+    assert summary["sq_agreement_counts"] == {
+        "1.1": {"matches": 1, "total": 1},
+        "1.2": {"matches": 0, "total": 1},
+    }
+    assert summary["sq_agreement_rates"] == {"1.1": 1.0, "1.2": 0.0}
+
+
+def test_write_benchmark_report_renders_optional_sq_agreement(tmp_path):
+    results = [
+        {
+            "id": "A:OS",
+            "trial": "A",
+            "outcome": "Outcome A",
+            "cohort": "unspecified",
+            "skipped": False,
+            "error": None,
+            "notes": "",
+            "comparison": {
+                "D1": True,
+                "D2": True,
+                "D3": True,
+                "D4": True,
+                "D5": True,
+                "Overall": True,
+                "SQ": {"1.1": True, "1.2": False},
+            },
+            "reference": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+                "Overall Risk": "Low",
+                "sq_answers": {"1.1": "Y", "1.2": "PY"},
+            },
+            "pipeline": {
+                "domain_judgments": {
+                    "D1": "Low",
+                    "D2": "Low",
+                    "D3": "Low",
+                    "D4": "Low",
+                    "D5": "Low",
+                },
+                "overall_judgment": "Low",
+                "sq_answers": {"1.1": {"answer": "Y"}, "1.2": {"answer": "N"}},
+            },
+        }
+    ]
+    summary = summarize_benchmark(results)
+
+    write_benchmark_report(results, summary, tmp_path / "benchmark_report.md")
+
+    report = (tmp_path / "benchmark_report.md").read_text(encoding="utf-8")
+    assert "## SQ Agreement" in report
+    assert "| 1.1 | 100.0% (1/1) |" in report
+    assert "| 1.2 | 0.0% (0/1) |" in report
 
 
 def test_summarize_benchmark_counts_audit_caught_label_mismatches():
@@ -1146,6 +1467,203 @@ def test_write_benchmark_report_renders_timing_summary(tmp_path):
     assert "node_spans" not in json.dumps(benchmark_json["summary"])
 
 
+def test_write_benchmark_report_emits_machine_readable_schema(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    primary_pdf = workspace / "TITAN.pdf"
+    primary_pdf.write_bytes(b"primary pdf")
+    assessment_dir = tmp_path / "out" / "TITAN_os"
+    assessment_dir.mkdir(parents=True)
+    assessment_json = assessment_dir / "TITAN_rob2_data.json"
+    assessment_json.write_text('{"overall_judgment": "Low"}', encoding="utf-8")
+
+    results = [
+        {
+            "id": "TITAN:OS",
+            "trial": "TITAN",
+            "outcome_code": "OS",
+            "outcome": "Overall Survival",
+            "cohort": "calibration",
+            "pdf_path": str(primary_pdf),
+            "assessment_output_dir": str(assessment_dir),
+            "assessment_artifacts": {
+                "rob2_data_json": str(assessment_json),
+            },
+            "skipped": False,
+            "error": None,
+            "notes": "",
+            "comparison": {
+                "D1": True,
+                "D2": True,
+                "D3": True,
+                "D4": True,
+                "D5": True,
+                "Overall": True,
+            },
+            "reference": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+                "Overall Risk": "Low",
+            },
+            "pipeline": {
+                "domain_judgments": {
+                    "D1": "Low",
+                    "D2": "Low",
+                    "D3": "Low",
+                    "D4": "Low",
+                    "D5": "Low",
+                },
+                "overall_judgment": "Low",
+            },
+            "packet_quality": {
+                "D1": {
+                    "grade": "strong",
+                    "packet_readiness": {"status": "ready"},
+                },
+            },
+            "schema_failures": [
+                {"domain": "D4", "error": "missing required answer"}
+            ],
+            "support_constraints": [
+                {
+                    "constraint_type": "quote_untraceable",
+                    "sq_id": "4.1",
+                    "domain": "D4",
+                    "reason": "quoted text was not found",
+                },
+                {
+                    "constraint_type": "semantic_support_conflict",
+                    "sq_id": "5.1",
+                    "domain": "D5",
+                    "reason": "quote does not support claim",
+                },
+            ],
+            "timing": {
+                "total_wall_ms": 100,
+                "llm_total_ms": 40,
+                "llm_calls": 2,
+                "llm_cache_hits": 1,
+                "llm_repairs": 1,
+                "llm_parse_errors": 0,
+                "llm_input_tokens": 25,
+                "llm_output_tokens": 9,
+                "llm_cost_usd": 0.0017,
+                "slowest_nodes": [],
+                "_node_spans": [{"node": "private", "duration_ms": 1}],
+            },
+        }
+    ]
+    summary = summarize_benchmark(results)
+
+    write_benchmark_report(results, summary, tmp_path / "out" / "benchmark_report.md")
+
+    benchmark_json = json.loads(
+        (tmp_path / "out" / "benchmark_results.json").read_text(encoding="utf-8")
+    )
+    schema = benchmark_json["schema"]
+    assert schema["schema_name"] == "auto_rob2_benchmark_result"
+    assert schema["schema_version"] == 1
+    assert "aggregate" in schema["sections"]
+    assert "assessments" in schema["sections"]
+    assert schema["diagnostics"]["classification"] == "engineering_only"
+    assert set(schema["diagnostics"]["fields"]) >= {
+        "timing",
+        "parser_metrics",
+        "cache_reuse",
+        "packet_statuses",
+        "quote_traceability",
+        "schema_validation_failures",
+        "llm_latency",
+        "llm_usage",
+        "cost_metadata",
+    }
+
+    manifest = benchmark_json["artifact_manifest"]
+    assert manifest["workspace"]["path"] == str((tmp_path / "out").resolve())
+    assert len(manifest["workspace"]["sha256"]) == 64
+    assert manifest["assessments"][0]["id"] == "TITAN:OS"
+    assert (
+        len(manifest["assessments"][0]["artifacts"]["rob2_data_json"]["sha256"]) == 64
+    )
+
+    assessment = benchmark_json["assessments"][0]
+    assert assessment["agreement"]["comparison"]["Overall"] is True
+    assert assessment["packet_quality"] == {
+        "D1": {"grade": "strong", "packet_readiness": {"status": "ready"}}
+    }
+    assert assessment["schema_failures"] == [
+        {"domain": "D4", "error": "missing required answer"}
+    ]
+    assert assessment["diagnostics"]["timing"]["llm_calls"] == 2
+    assert assessment["diagnostics"]["parser_metrics"] == {
+        "llm_repairs": 1,
+        "llm_parse_errors": 0,
+        "schema_validation_failures": 1,
+    }
+    assert assessment["diagnostics"]["packet_statuses"] == {
+        "D1": {"status": "ready", "grade": "strong"}
+    }
+    assert assessment["diagnostics"]["quote_traceability"] == {
+        "quote_untraceable": 1,
+        "semantic_support_conflict": 1,
+        "failures": [
+            {
+                "constraint_type": "quote_untraceable",
+                "sq_id": "4.1",
+                "domain": "D4",
+                "reason": "quoted text was not found",
+            },
+            {
+                "constraint_type": "semantic_support_conflict",
+                "sq_id": "5.1",
+                "domain": "D5",
+                "reason": "quote does not support claim",
+            },
+        ],
+    }
+    assert assessment["diagnostics"]["schema_validation_failures"] == [
+        {"domain": "D4", "error": "missing required answer"}
+    ]
+    assert assessment["diagnostics"]["llm_usage"] == {
+        "input_tokens": 25,
+        "output_tokens": 9,
+    }
+    assert assessment["diagnostics"]["cost_metadata"] == {
+        "input_tokens": 25,
+        "output_tokens": 9,
+        "estimated_cost_usd": 0.0017,
+    }
+    aggregate_diagnostics = benchmark_json["aggregate"]["diagnostics"]
+    assert aggregate_diagnostics["parser_metrics"] == {
+        "llm_repairs": 1,
+        "llm_parse_errors": 0,
+        "schema_validation_failures": 1,
+    }
+    assert aggregate_diagnostics["cache_reuse"] == {"llm_cache_hits": 1}
+    assert aggregate_diagnostics["packet_statuses"] == {
+        "by_status": {"ready": 1},
+        "by_grade": {"strong": 1},
+    }
+    assert aggregate_diagnostics["quote_traceability"] == {
+        "quote_untraceable": 1,
+        "semantic_support_conflict": 1,
+        "failure_count": 2,
+    }
+    assert aggregate_diagnostics["llm_usage"] == {
+        "input_tokens": 25,
+        "output_tokens": 9,
+    }
+    assert aggregate_diagnostics["cost_metadata"] == {"estimated_cost_usd": 0.0017}
+    assert "_node_spans" not in json.dumps(assessment["diagnostics"])
+    assert "timing" not in assessment["agreement"]
+    assert "Performance Warnings" not in (
+        tmp_path / "out" / "benchmark_report.md"
+    ).read_text(encoding="utf-8")
+
+
 def test_write_benchmark_report_renders_adjudication_summary(tmp_path):
     results = [
         {
@@ -1244,6 +1762,111 @@ def test_write_benchmark_report_renders_adjudication_summary(tmp_path):
     assert "| Overall | Some concerns | Low | 1 |" in report
 
 
+def test_write_benchmark_report_renders_separate_engineering_report(tmp_path):
+    results = [
+        {
+            "id": "TITAN:OS",
+            "trial": "TITAN",
+            "outcome": "Overall Survival",
+            "outcome_code": "OS",
+            "cohort": "calibration",
+            "skipped": False,
+            "error": None,
+            "notes": "",
+            "assessment_artifacts": {
+                "rob2_data_json": str(tmp_path / "TITAN_rob2_data.json"),
+            },
+            "comparison": {
+                "D1": True,
+                "D2": False,
+                "D3": True,
+                "D4": True,
+                "D5": True,
+                "Overall": False,
+            },
+            "reference": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+                "Overall Risk": "Low",
+            },
+            "pipeline": {
+                "domain_judgments": {
+                    "D1": "Low",
+                    "D2": "High",
+                    "D3": "Low",
+                    "D4": "Low",
+                    "D5": "Low",
+                },
+                "overall_judgment": "High",
+            },
+            "packet_quality": {
+                "D2": {
+                    "packet_grade": "insufficient",
+                    "packet_readiness": {"status": "needs_retrieval_repair"},
+                }
+            },
+            "schema_failures": [{"domain": "D2", "error": "missing sq answer"}],
+            "support_constraints": [
+                {
+                    "constraint_type": "quote_untraceable",
+                    "sq_id": "2.6",
+                    "domain": "D2",
+                    "reason": "quote was not found",
+                }
+            ],
+            "mismatch_classification": {
+                "D2": {"category": "packet", "signals": ["packet_grade:insufficient"]},
+                "Overall": {
+                    "category": "reference_ambiguity",
+                    "signals": ["audit_caught_mismatch"],
+                },
+            },
+            "timing": {
+                "total_wall_ms": 1200,
+                "llm_total_ms": 400,
+                "llm_calls": 3,
+                "llm_cache_hits": 1,
+                "llm_repairs": 1,
+                "llm_parse_errors": 0,
+                "llm_input_tokens": 100,
+                "llm_output_tokens": 25,
+                "llm_cost_usd": 0.02,
+                "slowest_nodes": [
+                    {"node": "domain2_analysis", "duration_ms": 300, "status": "ok"}
+                ],
+                "_node_spans": [
+                    {"node": "domain2_analysis", "duration_ms": 300, "status": "ok"}
+                ],
+            },
+        }
+    ]
+    summary = summarize_benchmark(results)
+
+    write_benchmark_report(results, summary, tmp_path / "benchmark_report.md")
+
+    engineering_report = (tmp_path / "engineering_report.md").read_text(
+        encoding="utf-8"
+    )
+    assert engineering_report.startswith("# Engineering Benchmark Report")
+    assert "## Agreement" in engineering_report
+    assert "| D2 | 0.0% (0/1) |" in engineering_report
+    assert "## Mismatch Diagnostics" in engineering_report
+    assert "| D2 | packet | packet_grade:insufficient |" in engineering_report
+    assert "## Artifact Status" in engineering_report
+    assert "| TITAN:OS | rob2_data_json |" in engineering_report
+    assert "## Packet Quality" in engineering_report
+    assert "| TITAN:OS | D2 | needs_retrieval_repair | insufficient |" in engineering_report
+    assert "## Timing, Cache, Model, And Cost Diagnostics" in engineering_report
+    assert "- Total LLM calls: 3" in engineering_report
+    assert "- Total cache hits: 1" in engineering_report
+    assert "- Estimated LLM cost: $0.0200" in engineering_report
+    assert "quote_untraceable: 1" in engineering_report
+    assert "_node_spans" not in engineering_report
+
+
 def test_write_benchmark_report_renders_audit_caught_mismatch_summary(tmp_path):
     results = [
         {
@@ -1291,6 +1914,151 @@ def test_write_benchmark_report_renders_audit_caught_mismatch_summary(tmp_path):
     assert "## Audit-Caught Mismatches" in report
     assert "| D1 | 100.0% (1/1) |" in report
     assert "| Overall | 100.0% (1/1) |" in report
+
+
+def test_benchmark_report_emits_deterministic_mismatch_classification(tmp_path):
+    results = [
+        {
+            "id": "A:OS",
+            "trial": "A",
+            "outcome": "Outcome A",
+            "cohort": "unspecified",
+            "skipped": False,
+            "error": None,
+            "notes": "",
+            "comparison": {
+                "D1": False,
+                "D2": False,
+                "D3": False,
+                "D4": False,
+                "D5": False,
+                "Overall": False,
+            },
+            "reference": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+                "Overall Risk": "Low",
+            },
+            "pipeline": {
+                "domain_judgments": {
+                    "D1": "High",
+                    "D2": "High",
+                    "D3": "High",
+                    "D4": "High",
+                    "D5": "High",
+                },
+                "overall_judgment": "High",
+                "sq_answers": {
+                    "1.1": {"answer": "NI", "support_level": "weak", "quote": ""},
+                    "2.1": {"answer": "Y", "support_level": "strong", "quote": "x"},
+                    "3.1": {"answer": "Y", "support_level": "strong", "quote": "x"},
+                    "4.1": {"answer": "Y", "support_level": "strong", "quote": "x"},
+                    "5.1": {"answer": "Y", "support_level": "strong", "quote": "x"},
+                },
+            },
+            "packet_quality": {
+                "D2": {
+                    "packet_grade": "insufficient",
+                    "missing_evidence": ["allocation"],
+                },
+            },
+            "schema_failures": [{"domain": "D1", "error": "schema"}],
+            "audit_caught_mismatches": {"Overall": True},
+            "mismatch_classification": {
+                "D1": {"category": "parse", "signals": ["schema_failure"]},
+                "D2": {"category": "packet", "signals": ["packet_grade:insufficient"]},
+                "D3": {"category": "retrieval", "signals": ["quote_missing"]},
+                "D4": {"category": "SQ", "signals": ["support_level:weak"]},
+                "D5": {"category": "judge", "signals": ["judge_signal"]},
+                "Overall": {
+                    "category": "reference_ambiguity",
+                    "signals": ["audit_caught_mismatch"],
+                },
+            },
+        },
+        {
+            "id": "B:OS",
+            "trial": "B",
+            "outcome": "Outcome B",
+            "cohort": "unspecified",
+            "skipped": False,
+            "error": "Required supplements not found",
+            "notes": "Required supplements not found",
+            "comparison": {},
+            "mismatch_classification": {
+                "Overall": {
+                    "category": "blocked_incomplete",
+                    "signals": ["assessment_error"],
+                }
+            },
+        },
+    ]
+    summary = summarize_benchmark(results)
+
+    write_benchmark_report(results, summary, tmp_path / "benchmark_report.md")
+
+    benchmark_json = json.loads(
+        (tmp_path / "benchmark_results.json").read_text(encoding="utf-8")
+    )
+    categories = benchmark_json["aggregate"]["mismatch_classification"]["categories"]
+    assert set(categories) >= {
+        "parse",
+        "retrieval",
+        "packet",
+        "SQ",
+        "judge",
+        "reference_ambiguity",
+        "blocked_incomplete",
+    }
+    assert benchmark_json["assessments"][0]["diagnostics"]["mismatch_classification"][
+        "D1"
+    ] == {"category": "parse", "signals": ["schema_failure"]}
+
+    report = (tmp_path / "benchmark_report.md").read_text(encoding="utf-8")
+    assert "## Mismatch Classification" in report
+    assert "| parse | 1 |" in report
+
+
+def test_classify_mismatches_uses_existing_audit_signals_without_diagnosis_agent():
+    result = {
+        "comparison": {
+            "D1": False,
+            "D2": False,
+            "D3": False,
+            "D4": False,
+            "D5": False,
+            "Overall": False,
+        },
+        "schema_failures": [{"domain": "D1", "error": "invalid xml"}],
+        "packet_quality": {
+            "D2": {"packet_grade": "insufficient"},
+            "D3": {"retrieval_confidence": "low"},
+        },
+        "pipeline": {
+            "sq_answers": {
+                "4.1": {"answer": "PY", "support_level": "weak", "quote": "x"},
+                "5.1": {"answer": "Y", "support_level": "strong", "quote": "x"},
+            }
+        },
+        "audit_caught_mismatches": {"Overall": True},
+    }
+
+    classifications = classify_mismatches(result)
+
+    assert classifications == {
+        "D1": {"category": "parse", "signals": ["schema_failure"]},
+        "D2": {"category": "packet", "signals": ["packet_grade:insufficient"]},
+        "D3": {"category": "retrieval", "signals": ["retrieval_confidence:low"]},
+        "D4": {"category": "SQ", "signals": ["support_level:weak"]},
+        "D5": {"category": "judge", "signals": ["judgment_label_mismatch"]},
+        "Overall": {
+            "category": "reference_ambiguity",
+            "signals": ["audit_caught_mismatch"],
+        },
+    }
 
 
 def test_find_supplements_for_trial_handles_spaces_and_case(tmp_path):

@@ -3,6 +3,80 @@ import pytest
 from rob2_pipeline.nodes.reporter import report_formatter_node
 
 
+def test_reviewer_report_renders_all_domains_from_assessment_artifacts():
+    state = {
+        "domain_judgments": {
+            "D1": "Low",
+            "D2": "Some concerns",
+            "D3": "Low",
+            "D4": "High",
+            "D5": "Low",
+        },
+        "domain_rationales": {
+            "D2": "Awareness and deviations were incompletely supported.",
+            "D4": "Outcome assessment was likely influenced by knowledge.",
+        },
+        "sq_answers": {
+            "2.1": {
+                "answer": "Y",
+                "quote": "Participants and investigators were aware of assignment.",
+                "justification": "Open-label treatment made awareness likely.",
+                "support_level": "strong",
+                "support_rationale": "Direct open-label quote.",
+            }
+        },
+        "evidence_packets": {
+            "2.1": {
+                "evidence_facts": [
+                    {
+                        "claim": "The trial was open label.",
+                        "quote": "open-label, phase 3 trial",
+                        "support_level": "strong",
+                    }
+                ]
+            }
+        },
+        "support_constraints": [
+            {
+                "domain": "D4",
+                "sq_id": "4.4",
+                "constraint_type": "semantic_support_conflict",
+                "reason": "The cited masking quote applies to radiographic review, not adverse events.",
+            }
+        ],
+        "pivotality_tests": {
+            "D4": [
+                {
+                    "sq_id": "4.4",
+                    "support_level": "weak",
+                    "acceptance_status": "audit_limited",
+                    "pivotal": True,
+                }
+            ]
+        },
+        "automation_confidence": {
+            "D4": {
+                "status": "audit_limited",
+                "rationale": "Pivotal weak support remains unresolved.",
+            }
+        },
+    }
+
+    reviewer_report = report_formatter_node(state)["reviewer_report"]
+
+    assert reviewer_report.startswith("# Reviewer RoB 2 Report")
+    assert "## D2: Bias due to deviations from intended interventions" in reviewer_report
+    assert "**Judgment: Some concerns**" in reviewer_report
+    assert "Awareness and deviations were incompletely supported." in reviewer_report
+    assert "The trial was open label." in reviewer_report
+    assert "**Strong**" in reviewer_report
+    assert "semantic_support_conflict: The cited masking quote applies" in reviewer_report
+    assert "Audit-limited support: D4 SQ 4.4" in reviewer_report
+    assert "Automation confidence: audit_limited" in reviewer_report
+    assert "timing_ms" not in reviewer_report
+    assert "cost_usd" not in reviewer_report
+
+
 def test_markdown_report_renders_d1_reviewer_skeleton_from_artifacts():
     state = {
         "d1_artifact": {
