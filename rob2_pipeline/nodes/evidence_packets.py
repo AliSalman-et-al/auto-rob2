@@ -20,6 +20,7 @@ from rob2_pipeline.nodes.evidence_packet_grading import (
     missing_label_to_gap,
     missing_evidence,
     negative_flags,
+    packet_readiness,
     source_to_fact,
 )
 from rob2_pipeline.nodes.evidence_source_selection import candidate_sources
@@ -45,6 +46,7 @@ def build_evidence_packets(state: RoB2State) -> dict:
     packets: dict[str, EvidencePacket] = {}
     facts: dict[str, list[EvidenceFact]] = {}
     grades: dict[str, RetrievalGrade] = {}
+    readiness: dict[str, dict] = {}
     for sq_id, contract in CONTRACTS.items():
         packet = _build_packet_for_contract(state, contract)
         packets[sq_id] = packet
@@ -57,10 +59,12 @@ def build_evidence_packets(state: RoB2State) -> dict:
                 packet.get("negative_flags", []),
             ),
         )
+        readiness[sq_id] = packet.get("packet_readiness", {})
     return {
         "evidence_packets": packets,
         "evidence_facts": facts,
         "packet_grades": grades,
+        "packet_readiness": readiness,
     }
 
 
@@ -139,6 +143,14 @@ def _build_packet_for_contract(
         for label in missing
     ]
     contradictions = contradictions_for_sources(contract, selected)
+    readiness = packet_readiness(
+        sq_id=contract.sq_id,
+        missing=missing,
+        flags=flags,
+        contradictions=contradictions,
+        facts=facts,
+        confidence=retrieval_confidence,
+    )
     decision_table = build_decision_table(
         contract=contract,
         facts=facts,
@@ -163,6 +175,7 @@ def _build_packet_for_contract(
         missing_evidence=missing,
         negative_flags=flags,
         packet_grade=grade_packet(retrieval_confidence, missing, flags),
+        packet_readiness=readiness,
     )
 
 

@@ -10,6 +10,7 @@ from rob2_pipeline.types import (
     LLMCallLogEntry,
     OutcomeNormalizationArtifact,
     OutcomeProperties,
+    PacketReadiness,
     ParseArtifact,
     PivotalityTest,
     RetrievalGrade,
@@ -52,6 +53,7 @@ class RoB2State(TypedDict, total=False):
     selected_evidence_facts: Annotated[dict, merge_dicts]
     evidence_store: Annotated[EvidenceStoreArtifact, take_latest]
     packet_grades: Annotated[dict[str, RetrievalGrade], merge_dicts]
+    packet_readiness: Annotated[dict[str, PacketReadiness], merge_dicts]
     verification_actions: Annotated[list[dict], take_latest]
 
     # === PRELIMINARY INFO ===

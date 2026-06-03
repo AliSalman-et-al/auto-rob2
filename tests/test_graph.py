@@ -531,7 +531,7 @@ def test_graph_happy_path_with_mocked_llm(tmp_path):
     assert provider.complete.call_count == 14
 
 
-def test_graph_pfs_composite_endpoint_d4_some_concerns_d5_low(tmp_path):
+def test_graph_pfs_composite_endpoint_blocks_d4_when_packet_needs_repair(tmp_path):
     pdf_path = tmp_path / "trial.pdf"
     _make_pdf(pdf_path)
     fake_reg_data = {
@@ -567,9 +567,11 @@ def test_graph_pfs_composite_endpoint_d4_some_concerns_d5_low(tmp_path):
         result = build_rob2_graph().invoke(state)
 
     assert result["registered_endpoint"] == "Progression-Free Survival"
-    assert result["domain_judgments"]["D4"] == "Some concerns"
+    assert result["domain_judgments"]["D4"] == "High"
     assert result["domain_judgments"]["D5"] == "Low"
     assert result["sq_answers"]["4.4"]["answer"] == "PY"
+    assert result["sq_answers"]["4.5"]["classification_blocked"] is True
+    assert result["sq_answers"]["4.5"]["packet_status"] == "needs_retrieval_repair"
     assert result["sq_answers"]["5.2"]["answer"] == "N"
 
 

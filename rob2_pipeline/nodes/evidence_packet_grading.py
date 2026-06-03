@@ -16,7 +16,7 @@ from rob2_pipeline.nodes.evidence_source_selection import (
     looks_like_wrong_outcome,
 )
 from rob2_pipeline.state import RoB2State
-from rob2_pipeline.types import EvidenceFact, PacketSource, RetrievalGrade
+from rob2_pipeline.types import EvidenceFact, PacketReadiness, PacketSource, RetrievalGrade
 from rob2_pipeline.types import EvidenceGap
 
 
@@ -95,6 +95,62 @@ def grade_packet(
         "coverage": coverage,
         "missing_evidence": missing,
         "retry_recommended": bool(missing or flags or confidence < 0.35),
+    }
+
+
+def packet_readiness(
+    *,
+    sq_id: str,
+    missing: list[str],
+    flags: list[str],
+    contradictions: list[dict],
+    facts: list[EvidenceFact],
+    confidence: float,
+) -> PacketReadiness:
+    mechanical_status = "complete" if not missing and not flags else "incomplete"
+    mechanical = {
+        "status": mechanical_status,
+        "missing_evidence": missing,
+        "negative_flags": flags,
+        "contradictions": [item.get("label", "contradiction") for item in contradictions],
+    }
+    support_levels = [fact.get("support_level", "unsupported") for fact in facts]
+    adequate_support = {"strong", "moderate"}
+    semantic_status = (
+        "adequate"
+        if support_levels and all(level in adequate_support for level in support_levels)
+        else "limited"
+    )
+    semantic = {
+        "status": semantic_status,
+        "support_levels": support_levels,
+        "confidence": confidence,
+    }
+    status = "ready"
+    blocking_reason = ""
+    if missing:
+        status = "needs_retrieval_repair"
+        blocking_reason = "Selected packet sources do not mechanically cover required evidence."
+    elif contradictions:
+        status = "needs_contradiction_resolution"
+        blocking_reason = "Selected packet sources contain unresolved contradictory claims."
+    elif any(flag in {"missing_page_source", "quote_untraceable"} for flag in flags):
+        status = "needs_quote_adjudication"
+        blocking_reason = "Selected packet sources need quote or provenance adjudication."
+    elif flags:
+        status = "needs_retrieval_repair"
+        blocking_reason = "Selected packet sources have mechanical negative flags."
+    elif semantic_status != "adequate":
+        status = "audit_limited"
+        blocking_reason = "Selected packet facts are semantically limited."
+    return {
+        "artifact_id": f"packet-readiness:{sq_id}",
+        "schema_version": "1.0",
+        "sq_id": sq_id,
+        "status": status,
+        "mechanical_completeness": mechanical,
+        "semantic_adequacy": semantic,
+        "blocking_reason": blocking_reason,
     }
 
 

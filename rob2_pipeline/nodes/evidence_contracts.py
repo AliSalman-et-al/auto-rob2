@@ -240,7 +240,13 @@ RESULT_STAT_RE = re.compile(
     r"\b(?:hr|or|rr|hazard ratio|p\s*=|confidence interval|ci\b|\d+(?:\.\d+)?\s*%)",
     re.I,
 )
-DENOMINATOR_RE = re.compile(r"\b\d[\d,]*\s*/\s*\d[\d,]*\b|\b\d+(?:\.\d+)?\s*%")
+DENOMINATOR_RE = re.compile(
+    r"\b\d[\d,]*\s*/\s*\d[\d,]*\b"
+    r"|\b\d+(?:\.\d+)?\s*%"
+    r"|\b\d[\d,]*\s+(?:participants|patients)\b.{0,80}\b"
+    r"(?:all\s+had\s+outcome\s+data|no\s+missing\s+outcome\s+data)\b",
+    re.I,
+)
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 PRESPEC_TERMS = (
     "registr",

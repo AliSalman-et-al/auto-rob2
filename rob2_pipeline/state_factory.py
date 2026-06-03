@@ -38,6 +38,7 @@ def create_initial_state(
         "evidence_packets": {},
         "evidence_facts": {},
         "packet_grades": {},
+        "packet_readiness": {},
         "verification_actions": [],
         "is_rct": False,
         "rct_screen_evidence": "",

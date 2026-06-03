@@ -414,6 +414,8 @@ def _adjudicate_pivotal_sq_answers(
         sq_answer = sq_answers.get(sq_id)
         if not sq_answer:
             continue
+        if sq_answer.get("classification_blocked"):
+            continue
         if sq_answer.get("answer") == "NA":
             continue
         support_level = sq_answer.get("support_level", "").lower()

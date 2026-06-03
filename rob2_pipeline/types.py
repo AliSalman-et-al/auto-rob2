@@ -88,6 +88,16 @@ class RetrievalGrade(TypedDict):
     retry_recommended: bool
 
 
+class PacketReadiness(TypedDict, total=False):
+    artifact_id: str
+    schema_version: str
+    sq_id: str
+    status: str
+    mechanical_completeness: dict
+    semantic_adequacy: dict
+    blocking_reason: str
+
+
 class PacketSource(TypedDict, total=False):
     text: str
     section: str
@@ -184,6 +194,7 @@ class EvidencePacket(TypedDict, total=False):
     missing_evidence: list[str]
     negative_flags: list[str]
     packet_grade: RetrievalGrade
+    packet_readiness: PacketReadiness
 
 
 class EvidenceValidationFlag(TypedDict):

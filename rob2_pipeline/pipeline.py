@@ -41,6 +41,7 @@ JSON_OUTPUT_KEYS = (
     "retrieval_grades",
     "evidence_packets",
     "packet_grades",
+    "packet_readiness",
     "evidence_facts",
     "selected_evidence_facts",
     "evidence_store",
