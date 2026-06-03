@@ -8,6 +8,7 @@ from rob2_pipeline.evidence_store import (
     EvidenceFactRecord,
     EvidenceStore,
     mine_evidence_families,
+    select_evidence_facts,
 )
 
 
@@ -301,6 +302,9 @@ def test_mine_evidence_families_bounds_llm_prompt_to_selected_packet_sources():
     assert update["evidence_store"]["supported_facts"][0]["family"] == (
         "randomization_allocation"
     )
+    assert update["selected_evidence_facts"]["1.1"]["retrieval_substrate"] == (
+        "typed_facts"
+    )
     assert "Participants were assigned centrally." in prompts[0]
     assert "full text must not be sent" not in prompts[0]
 
@@ -468,3 +472,138 @@ def test_mine_evidence_families_retries_then_records_failed_claim_on_bad_schema(
     assert store["supported_facts"] == []
     assert store["failed_claims"][0]["support_status"] == "failed"
     assert "validation failed" in store["failed_claims"][0]["failure_reason"]
+
+
+def test_select_evidence_facts_prefers_typed_family_facts_with_provenance():
+    store = EvidenceStore.model_validate(
+        {
+            "artifact_id": "evidence-store:TITAN:overall-survival",
+            "schema_version": "1.0",
+            "supported_facts": [
+                _valid_fact(
+                    artifact_id="evidence-fact:d5:5.1:nct-prespecified-os",
+                    fact_type="prespecified_analysis",
+                    domain="d5",
+                    sq_ids=["5.1"],
+                    claim_type="registry",
+                    claim="Overall survival was prespecified in the registry.",
+                    quote="PRIMARY: Overall Survival",
+                    family="prespecification",
+                    family_fields={
+                        "artifact_type": "registry",
+                        "identifier": "NCT00309985",
+                        "prespecified_outcome": "Overall Survival",
+                        "prespecified_analysis": "Cox proportional hazards model",
+                    },
+                    provenance={
+                        "document_id": "registry:NCT00309985",
+                        "document_name": "ClinicalTrials.gov NCT00309985",
+                        "document_role": "registry",
+                        "source_kind": "ctgov",
+                        "source_path": "https://clinicaltrials.gov/study/NCT00309985",
+                        "source_section": "ClinicalTrials.gov",
+                        "page_numbers": [],
+                    },
+                )
+            ],
+            "failed_claims": [],
+            "gaps": [],
+        }
+    )
+
+    packet = select_evidence_facts(
+        evidence_store=store,
+        outcome="Overall Survival",
+        sq_family="prespecification",
+        sq_ids=["5.1"],
+        raw_packets={},
+    )
+
+    assert packet["retrieval_substrate"] == "typed_facts"
+    assert packet["fallback_used"] is False
+    assert packet["selected_facts"][0]["artifact_id"] == (
+        "evidence-fact:d5:5.1:nct-prespecified-os"
+    )
+    assert packet["selected_facts"][0]["provenance"]["document_id"] == (
+        "registry:NCT00309985"
+    )
+
+
+def test_select_evidence_facts_marks_raw_chunk_fallback_when_family_facts_missing():
+    packet = select_evidence_facts(
+        evidence_store={
+            "artifact_id": "evidence-store:TITAN:overall-survival",
+            "schema_version": "1.0",
+            "supported_facts": [],
+            "failed_claims": [],
+            "gaps": [],
+        },
+        outcome="Overall Survival",
+        sq_family="prespecification",
+        sq_ids=["5.1"],
+        raw_packets={
+            "5.1": {
+                "sources": [
+                    {
+                        "text": "Overall survival was listed as the primary endpoint.",
+                        "section": "Registry outcomes",
+                        "document_id": "registry:NCT00309985",
+                        "document_name": "ClinicalTrials.gov NCT00309985",
+                        "document_role": "registry",
+                        "source_kind": "ctgov",
+                        "source_path": "https://clinicaltrials.gov/study/NCT00309985",
+                        "page_numbers": [],
+                    }
+                ]
+            }
+        },
+    )
+
+    assert packet["retrieval_substrate"] == "raw_chunk_fallback"
+    assert packet["fallback_used"] is True
+    assert packet["missing_family_facts"] == ["prespecification"]
+    assert packet["raw_fallback_sources"][0]["fallback_reason"] == (
+        "missing_typed_family_facts"
+    )
+    assert packet["selected_facts"] == []
+
+
+def test_select_evidence_facts_excludes_wrong_outcome_candidate_facts():
+    store = EvidenceStore.model_validate(
+        {
+            "artifact_id": "evidence-store:TITAN:overall-survival",
+            "schema_version": "1.0",
+            "supported_facts": [
+                _valid_fact(
+                    artifact_id="evidence-fact:d5:5.1:pfs-prespec",
+                    fact_type="prespecified_analysis",
+                    domain="d5",
+                    sq_ids=["5.1"],
+                    claim_type="registry",
+                    claim="Progression-free survival was prespecified.",
+                    quote="Secondary Outcome: Progression-Free Survival",
+                    family="prespecification",
+                    family_fields={
+                        "artifact_type": "registry",
+                        "identifier": "NCT00309985",
+                        "prespecified_outcome": "Progression-Free Survival",
+                        "prespecified_analysis": "hazard ratio",
+                    },
+                )
+            ],
+            "failed_claims": [],
+            "gaps": [],
+        }
+    )
+
+    packet = select_evidence_facts(
+        evidence_store=store,
+        outcome="Overall Survival",
+        sq_family="prespecification",
+        sq_ids=["5.1"],
+        raw_packets={},
+    )
+
+    assert packet["selected_facts"] == []
+    assert packet["excluded_facts"][0]["artifact_id"] == "evidence-fact:d5:5.1:pfs-prespec"
+    assert packet["excluded_facts"][0]["exclusion_reason"] == "wrong_outcome_context"

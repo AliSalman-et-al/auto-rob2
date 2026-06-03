@@ -157,6 +157,70 @@ EvidenceFamilyCall = Callable[
 ]
 
 
+def select_evidence_facts(
+    *,
+    evidence_store: EvidenceStore | dict,
+    outcome: str,
+    sq_family: EvidenceFamily,
+    sq_ids: list[str],
+    raw_packets: dict,
+) -> dict:
+    """Select typed facts for one outcome and SQ family.
+
+    Raw packet sources are returned only as a marked repair substrate when no
+    typed supported facts survive family, SQ, and outcome filtering.
+    """
+
+    store = (
+        evidence_store
+        if isinstance(evidence_store, EvidenceStore)
+        else EvidenceStore.model_validate(evidence_store)
+    )
+    requested_sq_ids = set(sq_ids)
+    selected: list[dict] = []
+    excluded: list[dict] = []
+
+    for fact in store.supported_facts:
+        if fact.family != sq_family:
+            continue
+        if requested_sq_ids.isdisjoint(fact.sq_ids):
+            continue
+        if _is_wrong_outcome_fact(fact, outcome):
+            excluded.append(
+                {
+                    "artifact_id": fact.artifact_id,
+                    "exclusion_reason": "wrong_outcome_context",
+                }
+            )
+            continue
+        selected.append(fact.model_dump())
+
+    if selected:
+        return {
+            "outcome": outcome,
+            "sq_family": sq_family,
+            "sq_ids": sq_ids,
+            "retrieval_substrate": "typed_facts",
+            "fallback_used": False,
+            "selected_facts": selected,
+            "excluded_facts": excluded,
+            "missing_family_facts": [],
+            "raw_fallback_sources": [],
+        }
+
+    return {
+        "outcome": outcome,
+        "sq_family": sq_family,
+        "sq_ids": sq_ids,
+        "retrieval_substrate": "raw_chunk_fallback",
+        "fallback_used": True,
+        "selected_facts": [],
+        "excluded_facts": excluded,
+        "missing_family_facts": [sq_family],
+        "raw_fallback_sources": _raw_fallback_sources(raw_packets, sq_ids),
+    }
+
+
 def mine_evidence_families(
     state: dict,
     call_fn: EvidenceFamilyCall,
@@ -219,7 +283,62 @@ def mine_evidence_families(
         failed_claims=failed,
         gaps=[],
     )
-    return {"evidence_store": store.model_dump()}
+    selected_facts = _select_family_packets(
+        store,
+        outcome=str(state.get("outcome", "")),
+        raw_packets=state.get("evidence_packets", {}),
+    )
+    return {
+        "evidence_store": store.model_dump(),
+        "selected_evidence_facts": selected_facts,
+    }
+
+
+def _select_family_packets(
+    store: EvidenceStore,
+    *,
+    outcome: str,
+    raw_packets: dict,
+) -> dict:
+    packets = {}
+    for sq_id, family in sorted(FAMILY_BY_SQ.items()):
+        if sq_id not in raw_packets and not any(
+            fact.family == family and sq_id in fact.sq_ids
+            for fact in store.supported_facts
+        ):
+            continue
+        packets[sq_id] = select_evidence_facts(
+            evidence_store=store,
+            outcome=outcome,
+            sq_family=family,
+            sq_ids=[sq_id],
+            raw_packets=raw_packets,
+        )
+    return packets
+
+
+def _is_wrong_outcome_fact(fact: EvidenceFactRecord, outcome: str) -> bool:
+    fields = fact.family_fields
+    if not isinstance(fields, PrespecificationFields):
+        return False
+    return _normalize_outcome(fields.prespecified_outcome) != _normalize_outcome(
+        outcome
+    )
+
+
+def _normalize_outcome(value: str) -> str:
+    return " ".join(value.casefold().replace("-", " ").split())
+
+
+def _raw_fallback_sources(raw_packets: dict, sq_ids: list[str]) -> list[dict]:
+    sources: list[dict] = []
+    for sq_id in sq_ids:
+        packet = raw_packets.get(sq_id, {})
+        for source in packet.get("sources", []):
+            fallback_source = dict(source)
+            fallback_source["fallback_reason"] = "missing_typed_family_facts"
+            sources.append(fallback_source)
+    return sources
 
 
 def _selected_zones(packet: dict, max_sources: int) -> list[dict]:
