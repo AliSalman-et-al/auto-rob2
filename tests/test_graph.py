@@ -671,6 +671,11 @@ def test_run_assessment_writes_outputs(tmp_path):
     assert (
         output_dir / "trial_trial_workspace" / "diagnostics" / "primary.json"
     ).exists()
+    evidence_jsonl = (
+        output_dir / "trial_trial_workspace" / "evidence_store" / "facts.jsonl"
+    )
+    assert evidence_jsonl.exists()
+    assert "search_text" in evidence_jsonl.read_text(encoding="utf-8")
     data = json.loads((output_dir / "trial_rob2_data.json").read_text(encoding="utf-8"))
     assert data["evidence"]["extraction_method"] == "docling_llm"
     assert "computer-generated sequence" in data["evidence"]["d1_randomization"]["text"]
