@@ -176,6 +176,19 @@ class DecisionTable(TypedDict, total=False):
     classifier_instruction: str
 
 
+class PacketContract(TypedDict, total=False):
+    artifact_id: str
+    schema_version: str
+    sq_id: str
+    domain: str
+    required_evidence: list[str]
+    allowed_answers: list[str]
+    outcome_binding_status: str
+    source_hierarchy: list[str]
+    needs_denominator: bool
+    needs_prespecification: bool
+
+
 class EvidenceStoreArtifact(TypedDict, total=False):
     artifact_id: str
     schema_version: str
@@ -191,6 +204,7 @@ class EvidencePacket(TypedDict, total=False):
     domain: str
     outcome: str
     required_evidence: list[str]
+    contract: PacketContract
     sources: list[PacketSource]
     candidate_facts: list[EvidenceFact]
     gaps: list[EvidenceGap]

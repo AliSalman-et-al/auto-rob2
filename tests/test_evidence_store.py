@@ -142,6 +142,99 @@ def test_prespecification_facts_require_structured_artifact_and_analysis_fields(
         )
 
 
+@pytest.mark.parametrize(
+    ("family", "sq_id", "domain", "claim_type", "family_fields"),
+    [
+        (
+            "deviations_adherence",
+            "2.3",
+            "d2",
+            "trial_method",
+            {
+                "awareness_status": "open-label participants and personnel",
+                "deviation_description": "cross-over before progression",
+                "adherence_population": "all randomized participants",
+                "analysis_population": "intention-to-treat",
+                "outcome_impact": "potential dilution of overall survival effect",
+            },
+        ),
+        (
+            "missing_outcome_data",
+            "3.1",
+            "d3",
+            "analysis",
+            {
+                "randomized_count": "1052",
+                "outcome_data_count": "1044",
+                "missing_count": "8",
+                "missing_reason": "withdrawal or loss to follow-up",
+                "analysis_handling": "censored at last assessment",
+            },
+        ),
+        (
+            "outcome_measurement",
+            "4.1",
+            "d4",
+            "outcome_measurement",
+            {
+                "assessed_outcome": "overall survival",
+                "measurement_method": "death from any cause",
+                "measurement_timing": "from randomization to death",
+                "assessor_awareness": "not applicable for vital status",
+                "influence_risk": "objective death endpoint",
+            },
+        ),
+        (
+            "result_reporting",
+            "5.3",
+            "d5",
+            "result_reporting",
+            {
+                "reported_outcome": "overall survival",
+                "reported_measurement": "time from randomization to death",
+                "reported_analysis": "hazard ratio from stratified Cox model",
+                "result_metric": "hazard ratio with confidence interval",
+                "matches_prespecification": "matches registered primary endpoint",
+            },
+        ),
+    ],
+)
+def test_d2_d5_family_facts_require_structured_fields(
+    family, sq_id, domain, claim_type, family_fields
+):
+    fact = EvidenceFactRecord.model_validate(
+        _valid_fact(
+            artifact_id=f"evidence-fact:{domain}:{sq_id}:{family}",
+            fact_type=f"{family}_fact",
+            domain=domain,
+            sq_ids=[sq_id],
+            claim_type=claim_type,
+            claim=f"{family} evidence supports SQ {sq_id}.",
+            quote=f"{family} evidence supports SQ {sq_id}.",
+            family=family,
+            family_fields=family_fields,
+        )
+    )
+
+    assert fact.family == family
+    assert fact.family_fields.model_dump() == family_fields
+
+    missing_one_field = dict(family_fields)
+    missing_one_field.pop(next(iter(missing_one_field)))
+    with pytest.raises(ValidationError):
+        EvidenceFactRecord.model_validate(
+            _valid_fact(
+                artifact_id=f"evidence-fact:{domain}:{sq_id}:bad-{family}",
+                fact_type=f"{family}_fact",
+                domain=domain,
+                sq_ids=[sq_id],
+                claim_type=claim_type,
+                family=family,
+                family_fields=missing_one_field,
+            )
+        )
+
+
 def test_registry_prespecification_fact_accepts_snapshot_provenance():
     fact = EvidenceFactRecord.model_validate(
         _valid_fact(
@@ -307,6 +400,138 @@ def test_mine_evidence_families_bounds_llm_prompt_to_selected_packet_sources():
     )
     assert "Participants were assigned centrally." in prompts[0]
     assert "full text must not be sent" not in prompts[0]
+
+
+def test_mine_evidence_families_covers_one_fact_family_for_each_d2_d5_domain():
+    responses = {
+        "2.3": (
+            "deviations_adherence",
+            "d2",
+            "trial_method",
+            {
+                "awareness_status": "open-label participants and personnel",
+                "deviation_description": "cross-over before progression",
+                "adherence_population": "all randomized participants",
+                "analysis_population": "intention-to-treat",
+                "outcome_impact": "cross-over could dilute overall survival",
+            },
+        ),
+        "3.1": (
+            "missing_outcome_data",
+            "d3",
+            "analysis",
+            {
+                "randomized_count": "1052",
+                "outcome_data_count": "1044",
+                "missing_count": "8",
+                "missing_reason": "loss to follow-up",
+                "analysis_handling": "included in ITT population",
+            },
+        ),
+        "4.1": (
+            "outcome_measurement",
+            "d4",
+            "outcome_measurement",
+            {
+                "assessed_outcome": "overall survival",
+                "measurement_method": "death from any cause",
+                "measurement_timing": "from randomization to death",
+                "assessor_awareness": "vital-status endpoint",
+                "influence_risk": "objective event",
+            },
+        ),
+        "5.3": (
+            "result_reporting",
+            "d5",
+            "result_reporting",
+            {
+                "reported_outcome": "overall survival",
+                "reported_measurement": "time from randomization to death",
+                "reported_analysis": "hazard ratio",
+                "result_metric": "hazard ratio and 95% CI",
+                "matches_prespecification": "consistent with registry",
+            },
+        ),
+    }
+
+    def fake_call(state, prompt, node_name):
+        sq_id = node_name.removeprefix("evidence_family_mining_").replace("_", ".")
+        family, domain, claim_type, family_fields = responses[sq_id]
+        return (
+            json.dumps(
+                {
+                    "facts": [
+                        {
+                            "artifact_id": f"evidence-fact:{domain}:{sq_id}:{family}",
+                            "fact_type": f"{family}_fact",
+                            "domain": domain,
+                            "sq_ids": [sq_id],
+                            "claim_type": claim_type,
+                            "claim": f"{family} evidence supports SQ {sq_id}.",
+                            "quote": f"{family} evidence supports SQ {sq_id}.",
+                            "support_level": "strong",
+                            "support_status": "supported",
+                            "uncertainty": False,
+                            "family": family,
+                            "family_fields": family_fields,
+                            "provenance": {
+                                "document_id": "primary:TITAN",
+                                "document_name": "TITAN primary report",
+                                "document_role": "primary",
+                                "source_kind": "rag_chunk",
+                                "source_path": "inputs/benchmark/TITAN.pdf",
+                                "source_section": "Methods",
+                                "page_numbers": [4],
+                            },
+                        }
+                    ]
+                }
+            ),
+            [{"node": node_name, "cache_hit": False}],
+            None,
+        )
+
+    state = {
+        "pdf_path": "inputs/benchmark/TITAN.pdf",
+        "outcome": "Overall Survival",
+        "evidence_packets": {
+            sq_id: {
+                "sq_id": sq_id,
+                "domain": domain,
+                "sources": [
+                    {
+                        "text": f"{family} evidence supports SQ {sq_id}.",
+                        "section": "Methods",
+                        "page_numbers": [4],
+                        "document_id": "primary:TITAN",
+                        "document_name": "TITAN primary report",
+                        "document_role": "primary",
+                        "source_kind": "rag_chunk",
+                        "source_path": "inputs/benchmark/TITAN.pdf",
+                    }
+                ],
+            }
+            for sq_id, (family, domain, _claim_type, _fields) in responses.items()
+        },
+    }
+
+    update = mine_evidence_families(state, call_fn=fake_call)
+
+    families = {fact["family"] for fact in update["evidence_store"]["supported_facts"]}
+    assert families == {
+        "deviations_adherence",
+        "missing_outcome_data",
+        "outcome_measurement",
+        "result_reporting",
+    }
+    for sq_id, (family, _domain, _claim_type, _fields) in responses.items():
+        packet = update["selected_evidence_facts"][sq_id]
+        assert packet["sq_family"] == family
+        assert packet["retrieval_substrate"] == "typed_facts"
+        selected = packet["selected_facts"][0]
+        assert selected["support_level"] == "strong"
+        assert selected["support_status"] == "supported"
+        assert selected["provenance"]["document_id"] == "primary:TITAN"
 
 
 def test_mine_evidence_families_keeps_unsupported_claims_visible_but_unselected():

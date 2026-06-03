@@ -12,6 +12,8 @@ from rob2_pipeline.trial_workspace import (
     write_d1_engineering_diagnostics_workspace,
     write_d1_judgment_workspace,
     write_d1_sq_answer_workspace,
+    write_domain_judgment_workspace,
+    write_domain_sq_answer_workspace,
     write_outcome_normalization_workspace,
     write_evidence_store_trial_workspace,
     write_parse_trial_workspace,
@@ -54,12 +56,18 @@ JSON_OUTPUT_KEYS = (
     "initial_domain_judgments",
     "initial_domain_rationales",
     "d1_judgment_artifact",
+    "d2_judgment_artifact",
+    "d3_judgment_artifact",
+    "d4_judgment_artifact",
+    "d5_judgment_artifact",
     "domain_judgments",
     "domain_rationales",
     "pivotality_tests",
     "sq_support_adjudications",
     "overall_judgment",
     "overall_rationale",
+    "overall_judgment_artifact",
+    "automation_confidence",
     "ni_count",
     "high_uncertainty_sqs",
     "human_review_priority",
@@ -205,6 +213,57 @@ def _write_workspace_artifacts(
             rob2_settings=_rob2_settings_from_state(state),
             d1_judgment_artifact=state["d1_judgment_artifact"],
         )
+    for domain in ("d2", "d3", "d4", "d5"):
+        classifier_artifacts = _domain_classifier_artifacts_from_state(state, domain)
+        if classifier_artifacts:
+            write_domain_sq_answer_workspace(
+                domain=domain,
+                trial_id=base,
+                outcome_id=_outcome_id_from_state(state),
+                workspace_root=output_path / f"{base}_outcome_workspaces",
+                trial_workspace_dir=trial_workspace_dir,
+                upstream_artifact_paths=_outcome_workspace_upstream_paths(
+                    trial_workspace_dir,
+                    state["parse_artifacts"],
+                ),
+                outcome_definition=_outcome_definition_from_state(state),
+                rob2_settings=_rob2_settings_from_state(state),
+                sq_answer_artifact=_domain_sq_answer_artifact_from_state(
+                    state,
+                    domain,
+                    classifier_artifacts,
+                ),
+                model_metadata=_model_metadata_from_state(state),
+                contract_metadata=_domain_contract_metadata_from_state(
+                    state,
+                    domain,
+                    classifier_artifacts,
+                ),
+            )
+        judgment_key = f"{domain}_judgment_artifact"
+        if state.get(judgment_key):
+            write_domain_judgment_workspace(
+                domain=domain,
+                trial_id=base,
+                outcome_id=_outcome_id_from_state(state),
+                workspace_root=output_path / f"{base}_outcome_workspaces",
+                trial_workspace_dir=trial_workspace_dir,
+                upstream_artifact_paths={
+                    **_outcome_workspace_upstream_paths(
+                        trial_workspace_dir,
+                        state["parse_artifacts"],
+                    ),
+                    **_domain_sq_answer_upstream_path(
+                        output_path,
+                        base,
+                        state,
+                        domain,
+                    ),
+                },
+                outcome_definition=_outcome_definition_from_state(state),
+                rob2_settings=_rob2_settings_from_state(state),
+                judgment_artifact=state[judgment_key],
+            )
     if state.get("d1_sq_classifier_artifact") or state.get("d1_judgment_artifact"):
         write_d1_engineering_diagnostics_workspace(
             trial_id=base,
@@ -344,6 +403,94 @@ def _d1_contract_metadata_from_state(state: RoB2State) -> dict:
     }
 
 
+def _domain_classifier_artifacts_from_state(
+    state: RoB2State,
+    domain: str,
+) -> list[dict]:
+    keys_by_domain = {
+        "d2": (
+            "d2_sq12_classifier_artifact",
+            "d2_conditional_classifier_artifact",
+            "d2_analysis_classifier_artifact",
+        ),
+        "d3": ("d3_sq_classifier_artifact",),
+        "d4": ("d4_sq_classifier_artifact",),
+        "d5": ("d5_sq_classifier_artifact",),
+    }
+    return [
+        state[key]
+        for key in keys_by_domain.get(domain, ())
+        if isinstance(state.get(key), dict)
+    ]
+
+
+def _domain_sq_answer_artifact_from_state(
+    state: RoB2State,
+    domain: str,
+    classifier_artifacts: list[dict],
+) -> dict:
+    answers = []
+    stages = []
+    branching = {}
+    outcome_specific_concerns = []
+    for artifact in classifier_artifacts:
+        answers.extend(artifact.get("answers", []))
+        stage = artifact.get("stage")
+        if stage:
+            stages.append(stage)
+        branching[str(stage or len(stages))] = artifact.get("branching", {})
+        outcome_specific_concerns.extend(artifact.get("outcome_specific_concerns", []))
+    return {
+        "artifact_id": f"{domain}-sq-answer-set:{_outcome_id_from_state(state)}",
+        "schema_version": f"{domain}-sq-answer-set-v1",
+        "classifier_schema_version": classifier_artifacts[-1].get(
+            "schema_version", ""
+        ),
+        "classifier_prompt_version": _domain_contract_metadata_from_state(
+            state,
+            domain,
+            classifier_artifacts,
+        ).get("classifier_prompt_version", ""),
+        "domain": domain,
+        "stages": stages,
+        "branching": branching,
+        "outcome_specific_concerns": outcome_specific_concerns,
+        "answers": answers,
+    }
+
+
+def _domain_contract_metadata_from_state(
+    state: RoB2State,
+    domain: str,
+    classifier_artifacts: list[dict],
+) -> dict:
+    log_entries = [
+        entry
+        for entry in state.get("llm_call_log", [])
+        if str(entry.get("node", "")).startswith(f"domain{domain[-1]}_")
+        and str(entry.get("node", "")).endswith("_json")
+    ]
+    latest = log_entries[-1] if log_entries else {}
+    attempts = latest.get("attempts") or []
+    max_attempts = max(
+        [int(attempt.get("attempt", 0) or 0) for attempt in attempts] or [1]
+    )
+    schema_version = (
+        latest.get("schema_version")
+        or classifier_artifacts[-1].get("schema_version", "")
+    )
+    return {
+        "schema_version": f"{domain}-sq-answer-set-v1",
+        "classifier_schema_version": schema_version,
+        "classifier_prompt_version": latest.get("prompt_version", ""),
+        "retry_policy": {"max_attempts": max_attempts},
+        "model_affecting_settings": {
+            "provider": latest.get("provider", config.PROVIDER_NAME),
+            "model": latest.get("model", config.LLM_MODEL),
+        },
+    }
+
+
 def _d1_sq_answer_upstream_path(
     output_path: Path,
     base: str,
@@ -357,6 +504,23 @@ def _d1_sq_answer_upstream_path(
         / f"{base}_outcome_workspaces"
         / outcome_dir
         / "d1-sq-answers.json"
+    }
+
+
+def _domain_sq_answer_upstream_path(
+    output_path: Path,
+    base: str,
+    state: RoB2State,
+    domain: str,
+) -> dict[str, Path]:
+    if not _domain_classifier_artifacts_from_state(state, domain):
+        return {}
+    outcome_dir = re.sub(r"[^A-Za-z0-9_.-]+", "_", _outcome_id_from_state(state))
+    return {
+        f"{domain}-sq-answer-set": output_path
+        / f"{base}_outcome_workspaces"
+        / outcome_dir
+        / f"{domain}-sq-answers.json"
     }
 
 

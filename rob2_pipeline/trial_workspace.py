@@ -419,6 +419,113 @@ def write_d1_judgment_workspace(
     )
 
 
+def write_domain_sq_answer_workspace(
+    *,
+    domain: str,
+    trial_id: str,
+    outcome_id: str,
+    workspace_root: str | Path,
+    trial_workspace_dir: str | Path,
+    upstream_artifact_paths: dict[str, str | Path],
+    outcome_definition: dict,
+    rob2_settings: dict,
+    sq_answer_artifact: dict,
+    model_metadata: dict,
+    contract_metadata: dict,
+) -> OutcomeWorkspaceManifest:
+    _validate_domain_name(domain)
+    root = outcome_workspace_dir(workspace_root, outcome_id)
+    artifact_path = root / f"{domain}-sq-answers.json"
+    artifact = _domain_sq_answer_artifact_with_validation(sq_answer_artifact)
+    _write_json(artifact_path, artifact)
+
+    upstream_hashes = {
+        artifact_id: file_sha256(path)
+        for artifact_id, path in sorted(upstream_artifact_paths.items())
+    }
+    model_name = str(model_metadata.get("model") or "unknown-model")
+    schema_version = str(
+        contract_metadata.get("schema_version")
+        or artifact.get("schema_version")
+        or f"{domain}-sq-answer-set-v1"
+    )
+    identity = build_outcome_artifact_identity(
+        artifact_id=artifact.get("artifact_id", f"{domain}-sq-answer-set:{outcome_id}"),
+        schema_version=schema_version,
+        producer=f"{domain}-sq-classifier",
+        producer_version=model_name,
+        content_hash=file_sha256(artifact_path),
+        upstream_trial_workspace_hashes=upstream_hashes,
+        outcome_definition=outcome_definition,
+        rob2_settings=rob2_settings,
+        config={
+            "contract_metadata": contract_metadata,
+            "model_metadata": model_metadata,
+        },
+    )
+    artifacts = _existing_outcome_artifacts(workspace_root, outcome_id, identity)
+    return write_outcome_workspace_manifest(
+        trial_id=trial_id,
+        outcome_id=outcome_id,
+        workspace_root=workspace_root,
+        trial_workspace_dir=trial_workspace_dir,
+        upstream_artifact_paths=upstream_artifact_paths,
+        outcome_definition=outcome_definition,
+        rob2_settings=rob2_settings,
+        artifacts=[*artifacts, identity],
+    )
+
+
+def write_domain_judgment_workspace(
+    *,
+    domain: str,
+    trial_id: str,
+    outcome_id: str,
+    workspace_root: str | Path,
+    trial_workspace_dir: str | Path,
+    upstream_artifact_paths: dict[str, str | Path],
+    outcome_definition: dict,
+    rob2_settings: dict,
+    judgment_artifact: dict,
+) -> OutcomeWorkspaceManifest:
+    _validate_domain_name(domain)
+    root = outcome_workspace_dir(workspace_root, outcome_id)
+    artifact_path = root / f"{domain}-judgment.json"
+    _write_json(artifact_path, judgment_artifact)
+
+    upstream_hashes = {
+        artifact_id: file_sha256(path)
+        for artifact_id, path in sorted(upstream_artifact_paths.items())
+        if Path(path).exists()
+    }
+    identity = build_outcome_artifact_identity(
+        artifact_id=judgment_artifact.get("artifact_id", f"{domain}-judgment:{outcome_id}"),
+        schema_version=judgment_artifact.get("schema_version", f"{domain}-judgment-v1"),
+        producer=f"{domain}-deterministic-judge",
+        producer_version=judgment_artifact.get("judge_version", "unknown-judge"),
+        content_hash=file_sha256(artifact_path),
+        upstream_trial_workspace_hashes=upstream_hashes,
+        outcome_definition=outcome_definition,
+        rob2_settings=rob2_settings,
+        config={
+            "judge_version": judgment_artifact.get("judge_version", ""),
+            "rule_table_version": judgment_artifact.get("rule_table_version", ""),
+            "schema_version": judgment_artifact.get("schema_version", ""),
+        },
+    )
+    artifacts = _existing_outcome_artifacts(workspace_root, outcome_id, identity)
+    return write_outcome_workspace_manifest(
+        trial_id=trial_id,
+        outcome_id=outcome_id,
+        workspace_root=workspace_root,
+        trial_workspace_dir=trial_workspace_dir,
+        upstream_artifact_paths=upstream_artifact_paths,
+        outcome_definition=outcome_definition,
+        rob2_settings=rob2_settings,
+        artifacts=[*artifacts, identity],
+    )
+
+
 def write_d1_engineering_diagnostics_workspace(
     *,
     trial_id: str,
@@ -962,6 +1069,49 @@ def _d1_sq_answer_artifact_with_validation(artifact: dict) -> dict:
     return {**artifact, "validation": validation}
 
 
+def _domain_sq_answer_artifact_with_validation(artifact: dict) -> dict:
+    invalid_answers = []
+    missing_support_metadata = []
+    valid_answers = {"Y", "PY", "PN", "N", "NI", "NA"}
+    required_support_fields = {
+        "support_level",
+        "support_rationale",
+        "packet_artifact_id",
+        "decision_table_artifact_id",
+    }
+    for answer in artifact.get("answers", []):
+        sq_id = str(answer.get("sq_id", ""))
+        if answer.get("answer") not in valid_answers:
+            invalid_answers.append(
+                {
+                    "sq_id": sq_id,
+                    "answer": answer.get("answer"),
+                    "reason": "Answer is not a canonical RoB 2 SQ answer.",
+                }
+            )
+        missing = [
+            field
+            for field in sorted(required_support_fields)
+            if not str(answer.get(field, "")).strip()
+        ]
+        if missing:
+            missing_support_metadata.append({"sq_id": sq_id, "missing_fields": missing})
+
+    validation = dict(artifact.get("validation") or {})
+    validation["invalid_answers"] = invalid_answers
+    validation["missing_support_metadata"] = missing_support_metadata
+    if invalid_answers or missing_support_metadata:
+        validation["status"] = "invalid"
+    else:
+        validation["status"] = validation.get("status") or "validated"
+    return {**artifact, "validation": validation}
+
+
+def _validate_domain_name(domain: str) -> None:
+    if domain not in {"d1", "d2", "d3", "d4", "d5"}:
+        raise ValueError("domain must be one of d1, d2, d3, d4, or d5")
+
+
 def _file_artifact_identity(
     *,
     artifact_id: str,
@@ -1095,6 +1245,8 @@ __all__ = [
     "write_d1_judgment_workspace",
     "write_d1_engineering_diagnostics_workspace",
     "write_d1_sq_answer_workspace",
+    "write_domain_judgment_workspace",
+    "write_domain_sq_answer_workspace",
     "write_outcome_normalization_workspace",
     "write_evidence_store_trial_workspace",
     "write_parse_trial_workspace",
