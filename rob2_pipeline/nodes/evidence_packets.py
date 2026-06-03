@@ -23,10 +23,19 @@ from rob2_pipeline.nodes.evidence_packet_grading import (
     packet_readiness,
     source_to_fact,
 )
-from rob2_pipeline.nodes.evidence_source_selection import candidate_sources
+from rob2_pipeline.nodes.evidence_source_selection import (
+    DOMAIN_SOURCE_ROLE_PREFERENCES,
+    candidate_sources,
+)
 from rob2_pipeline.nodes.evidence_source_selection import role_rank
 from rob2_pipeline.state import RoB2State
-from rob2_pipeline.types import DecisionTable, EvidenceFact, EvidencePacket, RetrievalGrade
+from rob2_pipeline.types import (
+    DecisionTable,
+    EvidenceFact,
+    EvidencePacket,
+    PacketContract,
+    RetrievalGrade,
+)
 
 
 METHODOLOGY_BY_DOMAIN: dict[str, DomainMethodology] = {
@@ -164,6 +173,7 @@ def _build_packet_for_contract(
         domain=contract.domain,
         outcome=str(state.get("outcome", "")),
         required_evidence=list(contract.required_evidence),
+        contract=build_packet_contract(contract, decision_table),
         sources=selected,
         candidate_facts=facts,
         gaps=gaps,
@@ -176,6 +186,25 @@ def _build_packet_for_contract(
         negative_flags=flags,
         packet_grade=grade_packet(retrieval_confidence, missing, flags),
         packet_readiness=readiness,
+    )
+
+
+def build_packet_contract(
+    contract: EvidenceContract, decision_table: DecisionTable
+) -> PacketContract:
+    return PacketContract(
+        artifact_id=f"packet-contract:{contract.domain}:{contract.sq_id}",
+        schema_version="1.0",
+        sq_id=contract.sq_id,
+        domain=contract.domain,
+        required_evidence=list(contract.required_evidence),
+        allowed_answers=list(decision_table.get("allowed_answers", [])),
+        outcome_binding_status=(
+            "outcome_bound" if contract.outcome_bound else "trial_level"
+        ),
+        source_hierarchy=list(DOMAIN_SOURCE_ROLE_PREFERENCES.get(contract.domain, [])),
+        needs_denominator=contract.needs_denominator,
+        needs_prespecification=contract.needs_prespecification,
     )
 
 

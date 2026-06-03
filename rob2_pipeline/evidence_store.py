@@ -240,6 +240,33 @@ class EvidenceGap(BaseModel):
     reason: str = Field(min_length=1)
 
 
+class DecisionTableRecord(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    artifact_id: str = Field(min_length=1)
+    schema_version: str = Field(min_length=1)
+    sq_id: str = Field(min_length=1)
+    allowed_answers: list[str] = Field(min_length=1)
+    rows: list[dict] = Field(default_factory=list)
+    default_insufficient_evidence_answer: str = Field(min_length=1)
+    classifier_instruction: str = Field(min_length=1)
+
+
+class PacketContractRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_id: str = Field(min_length=1)
+    schema_version: str = Field(min_length=1)
+    sq_id: str = Field(min_length=1)
+    domain: str = Field(min_length=1)
+    required_evidence: list[str] = Field(min_length=1)
+    allowed_answers: list[str] = Field(min_length=1)
+    outcome_binding_status: Literal["outcome_bound", "trial_level"]
+    source_hierarchy: list[str] = Field(min_length=1)
+    needs_denominator: bool = False
+    needs_prespecification: bool = False
+
+
 class EvidencePacketRecord(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -249,12 +276,13 @@ class EvidencePacketRecord(BaseModel):
     domain: str = Field(min_length=1)
     outcome: str = Field(min_length=1)
     required_evidence: list[str] = Field(min_length=1)
+    contract: PacketContractRecord
     sources: list[dict] = Field(default_factory=list)
     candidate_facts: list[dict] = Field(default_factory=list)
     gaps: list[EvidenceGap] = Field(default_factory=list)
     failed_claims: list[EvidenceFactRecord] = Field(default_factory=list)
     contradictions: list[dict] = Field(default_factory=list)
-    decision_table: dict = Field(default_factory=dict)
+    decision_table: DecisionTableRecord
     text: str = ""
     retrieval_confidence: float = Field(ge=0.0, le=1.0)
     missing_evidence: list[str] = Field(default_factory=list)
@@ -266,6 +294,11 @@ class EvidencePacketRecord(BaseModel):
         expected_prefix = f"evidence-packet:{self.domain}:{self.sq_id}"
         if self.artifact_id != expected_prefix:
             raise ValueError("packet artifact_id must match domain and sq_id")
+        expected_contract = f"packet-contract:{self.domain}:{self.sq_id}"
+        if self.contract.artifact_id != expected_contract:
+            raise ValueError("contract artifact_id must match domain and sq_id")
+        if self.contract.allowed_answers != self.decision_table.allowed_answers:
+            raise ValueError("contract allowed_answers must match decision table")
         return self
 
 

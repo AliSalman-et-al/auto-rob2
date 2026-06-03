@@ -179,6 +179,78 @@ def test_packet_includes_decision_table_with_default_insufficient_evidence_row()
     assert ni_row["insufficient_evidence_default"] is True
 
 
+def test_d2_d5_packets_expose_contract_schema_and_source_policy():
+    state = _state_with_chunks(
+        "d5",
+        [
+            {
+                "text": "The protocol prespecified progression-free survival as a secondary endpoint.",
+                "section": "Endpoints",
+                "page_numbers": [12],
+                "score": 0.1,
+                "document_id": "supplement:protocol",
+                "document_name": "protocol.pdf",
+                "document_role": "protocol",
+                "source_kind": "rag_chunk",
+                "source_path": "protocol.pdf",
+            }
+        ],
+        outcome="Progression-Free Survival",
+    )
+
+    result = build_evidence_packets(state)
+
+    for sq_id, packet in result["evidence_packets"].items():
+        if packet["domain"] not in {"d2", "d3", "d4", "d5"}:
+            continue
+        contract = packet["contract"]
+        assert contract["sq_id"] == sq_id
+        assert contract["required_evidence"]
+        assert contract["allowed_answers"] == packet["decision_table"]["allowed_answers"]
+        assert contract["outcome_binding_status"] in {
+            "outcome_bound",
+            "trial_level",
+        }
+        if packet["domain"] in {"d4", "d5"}:
+            assert contract["outcome_binding_status"] == "outcome_bound"
+
+    d5_contract = result["evidence_packets"]["5.1"]["contract"]
+    assert d5_contract["source_hierarchy"] == [
+        "protocol",
+        "sap",
+        "registry",
+        "primary",
+        "appendix",
+    ]
+
+
+def test_d5_packet_record_validates_contract_artifact():
+    state = _state_with_chunks(
+        "d5",
+        [
+            {
+                "text": "The protocol prespecified overall survival as the primary endpoint.",
+                "section": "Endpoints",
+                "page_numbers": [12],
+                "score": 0.1,
+                "document_id": "supplement:protocol",
+                "document_name": "protocol.pdf",
+                "document_role": "protocol",
+                "source_kind": "rag_chunk",
+                "source_path": "protocol.pdf",
+            }
+        ],
+        outcome="Overall Survival",
+    )
+
+    result = build_evidence_packets(state)
+
+    packet = EvidencePacketRecord.model_validate(result["evidence_packets"]["5.1"])
+    assert packet.contract.artifact_id == "packet-contract:d5:5.1"
+    assert packet.contract.allowed_answers == packet.decision_table.allowed_answers
+    assert packet.contract.outcome_binding_status == "outcome_bound"
+
+
 def test_packet_block_renders_decision_table_classifier_constraint():
     state = _state_with_chunks(
         "d3",
