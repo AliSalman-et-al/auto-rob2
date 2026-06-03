@@ -148,11 +148,17 @@ class EvidenceStoreArtifact(TypedDict, total=False):
 
 
 class EvidencePacket(TypedDict, total=False):
+    artifact_id: str
+    schema_version: str
     sq_id: str
     domain: str
+    outcome: str
     required_evidence: list[str]
     sources: list[PacketSource]
     candidate_facts: list[EvidenceFact]
+    gaps: list[EvidenceGap]
+    failed_claims: list[EvidenceFact]
+    contradictions: list[dict]
     text: str
     retrieval_confidence: float
     missing_evidence: list[str]

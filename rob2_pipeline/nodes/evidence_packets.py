@@ -6,7 +6,10 @@ from rob2_pipeline.nodes.evidence_contracts import CONTRACTS, EvidenceContract
 from rob2_pipeline.nodes.evidence_packet_grading import (
     compact,
     confidence,
+    contradictions_for_sources,
     grade_packet,
+    missing_label_to_failed_claim,
+    missing_label_to_gap,
     missing_evidence,
     negative_flags,
     source_to_fact,
@@ -107,12 +110,28 @@ def _build_packet_for_contract(
         for source in selected
         if source.get("text")
     ]
+    gaps = [missing_label_to_gap(contract, label) for label in missing]
+    failed_claims = [
+        missing_label_to_failed_claim(
+            contract,
+            label,
+            selected[0] if selected else None,
+        )
+        for label in missing
+    ]
+    contradictions = contradictions_for_sources(contract, selected)
     return EvidencePacket(
+        artifact_id=f"evidence-packet:{contract.domain}:{contract.sq_id}",
+        schema_version="1.0",
         sq_id=contract.sq_id,
         domain=contract.domain,
+        outcome=str(state.get("outcome", "")),
         required_evidence=list(contract.required_evidence),
         sources=selected,
         candidate_facts=facts,
+        gaps=gaps,
+        failed_claims=failed_claims,
+        contradictions=contradictions,
         text=text,
         retrieval_confidence=retrieval_confidence,
         missing_evidence=missing,

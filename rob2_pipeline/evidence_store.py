@@ -80,7 +80,9 @@ class EvidenceFactRecord(BaseModel):
     @model_validator(mode="after")
     def supported_facts_require_quote(self) -> EvidenceFactRecord:
         if self.support_level == "unsupported" and self.support_status == "supported":
-            raise ValueError("unsupported claims cannot be selected as supporting facts")
+            raise ValueError(
+                "unsupported claims cannot be selected as supporting facts"
+            )
         if self.support_status == "supported" and not self.quote.strip():
             raise ValueError("supported evidence facts require a quote")
         if self.support_status == "failed" and not self.failure_reason.strip():
@@ -112,6 +114,34 @@ class EvidenceGap(BaseModel):
     sq_ids: list[str] = Field(default_factory=list)
     missing_evidence: str = Field(min_length=1)
     reason: str = Field(min_length=1)
+
+
+class EvidencePacketRecord(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    artifact_id: str = Field(min_length=1)
+    schema_version: str = Field(min_length=1)
+    sq_id: str = Field(min_length=1)
+    domain: str = Field(min_length=1)
+    outcome: str = Field(min_length=1)
+    required_evidence: list[str] = Field(min_length=1)
+    sources: list[dict] = Field(default_factory=list)
+    candidate_facts: list[dict] = Field(default_factory=list)
+    gaps: list[EvidenceGap] = Field(default_factory=list)
+    failed_claims: list[EvidenceFactRecord] = Field(default_factory=list)
+    contradictions: list[dict] = Field(default_factory=list)
+    text: str = ""
+    retrieval_confidence: float = Field(ge=0.0, le=1.0)
+    missing_evidence: list[str] = Field(default_factory=list)
+    negative_flags: list[str] = Field(default_factory=list)
+    packet_grade: dict
+
+    @model_validator(mode="after")
+    def packet_identity_matches_sq(self) -> EvidencePacketRecord:
+        expected_prefix = f"evidence-packet:{self.domain}:{self.sq_id}"
+        if self.artifact_id != expected_prefix:
+            raise ValueError("packet artifact_id must match domain and sq_id")
+        return self
 
 
 class EvidenceStore(BaseModel):

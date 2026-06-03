@@ -1,5 +1,6 @@
 from rob2_pipeline.models import empty_paper_evidence
 from rob2_pipeline.evidence_store import EvidenceFactRecord
+from rob2_pipeline.evidence_store import EvidencePacketRecord
 from rob2_pipeline.nodes.evidence_packets import (
     build_evidence_packets,
     packet_block_for_domain,
@@ -53,6 +54,104 @@ def test_builds_sq_specific_packet_for_allocation_concealment():
     assert "conceal" not in packet["missing_evidence"]
     assert packet["sources"][0]["page_numbers"] == [3]
     assert packet["retrieval_confidence"] > 0
+
+
+def test_d1_packet_schema_validates_required_artifact_fields():
+    state = _state_with_chunks(
+        "d1",
+        [
+            {
+                "text": "Participants were randomized by a computer-generated sequence.",
+                "section": "Methods",
+                "page_numbers": [2],
+                "score": 0.1,
+                "document_id": "primary:TITAN",
+                "document_name": "TITAN primary report",
+                "document_role": "primary",
+                "source_kind": "rag_chunk",
+                "source_path": "inputs/benchmark/TITAN.pdf",
+            }
+        ],
+    )
+
+    result = build_evidence_packets(state)
+
+    packet = EvidencePacketRecord.model_validate(result["evidence_packets"]["1.1"])
+    assert packet.artifact_id == "evidence-packet:d1:1.1"
+    assert packet.schema_version == "1.0"
+    assert packet.outcome == "Progression-Free Survival"
+
+
+def test_unsupported_d1_claims_appear_as_gaps_and_failed_claims():
+    state = _state_with_chunks(
+        "d1",
+        [
+            {
+                "text": "The study describes eligibility criteria and clinic visits.",
+                "section": "Methods",
+                "page_numbers": [2],
+                "score": 0.1,
+                "document_id": "primary:TITAN",
+                "document_name": "TITAN primary report",
+                "document_role": "primary",
+                "source_kind": "rag_chunk",
+                "source_path": "inputs/benchmark/TITAN.pdf",
+            }
+        ],
+    )
+
+    result = build_evidence_packets(state)
+
+    packet = result["evidence_packets"]["1.2"]
+    assert {gap["missing_evidence"] for gap in packet["gaps"]} == {
+        "allocation_concealment",
+        "enrolment_timing",
+    }
+    assert {claim["fact_type"] for claim in packet["failed_claims"]} == {
+        "allocation_concealment",
+        "enrolment_timing",
+    }
+    assert all(claim["support_status"] == "failed" for claim in packet["failed_claims"])
+
+
+def test_d1_contradictions_remain_visible_when_dominant_source_is_selected():
+    state = _state_with_chunks(
+        "d1",
+        [
+            {
+                "text": "Allocation was concealed through a central web randomization system before enrolment.",
+                "section": "Methods",
+                "page_numbers": [3],
+                "score": 0.1,
+                "document_id": "primary:TITAN",
+                "document_name": "TITAN primary report",
+                "document_role": "primary",
+                "source_kind": "rag_chunk",
+                "source_path": "inputs/benchmark/TITAN.pdf",
+            },
+            {
+                "text": "Allocation was not concealed before participants were assigned.",
+                "section": "Protocol",
+                "page_numbers": [12],
+                "score": 0.2,
+                "document_id": "supplement:protocol",
+                "document_name": "TITAN protocol",
+                "document_role": "protocol",
+                "source_kind": "rag_chunk",
+                "source_path": "inputs/benchmark/supplement/TITAN/protocol.pdf",
+            },
+        ],
+    )
+
+    result = build_evidence_packets(state)
+
+    packet = result["evidence_packets"]["1.2"]
+    assert packet["sources"][0]["document_role"] == "primary"
+    assert packet["contradictions"]
+    contradiction = packet["contradictions"][0]
+    assert contradiction["label"] == "allocation_concealment"
+    assert contradiction["dominant_source"]["document_role"] == "primary"
+    assert contradiction["conflicting_source"]["document_role"] == "protocol"
 
 
 def test_packet_candidate_facts_validate_against_base_evidence_fact_contract():
