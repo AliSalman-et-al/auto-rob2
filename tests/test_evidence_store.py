@@ -44,6 +44,36 @@ def test_supported_evidence_fact_validates_required_provenance_and_support():
     assert fact.provenance.document_role == "primary"
 
 
+def test_evidence_fact_accepts_only_canonical_support_levels():
+    for level in ["strong", "moderate", "weak"]:
+        assert EvidenceFactRecord.model_validate(
+            _valid_fact(support_level=level)
+        ).support_level == level
+    assert (
+        EvidenceFactRecord.model_validate(
+            _valid_fact(
+                support_level="unsupported",
+                support_status="failed",
+                quote="",
+                failure_reason="Selected source does not support the claim.",
+            )
+        ).support_level
+        == "unsupported"
+    )
+
+    with pytest.raises(ValidationError):
+        EvidenceFactRecord.model_validate(_valid_fact(support_level="low"))
+
+
+def test_unsupported_claims_cannot_be_supported_facts_but_weak_claims_can():
+    weak = EvidenceFactRecord.model_validate(_valid_fact(support_level="weak"))
+
+    assert weak.support_status == "supported"
+
+    with pytest.raises(ValidationError):
+        EvidenceFactRecord.model_validate(_valid_fact(support_level="unsupported"))
+
+
 def test_family_specific_facts_require_fields_needed_for_packet_construction():
     fact = EvidenceFactRecord.model_validate(
         _valid_fact(
@@ -238,6 +268,99 @@ def test_mine_evidence_families_bounds_llm_prompt_to_selected_packet_sources():
     )
     assert "Participants were assigned centrally." in prompts[0]
     assert "full text must not be sent" not in prompts[0]
+
+
+def test_mine_evidence_families_keeps_unsupported_claims_visible_but_unselected():
+    def fake_call(state, prompt, node_name):
+        return (
+            json.dumps(
+                {
+                    "facts": [
+                        {
+                            "artifact_id": "evidence-fact:d1:1.1:weak-randomization",
+                            "fact_type": "randomization_sequence",
+                            "domain": "d1",
+                            "sq_ids": ["1.1"],
+                            "claim_type": "trial_method",
+                            "claim": "Participants were assigned by an unclear random method.",
+                            "quote": "Participants were assigned by an unclear random method.",
+                            "support_level": "weak",
+                            "support_status": "supported",
+                            "uncertainty": True,
+                            "family": "randomization_allocation",
+                            "family_fields": {
+                                "method": "unclear random method",
+                                "allocation_concealment": "not reported",
+                                "unit_of_randomization": "participant",
+                            },
+                            "provenance": {
+                                "document_id": "primary:TITAN",
+                                "document_name": "TITAN primary report",
+                                "document_role": "primary",
+                                "source_kind": "rag_chunk",
+                                "source_path": "inputs/benchmark/TITAN.pdf",
+                                "source_section": "Methods",
+                                "page_numbers": [4],
+                            },
+                        },
+                        {
+                            "artifact_id": "evidence-fact:d1:1.1:unsupported-allocation",
+                            "fact_type": "allocation_concealment",
+                            "domain": "d1",
+                            "sq_ids": ["1.1"],
+                            "claim_type": "trial_method",
+                            "claim": "Allocation concealment was adequate.",
+                            "quote": "",
+                            "support_level": "unsupported",
+                            "support_status": "failed",
+                            "uncertainty": True,
+                            "provenance": {
+                                "document_id": "primary:TITAN",
+                                "document_name": "TITAN primary report",
+                                "document_role": "primary",
+                                "source_kind": "rag_chunk",
+                                "source_path": "inputs/benchmark/TITAN.pdf",
+                                "source_section": "Methods",
+                                "page_numbers": [4],
+                            },
+                            "failure_reason": "Selected source does not support this claim.",
+                        },
+                    ]
+                }
+            ),
+            [{"node": node_name, "cache_hit": False}],
+            None,
+        )
+
+    state = {
+        "pdf_path": "inputs/benchmark/TITAN.pdf",
+        "outcome": "Overall Survival",
+        "evidence_packets": {
+            "1.1": {
+                "sq_id": "1.1",
+                "domain": "d1",
+                "sources": [
+                    {
+                        "text": "Participants were assigned by an unclear random method.",
+                        "section": "Methods",
+                        "page_numbers": [4],
+                        "document_id": "primary:TITAN",
+                        "document_name": "TITAN primary report",
+                        "document_role": "primary",
+                        "source_kind": "rag_chunk",
+                        "source_path": "inputs/benchmark/TITAN.pdf",
+                    }
+                ],
+            }
+        },
+    }
+
+    store = mine_evidence_families(state, call_fn=fake_call)["evidence_store"]
+
+    assert store["supported_facts"][0]["support_level"] == "weak"
+    assert store["supported_facts"][0]["support_status"] == "supported"
+    assert store["failed_claims"][0]["support_level"] == "unsupported"
+    assert store["failed_claims"][0]["support_status"] == "failed"
 
 
 def test_mine_evidence_families_retries_then_records_failed_claim_on_bad_schema():

@@ -77,6 +77,8 @@ class EvidenceFactRecord(BaseModel):
 
     @model_validator(mode="after")
     def supported_facts_require_quote(self) -> EvidenceFactRecord:
+        if self.support_level == "unsupported" and self.support_status == "supported":
+            raise ValueError("unsupported claims cannot be selected as supporting facts")
         if self.support_status == "supported" and not self.quote.strip():
             raise ValueError("supported evidence facts require a quote")
         if self.support_status == "failed" and not self.failure_reason.strip():
@@ -184,7 +186,11 @@ def mine_evidence_families(
         )
         llm_log.extend(log)
         try:
-            supported.extend(_validate_family_response(response, family, sq_id))
+            next_supported, next_failed = _validate_family_response(
+                response, family, sq_id
+            )
+            supported.extend(next_supported)
+            failed.extend(next_failed)
             continue
         except Exception as exc:  # noqa: BLE001
             repair_prompt = _build_repair_prompt(prompt, exc)
@@ -196,7 +202,11 @@ def mine_evidence_families(
         )
         llm_log.extend(repair_log)
         try:
-            supported.extend(_validate_family_response(repair_response, family, sq_id))
+            next_supported, next_failed = _validate_family_response(
+                repair_response, family, sq_id
+            )
+            supported.extend(next_supported)
+            failed.extend(next_failed)
         except Exception as repair_exc:  # noqa: BLE001
             failed.append(_failed_family_claim(state, sq_id, family, zones, repair_exc))
 
@@ -268,16 +278,22 @@ def _build_repair_prompt(original_prompt: str, exc: Exception) -> str:
 
 def _validate_family_response(
     response: str, family: EvidenceFamily, sq_id: str
-) -> list[EvidenceFactRecord]:
+) -> tuple[list[EvidenceFactRecord], list[EvidenceFactRecord]]:
     payload = json.loads(response)
     raw_facts = payload["facts"]
     facts = [EvidenceFactRecord.model_validate(raw) for raw in raw_facts]
+    supported: list[EvidenceFactRecord] = []
+    failed: list[EvidenceFactRecord] = []
     for fact in facts:
-        if fact.family != family:
-            raise ValueError(f"expected family {family!r}, got {fact.family!r}")
         if sq_id not in fact.sq_ids:
             raise ValueError(f"fact {fact.artifact_id!r} does not include SQ {sq_id}")
-    return facts
+        if fact.support_status == "failed":
+            failed.append(fact)
+            continue
+        if fact.family != family:
+            raise ValueError(f"expected family {family!r}, got {fact.family!r}")
+        supported.append(fact)
+    return supported, failed
 
 
 def _failed_family_claim(
