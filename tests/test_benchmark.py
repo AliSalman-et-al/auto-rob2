@@ -1400,9 +1400,28 @@ def test_write_benchmark_report_emits_machine_readable_schema(tmp_path):
                 "overall_judgment": "Low",
             },
             "packet_quality": {
-                "D1": {"grade": "strong"},
+                "D1": {
+                    "grade": "strong",
+                    "packet_readiness": {"status": "ready"},
+                },
             },
-            "schema_failures": [],
+            "schema_failures": [
+                {"domain": "D4", "error": "missing required answer"}
+            ],
+            "support_constraints": [
+                {
+                    "constraint_type": "quote_untraceable",
+                    "sq_id": "4.1",
+                    "domain": "D4",
+                    "reason": "quoted text was not found",
+                },
+                {
+                    "constraint_type": "semantic_support_conflict",
+                    "sq_id": "5.1",
+                    "domain": "D5",
+                    "reason": "quote does not support claim",
+                },
+            ],
             "timing": {
                 "total_wall_ms": 100,
                 "llm_total_ms": 40,
@@ -1410,6 +1429,9 @@ def test_write_benchmark_report_emits_machine_readable_schema(tmp_path):
                 "llm_cache_hits": 1,
                 "llm_repairs": 1,
                 "llm_parse_errors": 0,
+                "llm_input_tokens": 25,
+                "llm_output_tokens": 9,
+                "llm_cost_usd": 0.0017,
                 "slowest_nodes": [],
                 "_node_spans": [{"node": "private", "duration_ms": 1}],
             },
@@ -1432,7 +1454,11 @@ def test_write_benchmark_report_emits_machine_readable_schema(tmp_path):
         "timing",
         "parser_metrics",
         "cache_reuse",
+        "packet_statuses",
+        "quote_traceability",
+        "schema_validation_failures",
         "llm_latency",
+        "llm_usage",
         "cost_metadata",
     }
 
@@ -1446,11 +1472,77 @@ def test_write_benchmark_report_emits_machine_readable_schema(tmp_path):
 
     assessment = benchmark_json["assessments"][0]
     assert assessment["agreement"]["comparison"]["Overall"] is True
-    assert assessment["packet_quality"] == {"D1": {"grade": "strong"}}
-    assert assessment["schema_failures"] == []
+    assert assessment["packet_quality"] == {
+        "D1": {"grade": "strong", "packet_readiness": {"status": "ready"}}
+    }
+    assert assessment["schema_failures"] == [
+        {"domain": "D4", "error": "missing required answer"}
+    ]
     assert assessment["diagnostics"]["timing"]["llm_calls"] == 2
+    assert assessment["diagnostics"]["parser_metrics"] == {
+        "llm_repairs": 1,
+        "llm_parse_errors": 0,
+        "schema_validation_failures": 1,
+    }
+    assert assessment["diagnostics"]["packet_statuses"] == {
+        "D1": {"status": "ready", "grade": "strong"}
+    }
+    assert assessment["diagnostics"]["quote_traceability"] == {
+        "quote_untraceable": 1,
+        "semantic_support_conflict": 1,
+        "failures": [
+            {
+                "constraint_type": "quote_untraceable",
+                "sq_id": "4.1",
+                "domain": "D4",
+                "reason": "quoted text was not found",
+            },
+            {
+                "constraint_type": "semantic_support_conflict",
+                "sq_id": "5.1",
+                "domain": "D5",
+                "reason": "quote does not support claim",
+            },
+        ],
+    }
+    assert assessment["diagnostics"]["schema_validation_failures"] == [
+        {"domain": "D4", "error": "missing required answer"}
+    ]
+    assert assessment["diagnostics"]["llm_usage"] == {
+        "input_tokens": 25,
+        "output_tokens": 9,
+    }
+    assert assessment["diagnostics"]["cost_metadata"] == {
+        "input_tokens": 25,
+        "output_tokens": 9,
+        "estimated_cost_usd": 0.0017,
+    }
+    aggregate_diagnostics = benchmark_json["aggregate"]["diagnostics"]
+    assert aggregate_diagnostics["parser_metrics"] == {
+        "llm_repairs": 1,
+        "llm_parse_errors": 0,
+        "schema_validation_failures": 1,
+    }
+    assert aggregate_diagnostics["cache_reuse"] == {"llm_cache_hits": 1}
+    assert aggregate_diagnostics["packet_statuses"] == {
+        "by_status": {"ready": 1},
+        "by_grade": {"strong": 1},
+    }
+    assert aggregate_diagnostics["quote_traceability"] == {
+        "quote_untraceable": 1,
+        "semantic_support_conflict": 1,
+        "failure_count": 2,
+    }
+    assert aggregate_diagnostics["llm_usage"] == {
+        "input_tokens": 25,
+        "output_tokens": 9,
+    }
+    assert aggregate_diagnostics["cost_metadata"] == {"estimated_cost_usd": 0.0017}
     assert "_node_spans" not in json.dumps(assessment["diagnostics"])
     assert "timing" not in assessment["agreement"]
+    assert "Performance Warnings" not in (
+        tmp_path / "out" / "benchmark_report.md"
+    ).read_text(encoding="utf-8")
 
 
 def test_write_benchmark_report_renders_adjudication_summary(tmp_path):

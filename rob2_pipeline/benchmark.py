@@ -177,6 +177,13 @@ def _coerce_int_ms(value: object) -> int:
         return 0
 
 
+def _coerce_float(value: object) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _format_seconds(value_ms: object) -> str:
     return f"{_coerce_int_ms(value_ms) / 1000:.1f}s"
 
@@ -196,6 +203,9 @@ def _summarize_trace_timing(trace_path: Path, total_wall_ms: int) -> dict[str, A
         "llm_cache_hits": 0,
         "llm_repairs": 0,
         "llm_parse_errors": 0,
+        "llm_input_tokens": 0,
+        "llm_output_tokens": 0,
+        "llm_cost_usd": 0.0,
         "adjudication_llm_calls": 0,
         "adjudication_llm_total_ms": 0,
         "adjudication_llm_input_tokens": 0,
@@ -223,6 +233,9 @@ def _summarize_trace_timing(trace_path: Path, total_wall_ms: int) -> dict[str, A
     llm_cache_hits = 0
     llm_repairs = 0
     llm_parse_errors = 0
+    llm_input_tokens = 0
+    llm_output_tokens = 0
+    llm_cost_usd = 0.0
     llm_by_node: dict[str, dict[str, int]] = {}
     for call in llm_calls:
         node = _strip(call.get("node")) or "unknown"
@@ -243,6 +256,9 @@ def _summarize_trace_timing(trace_path: Path, total_wall_ms: int) -> dict[str, A
         node_summary["latency_ms"] += latency_ms
         node_summary["input_tokens"] += _coerce_int_ms(call.get("input_tokens"))
         node_summary["output_tokens"] += _coerce_int_ms(call.get("output_tokens"))
+        llm_input_tokens += _coerce_int_ms(call.get("input_tokens"))
+        llm_output_tokens += _coerce_int_ms(call.get("output_tokens"))
+        llm_cost_usd += _coerce_float(call.get("cost_usd"))
         if call.get("cache_hit"):
             node_summary["cache_hits"] += 1
             llm_cache_hits += 1
@@ -292,6 +308,9 @@ def _summarize_trace_timing(trace_path: Path, total_wall_ms: int) -> dict[str, A
             "llm_cache_hits": llm_cache_hits,
             "llm_repairs": llm_repairs,
             "llm_parse_errors": llm_parse_errors,
+            "llm_input_tokens": llm_input_tokens,
+            "llm_output_tokens": llm_output_tokens,
+            "llm_cost_usd": llm_cost_usd,
             "adjudication_llm_calls": len(adjudication_llm_calls),
             "adjudication_llm_total_ms": adjudication_llm_total_ms,
             "adjudication_llm_input_tokens": adjudication_llm_input_tokens,
@@ -438,23 +457,95 @@ def _artifact_manifest(
     }
 
 
-def _parser_metrics_from_timing(timing: dict[str, Any]) -> dict[str, int]:
+def _parser_metrics_from_timing(
+    timing: dict[str, Any], schema_failures: list[dict[str, Any]]
+) -> dict[str, int]:
     return {
         "llm_repairs": _coerce_int_ms(timing.get("llm_repairs")),
         "llm_parse_errors": _coerce_int_ms(timing.get("llm_parse_errors")),
+        "schema_validation_failures": len(schema_failures),
     }
 
 
-def _cost_metadata_from_timing(timing: dict[str, Any]) -> dict[str, int | None]:
+def _packet_statuses(packet_quality: object) -> dict[str, dict[str, Any]]:
+    if not isinstance(packet_quality, dict):
+        return {}
+    statuses: dict[str, dict[str, Any]] = {}
+    for key, packet in sorted(packet_quality.items()):
+        if not isinstance(packet, dict):
+            continue
+        readiness = packet.get("packet_readiness") or {}
+        status = ""
+        if isinstance(readiness, dict):
+            status = _strip(readiness.get("status"))
+        status = status or _strip(packet.get("status")) or _strip(packet.get("readiness"))
+        raw_grade = packet.get("grade")
+        packet_grade = packet.get("packet_grade")
+        if not raw_grade and isinstance(packet_grade, dict):
+            raw_grade = packet_grade.get("grade")
+        elif not raw_grade:
+            raw_grade = packet_grade
+        grade = _strip(raw_grade)
+        statuses[_strip(key)] = {
+            "status": status or "unknown",
+            "grade": grade or "unknown",
+        }
+    return statuses
+
+
+def _quote_traceability_diagnostics(support_constraints: object) -> dict[str, Any]:
+    traceability_types = {
+        "quote_untraceable",
+        "semantic_support_conflict",
+        "missing_required_evidence",
+        "wrong_outcome_context",
+    }
+    counts = {
+        "quote_untraceable": 0,
+        "semantic_support_conflict": 0,
+    }
+    failures = []
+    if not isinstance(support_constraints, list):
+        return {**counts, "failures": failures}
+    for constraint in support_constraints:
+        if not isinstance(constraint, dict):
+            continue
+        constraint_type = _strip(constraint.get("constraint_type"))
+        if constraint_type not in traceability_types:
+            continue
+        if constraint_type in counts:
+            counts[constraint_type] += 1
+        failures.append(
+            {
+                "constraint_type": constraint_type,
+                "sq_id": _strip(constraint.get("sq_id")),
+                "domain": _strip(constraint.get("domain")).upper(),
+                "reason": _strip(constraint.get("reason")),
+            }
+        )
+    return {**counts, "failures": failures}
+
+
+def _llm_usage_from_timing(timing: dict[str, Any]) -> dict[str, int]:
     return {
-        "input_tokens": _coerce_int_ms(timing.get("adjudication_llm_input_tokens")),
-        "output_tokens": _coerce_int_ms(timing.get("adjudication_llm_output_tokens")),
-        "estimated_cost_usd": None,
+        "input_tokens": _coerce_int_ms(timing.get("llm_input_tokens")),
+        "output_tokens": _coerce_int_ms(timing.get("llm_output_tokens")),
+    }
+
+
+def _cost_metadata_from_timing(timing: dict[str, Any]) -> dict[str, int | float | None]:
+    usage = _llm_usage_from_timing(timing)
+    cost = _coerce_float(timing.get("llm_cost_usd"))
+    return {
+        "input_tokens": usage["input_tokens"],
+        "output_tokens": usage["output_tokens"],
+        "estimated_cost_usd": cost if cost else None,
     }
 
 
 def _benchmark_assessment_record(result: dict[str, Any]) -> dict[str, Any]:
     timing = _timing_without_private_fields(result.get("timing") or {})
+    schema_failures = result.get("schema_failures") or []
     return {
         "id": _strip(result.get("id")),
         "trial": _strip(result.get("trial")),
@@ -473,20 +564,96 @@ def _benchmark_assessment_record(result: dict[str, Any]) -> dict[str, Any]:
             "audit_caught_mismatches": result.get("audit_caught_mismatches") or {},
         },
         "packet_quality": result.get("packet_quality") or {},
-        "schema_failures": result.get("schema_failures") or [],
+        "schema_failures": schema_failures,
         "artifacts": _assessment_artifact_paths(result),
         "diagnostics": {
             "timing": timing,
             "mismatch_classification": result.get("mismatch_classification") or {},
-            "parser_metrics": _parser_metrics_from_timing(timing),
+            "parser_metrics": _parser_metrics_from_timing(timing, schema_failures),
             "cache_reuse": {
                 "llm_cache_hits": _coerce_int_ms(timing.get("llm_cache_hits")),
             },
+            "packet_statuses": _packet_statuses(result.get("packet_quality")),
+            "quote_traceability": _quote_traceability_diagnostics(
+                result.get("support_constraints")
+            ),
+            "schema_validation_failures": schema_failures,
             "llm_latency": {
                 "llm_calls": _coerce_int_ms(timing.get("llm_calls")),
                 "llm_total_ms": _coerce_int_ms(timing.get("llm_total_ms")),
             },
+            "llm_usage": _llm_usage_from_timing(timing),
             "cost_metadata": _cost_metadata_from_timing(timing),
+        },
+    }
+
+
+def _summarize_engineering_diagnostics(results: list[dict[str, Any]]) -> dict[str, Any]:
+    parser_metrics = {
+        "llm_repairs": 0,
+        "llm_parse_errors": 0,
+        "schema_validation_failures": 0,
+    }
+    cache_reuse = {"llm_cache_hits": 0}
+    packet_status_counts: dict[str, int] = {}
+    packet_grade_counts: dict[str, int] = {}
+    quote_traceability = {
+        "quote_untraceable": 0,
+        "semantic_support_conflict": 0,
+        "failure_count": 0,
+    }
+    llm_usage = {"input_tokens": 0, "output_tokens": 0}
+    total_cost = 0.0
+
+    for result in results:
+        timing = result.get("timing") or {}
+        if not isinstance(timing, dict):
+            timing = {}
+        schema_failures = result.get("schema_failures") or []
+        metrics = _parser_metrics_from_timing(timing, schema_failures)
+        parser_metrics["llm_repairs"] += metrics["llm_repairs"]
+        parser_metrics["llm_parse_errors"] += metrics["llm_parse_errors"]
+        parser_metrics["schema_validation_failures"] += metrics[
+            "schema_validation_failures"
+        ]
+        cache_reuse["llm_cache_hits"] += _coerce_int_ms(timing.get("llm_cache_hits"))
+
+        for packet in _packet_statuses(result.get("packet_quality")).values():
+            status = _strip(packet.get("status")) or "unknown"
+            grade = _strip(packet.get("grade")) or "unknown"
+            packet_status_counts[status] = packet_status_counts.get(status, 0) + 1
+            packet_grade_counts[grade] = packet_grade_counts.get(grade, 0) + 1
+
+        traceability = _quote_traceability_diagnostics(
+            result.get("support_constraints")
+        )
+        quote_traceability["quote_untraceable"] += _coerce_int_ms(
+            traceability.get("quote_untraceable")
+        )
+        quote_traceability["semantic_support_conflict"] += _coerce_int_ms(
+            traceability.get("semantic_support_conflict")
+        )
+        quote_traceability["failure_count"] += len(
+            traceability.get("failures") or []
+        )
+
+        usage = _llm_usage_from_timing(timing)
+        llm_usage["input_tokens"] += usage["input_tokens"]
+        llm_usage["output_tokens"] += usage["output_tokens"]
+        total_cost += _coerce_float(timing.get("llm_cost_usd"))
+
+    return {
+        "classification": "engineering_only",
+        "parser_metrics": parser_metrics,
+        "cache_reuse": cache_reuse,
+        "packet_statuses": {
+            "by_status": dict(sorted(packet_status_counts.items())),
+            "by_grade": dict(sorted(packet_grade_counts.items())),
+        },
+        "quote_traceability": quote_traceability,
+        "llm_usage": llm_usage,
+        "cost_metadata": {
+            "estimated_cost_usd": total_cost if total_cost else None,
         },
     }
 
@@ -501,7 +668,7 @@ def _benchmark_schema_envelope(
             "schema_name": "auto_rob2_benchmark_result",
             "schema_version": 1,
             "sections": {
-                "aggregate": "Agreement, confusion, audit, timing, and adjudication summaries across evaluated assessments.",
+                "aggregate": "Agreement, confusion, audit, timing, adjudication, and engineering diagnostic summaries across evaluated assessments.",
                 "assessments": "Per-assessment agreement, artifacts, packet quality, schema failures, and engineering diagnostics.",
                 "artifact_manifest": "SHA-256 references for benchmark workspace and assessment artifacts.",
             },
@@ -512,7 +679,11 @@ def _benchmark_schema_envelope(
                     "mismatch_classification",
                     "parser_metrics",
                     "cache_reuse",
+                    "packet_statuses",
+                    "quote_traceability",
+                    "schema_validation_failures",
                     "llm_latency",
+                    "llm_usage",
                     "cost_metadata",
                 ],
             },
@@ -1027,6 +1198,9 @@ def run_benchmark(
                 or pipeline_output.get("schema_validation_failures")
                 or []
             )
+            trial_result["support_constraints"] = (
+                pipeline_output.get("support_constraints") or []
+            )
             initial_domain_judgments = _derive_initial_domain_judgments(pipeline_output)
             initial_overall_judgment = _normalize_judgment(
                 pipeline_output.get("initial_overall_judgment")
@@ -1391,6 +1565,7 @@ def summarize_benchmark(results) -> dict:
     }
     summary["timing"] = _summarize_timing_results(results)
     summary["adjudication_metrics"] = _summarize_adjudication_results(results)
+    summary["diagnostics"] = _summarize_engineering_diagnostics(results)
     return summary
 
 
