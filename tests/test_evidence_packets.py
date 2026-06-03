@@ -1,4 +1,5 @@
 from rob2_pipeline.models import empty_paper_evidence
+from rob2_pipeline.evidence_store import EvidenceFactRecord
 from rob2_pipeline.nodes.evidence_packets import (
     build_evidence_packets,
     packet_block_for_domain,
@@ -52,6 +53,33 @@ def test_builds_sq_specific_packet_for_allocation_concealment():
     assert "conceal" not in packet["missing_evidence"]
     assert packet["sources"][0]["page_numbers"] == [3]
     assert packet["retrieval_confidence"] > 0
+
+
+def test_packet_candidate_facts_validate_against_base_evidence_fact_contract():
+    state = _state_with_chunks(
+        "d1",
+        [
+            {
+                "text": "Allocation was concealed through a central web randomization system before enrolment.",
+                "section": "Methods",
+                "page_numbers": [3],
+                "score": 0.1,
+                "document_id": "primary:TITAN",
+                "document_name": "TITAN primary report",
+                "document_role": "primary",
+                "source_kind": "rag_chunk",
+                "source_path": "inputs/benchmark/TITAN.pdf",
+            }
+        ],
+    )
+
+    result = build_evidence_packets(state)
+    fact = result["evidence_packets"]["1.2"]["candidate_facts"][0]
+
+    validated = EvidenceFactRecord.model_validate(fact)
+
+    assert validated.artifact_id.startswith("evidence-fact:d1:1.2:")
+    assert validated.provenance.document_id == "primary:TITAN"
 
 
 def test_d3_completeness_packet_flags_missing_denominator():

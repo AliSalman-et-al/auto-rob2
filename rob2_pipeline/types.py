@@ -87,21 +87,43 @@ class PacketSource(TypedDict, total=False):
 
 
 class EvidenceFact(TypedDict, total=False):
+    artifact_id: str
     fact_type: str
     domain: str
     sq_ids: list[str]
+    claim_type: str
     claim: str
     quote: str
     source_section: str
     page_numbers: list[int]
     confidence: float
+    support_level: str
     support_status: str
+    uncertainty: bool
     missing_reason: str
+    failure_reason: str
     document_id: str
     document_name: str
     document_role: str
     source_kind: str
     source_path: str
+    provenance: dict
+
+
+class EvidenceGap(TypedDict, total=False):
+    artifact_id: str
+    domain: str
+    sq_ids: list[str]
+    missing_evidence: str
+    reason: str
+
+
+class EvidenceStoreArtifact(TypedDict, total=False):
+    artifact_id: str
+    schema_version: str
+    supported_facts: list[EvidenceFact]
+    failed_claims: list[EvidenceFact]
+    gaps: list[EvidenceGap]
 
 
 class EvidencePacket(TypedDict, total=False):

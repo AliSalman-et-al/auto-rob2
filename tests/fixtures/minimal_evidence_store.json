@@ -1,0 +1,29 @@
+{
+  "artifact_id": "evidence-store:minimal",
+  "schema_version": "1.0",
+  "supported_facts": [
+    {
+      "artifact_id": "evidence-fact:minimal:d1:1.1",
+      "fact_type": "randomization_sequence",
+      "domain": "d1",
+      "sq_ids": ["1.1"],
+      "claim_type": "trial_method",
+      "claim": "Participants were randomly assigned centrally.",
+      "quote": "Participants were randomly assigned centrally.",
+      "support_level": "strong",
+      "support_status": "supported",
+      "uncertainty": false,
+      "provenance": {
+        "document_id": "primary:minimal",
+        "document_name": "Minimal primary report",
+        "document_role": "primary",
+        "source_kind": "rag_chunk",
+        "source_path": "minimal.pdf",
+        "source_section": "Methods",
+        "page_numbers": [1]
+      }
+    }
+  ],
+  "failed_claims": [],
+  "gaps": []
+}
