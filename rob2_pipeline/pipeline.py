@@ -17,6 +17,8 @@ from rob2_pipeline.trial_workspace import (
     write_outcome_normalization_workspace,
     write_evidence_store_trial_workspace,
     write_parse_trial_workspace,
+    write_support_escalation_diagnostics_workspace,
+    stable_payload_sha256,
 )
 
 
@@ -47,6 +49,7 @@ JSON_OUTPUT_KEYS = (
     "evidence_packets",
     "packet_grades",
     "packet_readiness",
+    "retrieval_repair_artifacts",
     "evidence_facts",
     "selected_evidence_facts",
     "evidence_store",
@@ -63,6 +66,7 @@ JSON_OUTPUT_KEYS = (
     "domain_judgments",
     "domain_rationales",
     "pivotality_tests",
+    "micro_agent_routing_decisions",
     "sq_support_adjudications",
     "overall_judgment",
     "overall_rationale",
@@ -281,6 +285,24 @@ def _write_workspace_artifacts(
             outcome_definition=_outcome_definition_from_state(state),
             rob2_settings=_rob2_settings_from_state(state),
             diagnostics_artifact=_d1_engineering_diagnostics_from_state(state),
+        )
+    if state.get("sq_support_adjudications"):
+        write_support_escalation_diagnostics_workspace(
+            trial_id=base,
+            outcome_id=_outcome_id_from_state(state),
+            workspace_root=output_path / f"{base}_outcome_workspaces",
+            trial_workspace_dir=trial_workspace_dir,
+            upstream_artifact_paths={
+                **_outcome_workspace_upstream_paths(
+                    trial_workspace_dir,
+                    state["parse_artifacts"],
+                ),
+                **_all_sq_answer_upstream_paths(output_path, base, state),
+                **_all_judgment_upstream_paths(output_path, base, state),
+            },
+            outcome_definition=_outcome_definition_from_state(state),
+            rob2_settings=_rob2_settings_from_state(state),
+            diagnostics_artifact=_support_escalation_diagnostics_from_state(state),
         )
 
 
@@ -524,6 +546,17 @@ def _domain_sq_answer_upstream_path(
     }
 
 
+def _all_sq_answer_upstream_paths(
+    output_path: Path,
+    base: str,
+    state: RoB2State,
+) -> dict[str, Path]:
+    paths = _d1_sq_answer_upstream_path(output_path, base, state)
+    for domain in ("d2", "d3", "d4", "d5"):
+        paths.update(_domain_sq_answer_upstream_path(output_path, base, state, domain))
+    return paths
+
+
 def _d1_judgment_upstream_path(
     output_path: Path,
     base: str,
@@ -540,11 +573,114 @@ def _d1_judgment_upstream_path(
     }
 
 
+def _domain_judgment_upstream_path(
+    output_path: Path,
+    base: str,
+    state: RoB2State,
+    domain: str,
+) -> dict[str, Path]:
+    if not state.get(f"{domain}_judgment_artifact"):
+        return {}
+    outcome_dir = re.sub(r"[^A-Za-z0-9_.-]+", "_", _outcome_id_from_state(state))
+    return {
+        f"{domain}-judgment": output_path
+        / f"{base}_outcome_workspaces"
+        / outcome_dir
+        / f"{domain}-judgment.json"
+    }
+
+
+def _all_judgment_upstream_paths(
+    output_path: Path,
+    base: str,
+    state: RoB2State,
+) -> dict[str, Path]:
+    paths = _d1_judgment_upstream_path(output_path, base, state)
+    for domain in ("d2", "d3", "d4", "d5"):
+        paths.update(_domain_judgment_upstream_path(output_path, base, state, domain))
+    return paths
+
+
 def _latest_llm_log_entry(state: RoB2State, node: str) -> dict:
     for entry in reversed(state.get("llm_call_log", [])):
         if entry.get("node") == node:
             return entry
     return {}
+
+
+def _support_escalation_diagnostics_from_state(state: RoB2State) -> dict:
+    outcome_id = _outcome_id_from_state(state)
+    adjudications = state.get("sq_support_adjudications") or {}
+    attempts = []
+    for domain, domain_attempts in sorted(adjudications.items()):
+        for index, attempt in enumerate(domain_attempts or [], start=1):
+            llm_node = (attempt.get("provenance") or {}).get("llm_node")
+            model_call = _latest_llm_log_entry(state, llm_node) if llm_node else {}
+            persisted_attempt = {
+                "domain": domain,
+                "sq_id": attempt.get("sq_id"),
+                "bounded_attempt_number": index,
+                "initial_answer": attempt.get("initial_answer"),
+                "adjudicated_answer": attempt.get("adjudicated_answer"),
+                "changed": attempt.get("changed"),
+                "changed_answer": attempt.get("changed_answer"),
+                "changed_support": attempt.get("changed_support"),
+                "acceptance_status": _acceptance_status_for_attempt(
+                    state,
+                    domain,
+                    attempt.get("sq_id"),
+                ),
+                "provenance": attempt.get("provenance") or {},
+                "constraints": attempt.get("constraints") or [],
+                "model_call": _support_escalation_model_call_diagnostics(model_call),
+            }
+            persisted_attempt["artifact_hash"] = stable_payload_sha256(
+                persisted_attempt
+            )
+            attempts.append(persisted_attempt)
+
+    max_attempts = max(
+        [
+            int((attempt.get("model_call") or {}).get("attempt_count") or 0)
+            for attempt in attempts
+        ]
+        or [0]
+    )
+    return {
+        "artifact_id": f"support-escalation-diagnostics:{outcome_id}",
+        "schema_version": "support-escalation-diagnostics-v1",
+        "producer_version": "support-escalation-diagnostics-v1",
+        "outcome_id": outcome_id,
+        "reviewer_report_artifact_id": None,
+        "retry_policy": {"max_attempts_per_escalation": max_attempts},
+        "attempt_count": len(attempts),
+        "attempts": attempts,
+    }
+
+
+def _support_escalation_model_call_diagnostics(log_entry: dict) -> dict:
+    return {
+        "node": log_entry.get("node"),
+        "provider": log_entry.get("provider"),
+        "model": log_entry.get("model"),
+        "latency_ms": log_entry.get("latency_ms"),
+        "input_tokens": log_entry.get("input_tokens"),
+        "output_tokens": log_entry.get("output_tokens"),
+        "cost_usd": log_entry.get("cost_usd"),
+        "cache_hit": log_entry.get("cache_hit"),
+        "attempt_count": len(log_entry.get("attempts") or []),
+    }
+
+
+def _acceptance_status_for_attempt(
+    state: RoB2State,
+    domain: str,
+    sq_id: object,
+) -> str | None:
+    for test in (state.get("pivotality_tests") or {}).get(domain, []):
+        if test.get("sq_id") == sq_id:
+            return test.get("acceptance_status")
+    return None
 
 
 def _d1_engineering_diagnostics_from_state(state: RoB2State) -> dict:

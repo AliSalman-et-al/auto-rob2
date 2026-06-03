@@ -21,6 +21,7 @@ from rob2_pipeline.nodes.outcome_resolver import outcome_resolver_node
 from rob2_pipeline.nodes.preliminary import preliminary_info_node
 from rob2_pipeline.nodes.rag_retrieval import rag_retrieval_node
 from rob2_pipeline.nodes.reporter import report_formatter_node
+from rob2_pipeline.nodes.retrieval_repair import retrieval_repair_node
 from rob2_pipeline.nodes.trial_facts import trial_facts_node
 from rob2_pipeline.nodes.verification import quote_verifier_node
 from rob2_pipeline.state import RoB2State
@@ -67,6 +68,10 @@ def build_rob2_graph():
         "evidence_family_mining",
         timed_node("evidence_family_mining", evidence_family_mining_node),
     )
+    g.add_node(
+        "retrieval_repair",
+        timed_node("retrieval_repair", retrieval_repair_node),
+    )
 
     g.add_node("domain1_sq", timed_node("domain1_sq", domain1_sq_node))
     g.add_node("domain1_judge", timed_node("domain1_judge", domain1_judge_node))
@@ -107,7 +112,8 @@ def build_rob2_graph():
     g.add_edge("outcome_resolver", "trial_facts")
     g.add_edge("trial_facts", "rag_retrieval")
     g.add_edge("rag_retrieval", "evidence_packet_builder")
-    g.add_edge("evidence_packet_builder", "evidence_family_mining")
+    g.add_edge("evidence_packet_builder", "retrieval_repair")
+    g.add_edge("retrieval_repair", "evidence_family_mining")
     for domain_start in DOMAIN_START_NODES:
         g.add_edge("evidence_family_mining", domain_start)
 

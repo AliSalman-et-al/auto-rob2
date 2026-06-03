@@ -579,6 +579,59 @@ def write_d1_engineering_diagnostics_workspace(
     )
 
 
+def write_support_escalation_diagnostics_workspace(
+    *,
+    trial_id: str,
+    outcome_id: str,
+    workspace_root: str | Path,
+    trial_workspace_dir: str | Path,
+    upstream_artifact_paths: dict[str, str | Path],
+    outcome_definition: dict,
+    rob2_settings: dict,
+    diagnostics_artifact: dict,
+) -> OutcomeWorkspaceManifest:
+    root = outcome_workspace_dir(workspace_root, outcome_id)
+    artifact_path = root / "support-escalation-diagnostics.json"
+    _write_json(artifact_path, diagnostics_artifact)
+
+    upstream_hashes = {
+        artifact_id: file_sha256(path)
+        for artifact_id, path in sorted(upstream_artifact_paths.items())
+        if Path(path).exists()
+    }
+    identity = build_outcome_artifact_identity(
+        artifact_id=diagnostics_artifact.get(
+            "artifact_id", f"support-escalation-diagnostics:{outcome_id}"
+        ),
+        schema_version=diagnostics_artifact.get(
+            "schema_version", "support-escalation-diagnostics-v1"
+        ),
+        producer="support-escalation-diagnostics",
+        producer_version=diagnostics_artifact.get(
+            "producer_version", "support-escalation-diagnostics-v1"
+        ),
+        content_hash=file_sha256(artifact_path),
+        upstream_trial_workspace_hashes=upstream_hashes,
+        outcome_definition=outcome_definition,
+        rob2_settings=rob2_settings,
+        config={
+            "schema_version": diagnostics_artifact.get("schema_version", ""),
+            "retry_policy": diagnostics_artifact.get("retry_policy", {}),
+        },
+    )
+    artifacts = _existing_outcome_artifacts(workspace_root, outcome_id, identity)
+    return write_outcome_workspace_manifest(
+        trial_id=trial_id,
+        outcome_id=outcome_id,
+        workspace_root=workspace_root,
+        trial_workspace_dir=trial_workspace_dir,
+        upstream_artifact_paths=upstream_artifact_paths,
+        outcome_definition=outcome_definition,
+        rob2_settings=rob2_settings,
+        artifacts=[*artifacts, identity],
+    )
+
+
 def evaluate_artifact_status(
     manifest: TrialWorkspaceManifest,
     current_identity: ArtifactIdentity,
@@ -1248,6 +1301,7 @@ __all__ = [
     "write_domain_judgment_workspace",
     "write_domain_sq_answer_workspace",
     "write_outcome_normalization_workspace",
+    "write_support_escalation_diagnostics_workspace",
     "write_evidence_store_trial_workspace",
     "write_parse_trial_workspace",
     "write_trial_workspace_manifest",

@@ -256,6 +256,28 @@ class PivotalityTest(TypedDict):
     constraints: NotRequired[list[SupportConstraint]]
 
 
+class MicroAgentRoutingDecision(TypedDict):
+    sq_id: str
+    status: str
+    route: str
+    trigger_conditions: list[str]
+    reason: str
+
+
+class RetrievalRepairArtifact(TypedDict, total=False):
+    artifact_id: str
+    schema_version: str
+    sq_id: str
+    domain: str
+    outcome: str
+    packet_artifact_id: str
+    trigger_conditions: list[str]
+    query_payload: dict
+    before_packet_status: dict
+    after_packet_status: dict
+    source_changes: dict
+
+
 class SqSupportAdjudication(TypedDict, total=False):
     sq_id: str
     initial_answer: dict

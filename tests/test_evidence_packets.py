@@ -6,6 +6,7 @@ from rob2_pipeline.nodes.evidence_packets import (
     packet_block_for_domain,
 )
 from rob2_pipeline.nodes.evidence_packet_grading import packet_readiness
+from rob2_pipeline.nodes.evidence_packet_grading import resolve_source_conflict
 
 
 def test_evidence_packets_module_keeps_stable_public_api():
@@ -342,8 +343,67 @@ def test_d1_contradictions_remain_visible_when_dominant_source_is_selected():
     assert packet["contradictions"]
     contradiction = packet["contradictions"][0]
     assert contradiction["label"] == "allocation_concealment"
+    assert contradiction["source_hierarchy"] == ["primary", "protocol", "appendix"]
+    assert contradiction["source_roles"] == ["primary", "protocol"]
+    assert contradiction["support_levels"] == {
+        "dominant": "strong",
+        "conflicting": "strong",
+    }
     assert contradiction["dominant_source"]["document_role"] == "primary"
     assert contradiction["conflicting_source"]["document_role"] == "protocol"
+    assert contradiction["dominant_claim"] == "Allocation concealment was reported."
+    assert contradiction["rationale"]
+    assert contradiction["hierarchy_override"] is False
+    assert packet["packet_readiness"]["status"] == "needs_contradiction_resolution"
+
+
+def test_source_conflict_can_override_hierarchy_only_with_rationale_and_quote_support():
+    protocol = {
+        "text": "The protocol says allocation was concealed by central randomization.",
+        "document_role": "protocol",
+        "document_name": "Protocol",
+    }
+    primary = {
+        "text": "The primary paper states allocation was not concealed.",
+        "document_role": "primary",
+        "document_name": "Primary paper",
+    }
+
+    default = resolve_source_conflict(
+        domain="d1",
+        sq_id="1.2",
+        label="allocation_concealment",
+        positive=protocol,
+        negative=primary,
+    )
+    unsupported_override = resolve_source_conflict(
+        domain="d1",
+        sq_id="1.2",
+        label="allocation_concealment",
+        positive=protocol,
+        negative=primary,
+        override_source=protocol,
+        override_rationale="Protocol quote is more specific to allocation setup.",
+    )
+    supported_override = resolve_source_conflict(
+        domain="d1",
+        sq_id="1.2",
+        label="allocation_concealment",
+        positive=protocol,
+        negative=primary,
+        override_source=protocol,
+        override_rationale="Protocol quote is more specific to allocation setup.",
+        override_quote="allocation was concealed by central randomization",
+    )
+
+    assert default["dominant_source"]["document_role"] == "primary"
+    assert unsupported_override["dominant_source"]["document_role"] == "primary"
+    assert unsupported_override["override_rejected_reason"]
+    assert supported_override["dominant_source"]["document_role"] == "protocol"
+    assert supported_override["hierarchy_override"] is True
+    assert supported_override["override_rationale"] == (
+        "Protocol quote is more specific to allocation setup."
+    )
 
 
 def test_packet_candidate_facts_validate_against_base_evidence_fact_contract():
