@@ -35,6 +35,7 @@ JSON_OUTPUT_KEYS = (
     "evidence_packets",
     "packet_grades",
     "evidence_facts",
+    "evidence_store",
     "sources_consulted",
     "trial_facts",
     "sq_answers",

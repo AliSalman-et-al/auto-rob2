@@ -4,7 +4,11 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from rob2_pipeline.evidence_store import EvidenceFactRecord, EvidenceStore
+from rob2_pipeline.evidence_store import (
+    EvidenceFactRecord,
+    EvidenceStore,
+    mine_evidence_families,
+)
 
 
 def _valid_fact(**overrides):
@@ -158,3 +162,151 @@ def test_minimal_evidence_store_golden_fixture_is_valid():
 
     assert store.artifact_id == "evidence-store:minimal"
     assert json.loads(store.model_dump_json())["supported_facts"][0]["artifact_id"]
+
+
+def test_mine_evidence_families_bounds_llm_prompt_to_selected_packet_sources():
+    prompts = []
+
+    def fake_call(state, prompt, node_name):
+        prompts.append(prompt)
+        return (
+            json.dumps(
+                {
+                    "facts": [
+                        {
+                            "artifact_id": "evidence-fact:d1:1.1:central-randomization",
+                            "fact_type": "randomization_sequence",
+                            "domain": "d1",
+                            "sq_ids": ["1.1"],
+                            "claim_type": "trial_method",
+                            "claim": "Participants were assigned centrally.",
+                            "quote": "Participants were assigned centrally.",
+                            "support_level": "strong",
+                            "support_status": "supported",
+                            "uncertainty": False,
+                            "family": "randomization_allocation",
+                            "family_fields": {
+                                "method": "central randomization",
+                                "allocation_concealment": "central office",
+                                "unit_of_randomization": "participant",
+                            },
+                            "provenance": {
+                                "document_id": "primary:TITAN",
+                                "document_name": "TITAN primary report",
+                                "document_role": "primary",
+                                "source_kind": "rag_chunk",
+                                "source_path": "inputs/benchmark/TITAN.pdf",
+                                "source_section": "Methods",
+                                "page_numbers": [4],
+                            },
+                        }
+                    ]
+                }
+            ),
+            [{"node": node_name, "cache_hit": False}],
+            None,
+        )
+
+    state = {
+        "pdf_path": "inputs/benchmark/TITAN.pdf",
+        "outcome": "Overall Survival",
+        "evidence_packets": {
+            "1.1": {
+                "sq_id": "1.1",
+                "domain": "d1",
+                "sources": [
+                    {
+                        "text": "Participants were assigned centrally.",
+                        "section": "Methods",
+                        "page_numbers": [4],
+                        "document_id": "primary:TITAN",
+                        "document_name": "TITAN primary report",
+                        "document_role": "primary",
+                        "source_kind": "rag_chunk",
+                        "source_path": "inputs/benchmark/TITAN.pdf",
+                    }
+                ],
+            }
+        },
+        "full_text": "This full text must not be sent to the family miner.",
+    }
+
+    update = mine_evidence_families(state, call_fn=fake_call)
+
+    assert update["evidence_store"]["supported_facts"][0]["family"] == (
+        "randomization_allocation"
+    )
+    assert "Participants were assigned centrally." in prompts[0]
+    assert "full text must not be sent" not in prompts[0]
+
+
+def test_mine_evidence_families_retries_then_records_failed_claim_on_bad_schema():
+    calls = []
+
+    def fake_call(state, prompt, node_name):
+        calls.append(prompt)
+        return (
+            json.dumps(
+                {
+                    "facts": [
+                        {
+                            "artifact_id": "evidence-fact:d1:1.1:bad",
+                            "fact_type": "randomization_sequence",
+                            "domain": "d1",
+                            "sq_ids": ["1.1"],
+                            "claim_type": "trial_method",
+                            "claim": "Randomized centrally.",
+                            "quote": "Randomized centrally.",
+                            "support_level": "strong",
+                            "support_status": "supported",
+                            "uncertainty": False,
+                            "family": "randomization_allocation",
+                            "family_fields": {"method": "central"},
+                            "provenance": {
+                                "document_id": "primary:TITAN",
+                                "document_name": "TITAN primary report",
+                                "document_role": "primary",
+                                "source_kind": "rag_chunk",
+                                "source_path": "inputs/benchmark/TITAN.pdf",
+                                "source_section": "Methods",
+                                "page_numbers": [4],
+                            },
+                        }
+                    ]
+                }
+            ),
+            [{"node": node_name, "cache_hit": False}],
+            None,
+        )
+
+    state = {
+        "pdf_path": "inputs/benchmark/TITAN.pdf",
+        "outcome": "Overall Survival",
+        "evidence_packets": {
+            "1.1": {
+                "sq_id": "1.1",
+                "domain": "d1",
+                "sources": [
+                    {
+                        "text": "Randomized centrally.",
+                        "section": "Methods",
+                        "page_numbers": [4],
+                        "document_id": "primary:TITAN",
+                        "document_name": "TITAN primary report",
+                        "document_role": "primary",
+                        "source_kind": "rag_chunk",
+                        "source_path": "inputs/benchmark/TITAN.pdf",
+                    }
+                ],
+            }
+        },
+    }
+
+    update = mine_evidence_families(state, call_fn=fake_call)
+
+    assert len(calls) == 2
+    assert "Your previous evidence-family extraction was invalid" in calls[1]
+    store = update["evidence_store"]
+    assert store["supported_facts"] == []
+    assert store["failed_claims"][0]["support_status"] == "failed"
+    assert "validation failed" in store["failed_claims"][0]["failure_reason"]

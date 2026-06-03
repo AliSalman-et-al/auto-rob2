@@ -108,6 +108,8 @@ class EvidenceFact(TypedDict, total=False):
     source_kind: str
     source_path: str
     provenance: dict
+    family: str
+    family_fields: dict
 
 
 class EvidenceGap(TypedDict, total=False):

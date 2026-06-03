@@ -165,6 +165,39 @@ def _response_by_node(node_name: str):
           <sq_5_3><answer>N</answer><quote>"intention-to-treat analysis" (Methods)</quote><justification>No selective analysis evident.</justification></sq_5_3>
         </domain5>
         """,
+        "evidence_family_mining": json.dumps(
+            {
+                "facts": [
+                    {
+                        "artifact_id": "evidence-fact:d1:1.1:central-randomization",
+                        "fact_type": "randomization_sequence",
+                        "domain": "d1",
+                        "sq_ids": ["1.1"],
+                        "claim_type": "trial_method",
+                        "claim": "Participants were randomly assigned centrally.",
+                        "quote": "Participants were randomly assigned using a computer-generated sequence.",
+                        "support_level": "strong",
+                        "support_status": "supported",
+                        "uncertainty": False,
+                        "family": "randomization_allocation",
+                        "family_fields": {
+                            "method": "computer-generated sequence",
+                            "allocation_concealment": "central concealment",
+                            "unit_of_randomization": "participant",
+                        },
+                        "provenance": {
+                            "document_id": "primary",
+                            "document_name": "Primary paper",
+                            "document_role": "primary",
+                            "source_kind": "section_text",
+                            "source_path": "unknown",
+                            "source_section": "d1_randomization",
+                            "page_numbers": [],
+                        },
+                    }
+                ]
+            }
+        ),
     }
     return responses[node_name]
 
@@ -192,7 +225,63 @@ def _node_from_prompt(prompt: str) -> str:
         return "domain4_sq"
     if "<domain5>" in prompt:
         return "domain5_sq"
+    if "Extract typed evidence facts from the bounded source zones only." in prompt:
+        return "evidence_family_mining"
     raise KeyError("Unknown prompt")
+
+
+def _family_response_from_prompt(prompt: str) -> str:
+    sq_id = "1.1"
+    for line in prompt.splitlines():
+        if line.startswith("SQ ID: "):
+            sq_id = line.removeprefix("SQ ID: ").strip()
+            break
+    domain = f"d{sq_id.split('.')[0]}"
+    family = "prespecification" if domain == "d5" else "randomization_allocation"
+    if family == "prespecification":
+        family_fields = {
+            "artifact_type": "registry",
+            "identifier": "NCT00000000",
+            "prespecified_outcome": "mortality",
+            "prespecified_analysis": "intention-to-treat",
+        }
+        claim_type = "registry"
+    else:
+        family_fields = {
+            "method": "computer-generated sequence",
+            "allocation_concealment": "central concealment",
+            "unit_of_randomization": "participant",
+        }
+        claim_type = "trial_method"
+    return json.dumps(
+        {
+            "facts": [
+                {
+                    "artifact_id": f"evidence-fact:{domain}:{sq_id}:family",
+                    "fact_type": f"{family}_fact",
+                    "domain": domain,
+                    "sq_ids": [sq_id],
+                    "claim_type": claim_type,
+                    "claim": "Selected source supports the family fact.",
+                    "quote": "Selected source supports the family fact.",
+                    "support_level": "strong",
+                    "support_status": "supported",
+                    "uncertainty": False,
+                    "family": family,
+                    "family_fields": family_fields,
+                    "provenance": {
+                        "document_id": "primary",
+                        "document_name": "Primary paper",
+                        "document_role": "primary",
+                        "source_kind": "section_text",
+                        "source_path": "unknown",
+                        "source_section": "Methods",
+                        "page_numbers": [],
+                    },
+                }
+            ]
+        }
+    )
 
 
 class _FakeProvider:
@@ -201,6 +290,10 @@ class _FakeProvider:
 
     def _complete(self, system: str, user: str) -> LLMResponse:
         node_name = _node_from_prompt(user)
+        if node_name == "evidence_family_mining":
+            return LLMResponse(
+                _family_response_from_prompt(user), "test-model", 1, 1, 1.0
+            )
         return LLMResponse(_response_by_node(node_name), "test-model", 1, 1, 1.0)
 
 
@@ -319,6 +412,10 @@ class _PfsProvider:
 
     def _complete(self, system: str, user: str) -> LLMResponse:
         node_name = _node_from_prompt(user)
+        if node_name == "evidence_family_mining":
+            return LLMResponse(
+                _family_response_from_prompt(user), "test-model", 1, 1, 1.0
+            )
         return LLMResponse(_pfs_response_by_node(node_name), "test-model", 1, 1, 1.0)
 
 
@@ -429,8 +526,9 @@ def test_graph_happy_path_with_mocked_llm(tmp_path):
     assert "1.1" in state["evidence_facts"]
     assert "# RoB 2 Assessment" in state["markdown_report"]
     assert "## Verified evidence packets" in state["markdown_report"]
+    assert state["evidence_store"]["supported_facts"]
     assert len(state["llm_call_log"]) == 10
-    assert provider.complete.call_count == 10
+    assert provider.complete.call_count == 14
 
 
 def test_graph_pfs_composite_endpoint_d4_some_concerns_d5_low(tmp_path):
@@ -568,9 +666,7 @@ def test_run_assessment_writes_outputs(tmp_path):
     assert (output_dir / "trial_rob2_report.md").exists()
     assert (output_dir / "trial_rob2_data.json").exists()
     assert (
-        output_dir
-        / "trial_trial_workspace"
-        / "trial-workspace-manifest.json"
+        output_dir / "trial_trial_workspace" / "trial-workspace-manifest.json"
     ).exists()
     assert (
         output_dir / "trial_trial_workspace" / "diagnostics" / "primary.json"

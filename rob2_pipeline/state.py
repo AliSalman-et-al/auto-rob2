@@ -4,6 +4,7 @@ from typing import Annotated, Any, TypedDict
 from rob2_pipeline.models import PaperEvidence
 from rob2_pipeline.types import (
     EvidenceFact,
+    EvidenceStoreArtifact,
     EvidencePacket,
     EvidenceValidationFlag,
     LLMCallLogEntry,
@@ -47,6 +48,7 @@ class RoB2State(TypedDict, total=False):
     retrieval_grades: Annotated[dict[str, RetrievalGrade], merge_dicts]
     evidence_packets: Annotated[dict[str, EvidencePacket], merge_dicts]
     evidence_facts: Annotated[dict[str, list[EvidenceFact]], merge_dicts]
+    evidence_store: Annotated[EvidenceStoreArtifact, take_latest]
     packet_grades: Annotated[dict[str, RetrievalGrade], merge_dicts]
     verification_actions: Annotated[list[dict], take_latest]
 
