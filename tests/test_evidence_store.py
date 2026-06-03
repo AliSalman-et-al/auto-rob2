@@ -40,6 +40,73 @@ def test_supported_evidence_fact_validates_required_provenance_and_support():
     assert fact.provenance.document_role == "primary"
 
 
+def test_family_specific_facts_require_fields_needed_for_packet_construction():
+    fact = EvidenceFactRecord.model_validate(
+        _valid_fact(
+            fact_type="randomization_sequence",
+            family="randomization_allocation",
+            family_fields={
+                "method": "central randomization",
+                "allocation_concealment": "central office concealed assignment",
+                "unit_of_randomization": "participant",
+            },
+        )
+    )
+
+    assert fact.family == "randomization_allocation"
+    assert fact.family_fields.method == "central randomization"
+
+    with pytest.raises(ValidationError):
+        EvidenceFactRecord.model_validate(
+            _valid_fact(
+                fact_type="randomization_sequence",
+                family="randomization_allocation",
+                family_fields={"method": "central randomization"},
+            )
+        )
+
+
+def test_prespecification_facts_require_structured_artifact_and_analysis_fields():
+    fact = EvidenceFactRecord.model_validate(
+        _valid_fact(
+            artifact_id="evidence-fact:d5:5.1:nct-prespecified-os",
+            fact_type="prespecified_analysis",
+            domain="d5",
+            sq_ids=["5.1"],
+            claim_type="registry",
+            claim="Overall survival was prespecified in the registry.",
+            quote="Overall survival was prespecified in the registry.",
+            family="prespecification",
+            family_fields={
+                "artifact_type": "registry",
+                "identifier": "NCT01234567",
+                "prespecified_outcome": "overall survival",
+                "prespecified_analysis": "time-to-event comparison",
+            },
+        )
+    )
+
+    assert fact.family_fields.artifact_type == "registry"
+    assert fact.family_fields.prespecified_analysis == "time-to-event comparison"
+
+    with pytest.raises(ValidationError):
+        EvidenceFactRecord.model_validate(
+            _valid_fact(
+                artifact_id="evidence-fact:d5:5.1:nct-prespecified-os",
+                fact_type="prespecified_analysis",
+                domain="d5",
+                sq_ids=["5.1"],
+                claim_type="registry",
+                family="prespecification",
+                family_fields={
+                    "artifact_type": "registry",
+                    "identifier": "NCT01234567",
+                    "prespecified_outcome": "overall survival",
+                },
+            )
+        )
+
+
 def test_supported_evidence_fact_rejects_missing_quote_or_provenance():
     with pytest.raises(ValidationError):
         EvidenceFactRecord.model_validate(_valid_fact(quote=""))

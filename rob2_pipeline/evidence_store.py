@@ -17,6 +17,27 @@ ClaimType = Literal[
     "registry",
     "other",
 ]
+EvidenceFamily = Literal["randomization_allocation", "prespecification"]
+
+
+class RandomizationAllocationFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    method: str = Field(min_length=1)
+    allocation_concealment: str = Field(min_length=1)
+    unit_of_randomization: str = Field(min_length=1)
+
+
+class PrespecificationFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    artifact_type: Literal["registry", "protocol", "sap"]
+    identifier: str = Field(min_length=1)
+    prespecified_outcome: str = Field(min_length=1)
+    prespecified_analysis: str = Field(min_length=1)
+
+
+FamilyFields = RandomizationAllocationFields | PrespecificationFields
 
 
 class EvidenceProvenance(BaseModel):
@@ -45,6 +66,8 @@ class EvidenceFactRecord(BaseModel):
     support_status: SupportStatus
     uncertainty: bool
     provenance: EvidenceProvenance
+    family: EvidenceFamily | None = None
+    family_fields: FamilyFields | None = None
     failure_reason: str = ""
 
     @model_validator(mode="after")
@@ -53,6 +76,22 @@ class EvidenceFactRecord(BaseModel):
             raise ValueError("supported evidence facts require a quote")
         if self.support_status == "failed" and not self.failure_reason.strip():
             raise ValueError("failed evidence claims require a failure_reason")
+        if self.family == "randomization_allocation" and not isinstance(
+            self.family_fields, RandomizationAllocationFields
+        ):
+            raise ValueError(
+                "randomization_allocation facts require method, "
+                "allocation_concealment, and unit_of_randomization"
+            )
+        if self.family == "prespecification" and not isinstance(
+            self.family_fields, PrespecificationFields
+        ):
+            raise ValueError(
+                "prespecification facts require artifact_type, identifier, "
+                "prespecified_outcome, and prespecified_analysis"
+            )
+        if self.family is None and self.family_fields is not None:
+            raise ValueError("family_fields require a family")
         return self
 
 
