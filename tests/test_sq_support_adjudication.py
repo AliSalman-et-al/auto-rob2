@@ -176,6 +176,64 @@ def test_unresolved_pivotal_weak_answer_is_audit_limited(monkeypatch):
     assert result["pivotality_tests"]["D1"][0]["acceptance_status"] == "audit_limited"
 
 
+def test_malformed_adjudication_output_does_not_update_assessment_artifacts(
+    monkeypatch,
+):
+    def fake_call_fn(
+        state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources=None
+    ):
+        return (
+            "",
+            [{"node": node_name, "cache_hit": False}],
+            {
+                "1.3": {
+                    "answer": "LOW",
+                    "quote": "Baseline characteristics were well balanced.",
+                    "justification": "Attempts to write an invalid answer.",
+                    "uncertainty_flag": "NORMAL",
+                    "support_level": "strong",
+                    "support_rationale": "Invalid schema should be rejected.",
+                    "domain_judgments": {"D1": "Low"},
+                }
+            },
+        )
+
+    monkeypatch.setattr("rob2_pipeline.nodes.common.call_node_llm", fake_call_fn)
+
+    result = domain1_judge_node(
+        {
+            "outcome": "overall survival",
+            "sq_answers": {
+                "1.1": _answer("Y", "strong"),
+                "1.2": _answer("Y", "strong"),
+                "1.3": _answer("Y", "weak"),
+            },
+            "domain_judgments": {},
+            "domain_rationales": {},
+            "evidence_packets": {
+                "1.3": {
+                    "sources": [
+                        {
+                            "text": "Baseline characteristics were well balanced.",
+                            "section": "Results",
+                            "page_numbers": [5],
+                        }
+                    ],
+                }
+            },
+        }
+    )
+
+    assert result["sq_answers"]["1.3"]["answer"] == "Y"
+    assert result["domain_judgments"]["D1"] == "Some concerns"
+    attempt = result["sq_support_adjudications"]["D1"][0]
+    assert attempt["changed"] is False
+    assert attempt["validation_status"] == "rejected"
+    assert any("answer" in error for error in attempt["validation_errors"])
+    assert any("domain_judgments" in error for error in attempt["validation_errors"])
+    assert result["pivotality_tests"]["D1"][0]["acceptance_status"] == "audit_limited"
+
+
 @pytest.mark.parametrize(
     (
         "adjudicated_answer",

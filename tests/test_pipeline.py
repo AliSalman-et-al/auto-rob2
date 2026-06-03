@@ -515,6 +515,11 @@ def test_workspace_output_writes_support_escalation_diagnostics(tmp_path):
     assert manifest_artifacts[diagnostics["artifact_id"]]["producer"] == (
         "support-escalation-diagnostics"
     )
+    upstream_hashes = manifest_artifacts[diagnostics["artifact_id"]][
+        "upstream_trial_workspace_hashes"
+    ]
+    assert upstream_hashes["d1-sq-answer-set"]
+    assert upstream_hashes["d1-judgment"]
 
 
 def _source_document(path):

@@ -549,13 +549,22 @@ def _adjudicate_pivotal_sq_answers(
             format_chunk_sources(updated_state, _source_domain_for(domain)),
         )
         llm_log.extend(log)
-        adjudicated = dict((parsed or {}).get(sq_id, sq_answer))
+        raw_adjudicated = dict((parsed or {}).get(sq_id, sq_answer))
+        validation_errors = _validate_adjudicated_answer(raw_adjudicated, sq_id)
+        validation_status = "rejected" if validation_errors else "accepted"
+        adjudicated = dict(sq_answer if validation_errors else raw_adjudicated)
         adjudicated.setdefault(
             "residual_uncertainty",
             adjudicated.get("support_rationale", "No residual uncertainty reported."),
         )
-        changed_answer = sq_answer.get("answer") != adjudicated.get("answer")
-        changed_support = _support_level(sq_answer) != _support_level(adjudicated)
+        changed_answer = (
+            not validation_errors
+            and sq_answer.get("answer") != adjudicated.get("answer")
+        )
+        changed_support = (
+            not validation_errors
+            and _support_level(sq_answer) != _support_level(adjudicated)
+        )
         changed = changed_answer or changed_support
         if changed:
             sq_answers[sq_id] = adjudicated
@@ -576,6 +585,8 @@ def _adjudicate_pivotal_sq_answers(
                 "changed": changed,
                 "changed_answer": changed_answer,
                 "changed_support": changed_support,
+                "validation_status": validation_status,
+                "validation_errors": validation_errors,
                 "semantic_support_decision": {
                     "support_level": _support_level(adjudicated) or "unsupported",
                     "rationale": adjudicated.get("support_rationale")
@@ -640,6 +651,55 @@ def _traceability_status(answer: dict, fallback: dict | None = None) -> str:
         or (fallback or {}).get("quote_traceability_status")
         or "traceability_not_assessed"
     )
+
+
+_ADJUDICATION_ALLOWED_KEYS = {
+    "answer",
+    "quote",
+    "justification",
+    "uncertainty_flag",
+    "support_level",
+    "support_rationale",
+    "residual_uncertainty",
+    "quote_traceability_status",
+}
+_ADJUDICATION_REQUIRED_KEYS = {
+    "answer",
+    "quote",
+    "justification",
+    "uncertainty_flag",
+    "support_level",
+    "support_rationale",
+}
+_VALID_SUPPORT_LEVELS = {"strong", "moderate", "weak", "unsupported"}
+_VALID_UNCERTAINTY_FLAGS = {"NORMAL", "HIGH"}
+
+
+def _validate_adjudicated_answer(answer: dict, sq_id: str) -> list[str]:
+    errors = []
+    extra_keys = sorted(set(answer) - _ADJUDICATION_ALLOWED_KEYS)
+    for key in extra_keys:
+        errors.append(f"{key}: field is not allowed in SQ adjudication output")
+    missing_keys = sorted(_ADJUDICATION_REQUIRED_KEYS - set(answer))
+    for key in missing_keys:
+        errors.append(f"{key}: field is required")
+    if answer.get("answer") not in VALID_SQ_ANSWERS:
+        errors.append(
+            f"answer: expected one of {', '.join(VALID_SQ_ANSWERS)} for SQ {sq_id}"
+        )
+    support_level = str(answer.get("support_level", "")).lower()
+    if support_level not in _VALID_SUPPORT_LEVELS:
+        errors.append("support_level: expected strong, moderate, weak, or unsupported")
+    if answer.get("uncertainty_flag") not in _VALID_UNCERTAINTY_FLAGS:
+        errors.append("uncertainty_flag: expected NORMAL or HIGH")
+    for key in ("quote", "justification", "support_rationale"):
+        if key in answer and not isinstance(answer.get(key), str):
+            errors.append(f"{key}: expected string")
+    if "residual_uncertainty" in answer and not isinstance(
+        answer.get("residual_uncertainty"), str
+    ):
+        errors.append("residual_uncertainty: expected string")
+    return errors
 
 
 def _adjudication_packet_status_effect(
