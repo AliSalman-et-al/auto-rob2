@@ -227,6 +227,102 @@ def test_workspace_output_writes_d1_sq_answer_artifact(tmp_path):
     }.issubset(manifest_artifacts)
 
 
+def test_workspace_output_writes_d1_engineering_diagnostics_for_valid_run(tmp_path):
+    primary = tmp_path / "trial.pdf"
+    primary.write_bytes(b"primary trial report")
+    state = _d1_workspace_state(primary)
+
+    _write_workspace_artifacts("trial", tmp_path, state)
+
+    artifact_path = (
+        tmp_path
+        / "trial_outcome_workspaces"
+        / "Overall_survival"
+        / "d1-engineering-diagnostics.json"
+    )
+    manifest_path = artifact_path.parent / "outcome-workspace-manifest.json"
+    diagnostics = json.loads(artifact_path.read_text(encoding="utf-8"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_artifacts = {
+        item["artifact_id"]: item for item in manifest["artifacts"]
+    }
+
+    assert diagnostics["artifact_id"] == "d1-engineering-diagnostics:Overall survival"
+    assert diagnostics["schema_version"] == "d1-engineering-diagnostics-v1"
+    assert diagnostics["domain"] == "d1"
+    assert diagnostics["statuses"] == {
+        "parse": "ok",
+        "packet": "ready",
+        "schema_validation": "validated",
+        "model_call": "ok",
+        "judge": "ok",
+    }
+    assert diagnostics["parse"]["documents"][0]["diagnostic_count"] == 0
+    assert diagnostics["packets"]["packet_readiness"]["d1"] == "ready"
+    assert diagnostics["model_calls"][0]["latency_ms"] == 12
+    assert diagnostics["model_calls"][0]["cost_usd"] == 0.0012
+    assert diagnostics["schema_validation"]["status"] == "validated"
+    assert diagnostics["judge"]["label"] == "Some concerns"
+    assert diagnostics["reviewer_report_artifact_id"] is None
+    assert manifest_artifacts[diagnostics["artifact_id"]]["producer"] == (
+        "d1-engineering-diagnostics"
+    )
+
+
+def test_workspace_output_writes_d1_engineering_diagnostics_for_validation_fallback(
+    tmp_path,
+):
+    primary = tmp_path / "trial.pdf"
+    primary.write_bytes(b"primary trial report")
+    state = _d1_workspace_state(primary)
+    state["llm_call_log"][0]["validation_status"] = "fallback"
+    state["llm_call_log"][0]["failure_reason"] = "Schema validation failed: missing"
+    state["llm_call_log"][0]["attempts"] = [
+        {
+            "attempt": 1,
+            "parse_status": "parsed",
+            "validation_status": "validation_failed",
+            "parse_error": None,
+            "validation_error": "Field required",
+        },
+        {
+            "attempt": 2,
+            "parse_status": "parse_failed",
+            "validation_status": "not_validated",
+            "parse_error": "Expecting value",
+            "validation_error": None,
+        },
+    ]
+
+    _write_workspace_artifacts("trial", tmp_path, state)
+
+    diagnostics = json.loads(
+        (
+            tmp_path
+            / "trial_outcome_workspaces"
+            / "Overall_survival"
+            / "d1-engineering-diagnostics.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert diagnostics["statuses"]["schema_validation"] == "fallback"
+    assert diagnostics["statuses"]["model_call"] == "fallback"
+    assert diagnostics["schema_validation"]["failure_reason"] == (
+        "Schema validation failed: missing"
+    )
+    assert diagnostics["schema_validation"]["attempts"][0]["validation_error"] == (
+        "Field required"
+    )
+    assert diagnostics["model_calls"][0]["attempt_count"] == 2
+    assert diagnostics["failure_summary"] == [
+        {
+            "stage": "schema_validation",
+            "status": "fallback",
+            "reason": "Schema validation failed: missing",
+        }
+    ]
+
+
 def _source_document(path):
     return {
         "document_id": "primary",
@@ -274,4 +370,60 @@ def _d1_answer(sq_id, answer, *, support_level="strong"):
         "packet_artifact_id": f"evidence-packet:d1:{sq_id}",
         "decision_table_artifact_id": f"decision-table:d1:{sq_id}",
         "supporting_fact_artifact_ids": [],
+    }
+
+
+def _d1_workspace_state(primary):
+    return {
+        "source_documents": [_source_document(primary)],
+        "parse_artifacts": [_parse_artifact(primary)],
+        "outcome": "Overall survival",
+        "outcome_type": "vital-status",
+        "outcome_properties": {"death_only_objective_event": True},
+        "outcome_classification_support": {"support_level": "strong"},
+        "effect_of_interest": "ITT",
+        "overall_policy": "rob2-default",
+        "packet_readiness": {"d1": "ready"},
+        "packet_grades": {"d1": {"grade": "usable", "missing_evidence": []}},
+        "evidence_packets": {"d1": {"1.1": {"packet_grade": "usable"}}},
+        "d1_judgment_artifact": {
+            "artifact_id": "d1-judgment:Overall survival",
+            "schema_version": "d1-judgment-v1",
+            "domain": "d1",
+            "judge_version": "d1-judge-v1",
+            "rule_table_version": "rob2-d1-rule-table-v1",
+            "input_sq_answers": {
+                "1.1": {"answer": "Y"},
+                "1.2": {"answer": "NI"},
+                "1.3": {"answer": "N"},
+            },
+            "applied_rule_path": "d1-row-4:any/ni/n-pn-ni",
+            "label": "Some concerns",
+            "rationale": "Row: Any / NI / N-PN-NI -> Some concerns",
+        },
+        "d1_sq_classifier_artifact": {
+            "schema_version": "d1-sq-classifier-v1",
+            "domain": "d1",
+            "answers": [
+                _d1_answer("1.1", "Y"),
+                _d1_answer("1.2", "NI", support_level="unsupported"),
+                _d1_answer("1.3", "N"),
+            ],
+        },
+        "llm_call_log": [
+            {
+                "node": "domain1_sq_json",
+                "provider": "openrouter",
+                "model": "gpt-4.1",
+                "prompt_version": "d1-sq-classifier-prompt-v1",
+                "schema_version": "d1-sq-classifier-v1",
+                "latency_ms": 12,
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "cost_usd": 0.0012,
+                "parse_status": "parsed",
+                "validation_status": "validated",
+                "attempts": [{"attempt": 1}],
+            }
+        ],
     }
