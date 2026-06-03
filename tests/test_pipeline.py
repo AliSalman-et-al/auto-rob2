@@ -445,6 +445,78 @@ def test_workspace_output_writes_d1_engineering_diagnostics_for_validation_fallb
     ]
 
 
+def test_workspace_output_writes_support_escalation_diagnostics(tmp_path):
+    primary = tmp_path / "trial.pdf"
+    primary.write_bytes(b"primary trial report")
+    state = _d1_workspace_state(primary)
+    state["sq_support_adjudications"] = {
+        "D1": [
+            {
+                "sq_id": "1.3",
+                "initial_answer": {"answer": "Y", "support_level": "weak"},
+                "adjudicated_answer": {"answer": "N", "support_level": "strong"},
+                "changed": True,
+                "changed_answer": True,
+                "changed_support": True,
+                "provenance": {"llm_node": "sq_support_adjudication_D1_1_3"},
+            }
+        ]
+    }
+    state["llm_call_log"].append(
+        {
+            "node": "sq_support_adjudication_D1_1_3",
+            "provider": "openrouter",
+            "model": "gpt-4.1",
+            "prompt_version": "sq-support-adjudication-prompt-v1",
+            "schema_version": "sq-support-adjudication-v1",
+            "latency_ms": 43,
+            "input_tokens": 120,
+            "output_tokens": 35,
+            "cost_usd": 0.0021,
+            "cache_hit": False,
+            "attempts": [{"attempt": 1}, {"attempt": 2, "is_repair": True}],
+        }
+    )
+
+    _write_workspace_artifacts("trial", tmp_path, state)
+
+    outcome_dir = tmp_path / "trial_outcome_workspaces" / "Overall_survival"
+    diagnostics = json.loads(
+        (outcome_dir / "support-escalation-diagnostics.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    manifest = json.loads(
+        (outcome_dir / "outcome-workspace-manifest.json").read_text(encoding="utf-8")
+    )
+    manifest_artifacts = {item["artifact_id"]: item for item in manifest["artifacts"]}
+
+    assert diagnostics["artifact_id"] == (
+        "support-escalation-diagnostics:Overall survival"
+    )
+    assert diagnostics["schema_version"] == "support-escalation-diagnostics-v1"
+    assert diagnostics["reviewer_report_artifact_id"] is None
+    assert diagnostics["retry_policy"] == {"max_attempts_per_escalation": 2}
+    assert diagnostics["attempts"][0]["domain"] == "D1"
+    assert diagnostics["attempts"][0]["sq_id"] == "1.3"
+    assert diagnostics["attempts"][0]["bounded_attempt_number"] == 1
+    assert diagnostics["attempts"][0]["artifact_hash"]
+    assert diagnostics["attempts"][0]["model_call"] == {
+        "node": "sq_support_adjudication_D1_1_3",
+        "provider": "openrouter",
+        "model": "gpt-4.1",
+        "latency_ms": 43,
+        "input_tokens": 120,
+        "output_tokens": 35,
+        "cost_usd": 0.0021,
+        "cache_hit": False,
+        "attempt_count": 2,
+    }
+    assert manifest_artifacts[diagnostics["artifact_id"]]["producer"] == (
+        "support-escalation-diagnostics"
+    )
+
+
 def _source_document(path):
     return {
         "document_id": "primary",
