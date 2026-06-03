@@ -1,3 +1,9 @@
+DOMAIN2_JUDGE_VERSION = "d2-judge-v1"
+DOMAIN2_ASSIGNMENT_RULE_TABLE_VERSION = "rob2-d2-assignment-rule-table-v1"
+DOMAIN2_ADHERING_RULE_TABLE_VERSION = "rob2-d2-adhering-rule-table-v1"
+DOMAIN2_SQ_IDS = ("2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7")
+
+
 def judge_domain2(sq: dict, effect_of_interest: str = "ITT") -> tuple[str, str]:
     """
     Implements the RoB 2 Domain 2 algorithms.
@@ -124,3 +130,55 @@ def judge_domain2(sq: dict, effect_of_interest: str = "ITT") -> tuple[str, str]:
     if p1_j == "Some concerns" or p2_j == "Some concerns":
         return "Some concerns", f"Part1={p1_j} ({p1_r}); Part2={p2_j} ({p2_r})"
     return "Low", f"Part1=Low ({p1_r}); Part2=Low ({p2_r})"
+
+
+def judge_domain2_artifact(sq: dict, effect_of_interest: str = "ITT") -> dict:
+    """Apply the deterministic D2 table and return an audit artifact."""
+    label, rationale = judge_domain2(sq, effect_of_interest)
+    mode = (
+        "adhering"
+        if effect_of_interest.lower() == "per-protocol"
+        else "assignment"
+    )
+    return {
+        "artifact_id": "d2-judgment",
+        "schema_version": "d2-judgment-v1",
+        "domain": "d2",
+        "judge_version": DOMAIN2_JUDGE_VERSION,
+        "rule_table_version": (
+            DOMAIN2_ADHERING_RULE_TABLE_VERSION
+            if mode == "adhering"
+            else DOMAIN2_ASSIGNMENT_RULE_TABLE_VERSION
+        ),
+        "effect_of_interest": effect_of_interest,
+        "input_sq_answers": {sq_id: dict(sq.get(sq_id, {})) for sq_id in DOMAIN2_SQ_IDS},
+        "applied_rule_path": _rule_path(mode, label, rationale),
+        "label": label,
+        "rationale": rationale,
+    }
+
+
+def _rule_path(mode: str, label: str, rationale: str) -> str:
+    normalized = label.lower().replace(" ", "-")
+    if mode == "assignment":
+        part1 = _extract_part_label(rationale, "Part1")
+        part2 = _extract_part_label(rationale, "Part2")
+        if part1 and part2:
+            return f"d2-assignment:part1-{part1}+part2-{part2}"
+    if rationale.startswith("Version B Low"):
+        return "d2-adhering:no-biasing-deviations"
+    if rationale.startswith("Version B Some concerns"):
+        return "d2-adhering:deviation-concern+appropriate-analysis"
+    if rationale.startswith("Version B High"):
+        return "d2-adhering:deviation-concern+inappropriate-analysis"
+    if "unresolved official-table path" in rationale:
+        return f"d2-{mode}:unresolved"
+    return f"d2-{mode}:{normalized}"
+
+
+def _extract_part_label(rationale: str, part: str) -> str:
+    marker = f"{part}="
+    if marker not in rationale:
+        return ""
+    value = rationale.split(marker, 1)[1].split(" ", 1)[0]
+    return value.lower().replace(" ", "-")

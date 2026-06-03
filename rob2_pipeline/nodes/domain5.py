@@ -1,4 +1,4 @@
-from rob2_pipeline.judges.domain5 import judge_domain5
+from rob2_pipeline.judges.domain5 import judge_domain5, judge_domain5_artifact
 from rob2_pipeline.nodes.common import (
     add_domain_judgment_with_pivotality_tests,
 )
@@ -68,7 +68,23 @@ def domain5_sq_node(state: RoB2State) -> RoB2State:
 
 
 def domain5_judge_node(state: RoB2State) -> RoB2State:
-    judgment, rationale = judge_domain5(state["sq_answers"])
-    return add_domain_judgment_with_pivotality_tests(
+    judgment_artifact = judge_domain5_artifact(state["sq_answers"])
+    judgment = judgment_artifact["label"]
+    rationale = judgment_artifact["rationale"]
+    update = add_domain_judgment_with_pivotality_tests(
         state, "D5", judgment, rationale, judge_domain5, DOMAIN5_STAGE.sq_ids
     )
+    final_sq_answers = update.get("sq_answers", state["sq_answers"])
+    final_judgment = update["domain_judgments"]["D5"]
+    final_rationale = update["domain_rationales"]["D5"]
+    if final_judgment != judgment or final_rationale != rationale:
+        judgment_artifact = judge_domain5_artifact(final_sq_answers)
+    update["d5_judgment_artifact"] = {
+        **judgment_artifact,
+        "artifact_id": f"d5-judgment:{state.get('outcome', '')}",
+        "pivotality_tests": update.get("pivotality_tests", {}).get("D5", []),
+        "sq_support_adjudications": update.get("sq_support_adjudications", {}).get(
+            "D5", []
+        ),
+    }
+    return update

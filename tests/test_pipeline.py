@@ -109,6 +109,40 @@ def test_assessment_json_preserves_outcome_classification_support():
     )
 
 
+def test_assessment_json_preserves_judgment_artifacts():
+    state = {
+        "d2_judgment_artifact": {
+            "artifact_id": "d2-judgment:Overall survival",
+            "judge_version": "d2-judge-v1",
+        },
+        "d3_judgment_artifact": {
+            "artifact_id": "d3-judgment:Overall survival",
+            "judge_version": "d3-judge-v1",
+        },
+        "d4_judgment_artifact": {
+            "artifact_id": "d4-judgment:Overall survival",
+            "judge_version": "d4-judge-v1",
+        },
+        "d5_judgment_artifact": {
+            "artifact_id": "d5-judgment:Overall survival",
+            "judge_version": "d5-judge-v1",
+        },
+        "overall_judgment_artifact": {
+            "artifact_id": "overall-judgment:Overall survival",
+            "policy": "official_rob2",
+        },
+        "rag_chunk_metadata": {},
+    }
+
+    data = _assessment_json(state)
+
+    assert data["d2_judgment_artifact"] == state["d2_judgment_artifact"]
+    assert data["d3_judgment_artifact"] == state["d3_judgment_artifact"]
+    assert data["d4_judgment_artifact"] == state["d4_judgment_artifact"]
+    assert data["d5_judgment_artifact"] == state["d5_judgment_artifact"]
+    assert data["overall_judgment_artifact"] == state["overall_judgment_artifact"]
+
+
 def test_workspace_output_writes_outcome_manifest_with_trial_hashes(tmp_path):
     primary = tmp_path / "trial.pdf"
     primary.write_bytes(b"primary trial report")

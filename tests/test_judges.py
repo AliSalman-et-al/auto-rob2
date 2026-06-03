@@ -4,12 +4,18 @@ from rob2_pipeline.judges import (
     judge_domain1,
     judge_domain1_artifact,
     judge_domain2,
+    judge_domain2_artifact,
     judge_domain3,
+    judge_domain3_artifact,
     judge_domain4,
+    judge_domain4_artifact,
     judge_domain5,
+    judge_domain5_artifact,
     judge_overall,
+    judge_overall_artifact,
 )
 from rob2_pipeline.nodes.domain1 import domain1_judge_node
+from rob2_pipeline.nodes.domain2 import domain2_judge_node
 from rob2_pipeline.nodes.domain3 import domain3_judge_node
 from rob2_pipeline.models import empty_paper_evidence
 from rob2_pipeline.nodes.domain4 import domain4_judge_node, domain4_sq_node
@@ -170,6 +176,45 @@ def test_judge_domain2(answers, expected):
     assert judge_domain2(answers)[0] == expected
 
 
+def test_judge_domain2_artifact_records_rule_path_and_inputs():
+    answers = sq(**{"2.1": "N", "2.2": "PN", "2.6": "Y"})
+
+    artifact = judge_domain2_artifact(answers, effect_of_interest="ITT")
+
+    assert artifact["judge_version"] == "d2-judge-v1"
+    assert artifact["rule_table_version"] == "rob2-d2-assignment-rule-table-v1"
+    assert artifact["input_sq_answers"] == {
+        "2.1": answers["2.1"],
+        "2.2": answers["2.2"],
+        "2.3": {},
+        "2.4": {},
+        "2.5": {},
+        "2.6": answers["2.6"],
+        "2.7": {},
+    }
+    assert artifact["applied_rule_path"] == "d2-assignment:part1-low+part2-low"
+    assert artifact["label"] == "Low"
+    assert "Part1=Low" in artifact["rationale"]
+
+
+def test_domain2_judge_node_emits_versioned_judgment_artifact():
+    result = domain2_judge_node(
+        {
+            "outcome": "Overall survival",
+            "effect_of_interest": "ITT",
+            "sq_answers": sq(**{"2.1": "N", "2.2": "PN", "2.6": "Y"}),
+            "domain_judgments": {},
+            "domain_rationales": {},
+        }
+    )
+
+    artifact = result["d2_judgment_artifact"]
+    assert artifact["artifact_id"] == "d2-judgment:Overall survival"
+    assert artifact["schema_version"] == "d2-judgment-v1"
+    assert artifact["label"] == result["domain_judgments"]["D2"]
+    assert artifact["rationale"] == result["domain_rationales"]["D2"]
+
+
 @pytest.mark.parametrize(
     ("answers", "expected"),
     [
@@ -272,6 +317,23 @@ def test_judge_domain2_per_protocol(answers, expected):
 )
 def test_judge_domain3(answers, expected):
     assert judge_domain3(answers)[0] == expected
+
+
+def test_d3_d5_domain_artifacts_record_versions_rule_paths_and_inputs():
+    d3 = judge_domain3_artifact(sq(**{"3.1": "Y"}))
+    d4 = judge_domain4_artifact(sq(**{"4.1": "N", "4.2": "N", "4.3": "N"}))
+    d5 = judge_domain5_artifact(sq(**{"5.1": "Y", "5.2": "N", "5.3": "N"}))
+
+    assert d3["judge_version"] == "d3-judge-v1"
+    assert d3["rule_table_version"] == "rob2-d3-rule-table-v1"
+    assert d3["input_sq_answers"]["3.1"] == {"answer": "Y"}
+    assert d3["applied_rule_path"] == "d3:nearly-complete-data"
+    assert d4["judge_version"] == "d4-judge-v1"
+    assert d4["input_sq_answers"]["4.3"] == {"answer": "N"}
+    assert d4["applied_rule_path"] == "d4:no-assessor-awareness"
+    assert d5["judge_version"] == "d5-judge-v1"
+    assert d5["input_sq_answers"]["5.1"] == {"answer": "Y"}
+    assert d5["applied_rule_path"] == "d5:prespecified-and-not-selective"
 
 
 @pytest.mark.parametrize(
@@ -384,6 +446,18 @@ def test_judge_overall(domains, expected, rationale_part):
     assert rationale_part in rationale
 
 
+def test_judge_overall_artifact_records_policy_and_domain_inputs():
+    domains = {"D1": "Low", "D2": "Low", "D3": "Low", "D4": "Low", "D5": "Low"}
+
+    artifact = judge_overall_artifact(domains, policy="official_rob2")
+
+    assert artifact["judge_version"] == "overall-judge-v1"
+    assert artifact["policy"] == "official_rob2"
+    assert artifact["input_domain_judgments"] == domains
+    assert artifact["applied_rule_path"] == "overall:all-low"
+    assert artifact["label"] == "Low"
+
+
 def test_overall_node_exposes_benchmark_reference_policy():
     result = overall_judge_node(
         {
@@ -401,6 +475,11 @@ def test_overall_node_exposes_benchmark_reference_policy():
 
     assert result["overall_judgment"] == "Low"
     assert result["overall_policy"] == "benchmark_reference"
+    assert result["overall_judgment_artifact"]["policy"] == "benchmark_reference"
+    assert (
+        result["overall_judgment_artifact"]["applied_rule_path"]
+        == "overall:benchmark-reference-at-most-one-some-concern"
+    )
 
 
 def test_overall_priority_ignores_moderate_and_isolated_non_pivotal_weak_support():

@@ -1,4 +1,4 @@
-from rob2_pipeline.judges.domain4 import judge_domain4
+from rob2_pipeline.judges.domain4 import judge_domain4, judge_domain4_artifact
 from rob2_pipeline.nodes.common import (
     add_domain_judgment_with_pivotality_tests,
     call_node_llm,
@@ -61,11 +61,27 @@ def domain4_sq_node(state: RoB2State) -> RoB2State:
 
 
 def domain4_judge_node(state: RoB2State) -> RoB2State:
-    judgment, rationale = judge_domain4(state["sq_answers"])
+    judgment_artifact = judge_domain4_artifact(state["sq_answers"])
+    judgment = judgment_artifact["label"]
+    rationale = judgment_artifact["rationale"]
     state = _with_outcome_classification_constraints_for_d4(state)
-    return add_domain_judgment_with_pivotality_tests(
+    update = add_domain_judgment_with_pivotality_tests(
         state, "D4", judgment, rationale, judge_domain4, DOMAIN4_STAGE.sq_ids
     )
+    final_sq_answers = update.get("sq_answers", state["sq_answers"])
+    final_judgment = update["domain_judgments"]["D4"]
+    final_rationale = update["domain_rationales"]["D4"]
+    if final_judgment != judgment or final_rationale != rationale:
+        judgment_artifact = judge_domain4_artifact(final_sq_answers)
+    update["d4_judgment_artifact"] = {
+        **judgment_artifact,
+        "artifact_id": f"d4-judgment:{state.get('outcome', '')}",
+        "pivotality_tests": update.get("pivotality_tests", {}).get("D4", []),
+        "sq_support_adjudications": update.get("sq_support_adjudications", {}).get(
+            "D4", []
+        ),
+    }
+    return update
 
 
 def _with_outcome_classification_constraints_for_d4(state: RoB2State) -> RoB2State:

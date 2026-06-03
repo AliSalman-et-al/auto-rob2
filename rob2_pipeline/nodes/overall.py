@@ -1,4 +1,4 @@
-from rob2_pipeline.judges.overall import judge_overall
+from rob2_pipeline.judges.overall import judge_overall_artifact
 from rob2_pipeline.state import RoB2State
 
 
@@ -6,18 +6,11 @@ WEAK_SUPPORT_LEVELS = {"weak", "unsupported"}
 
 
 def overall_judge_node(state: RoB2State) -> RoB2State:
-    judgment, rationale = judge_overall(state.get("domain_judgments", {}))
     domain_judgments = state.get("domain_judgments", {})
     overall_policy = state.get("overall_policy", "official_rob2")
-    if overall_policy == "benchmark_reference":
-        values = list(domain_judgments.values())
-        if (
-            values
-            and not any(value == "High" for value in values)
-            and sum(1 for value in values if value == "Some concerns") <= 1
-        ):
-            judgment = "Low"
-            rationale = "Benchmark-reference policy: Low when at most one domain has Some concerns and none are High."
+    judgment_artifact = judge_overall_artifact(domain_judgments, overall_policy)
+    judgment = judgment_artifact["label"]
+    rationale = judgment_artifact["rationale"]
     some_concerns_count = sum(
         1 for value in domain_judgments.values() if value == "Some concerns"
     )
@@ -48,6 +41,13 @@ def overall_judge_node(state: RoB2State) -> RoB2State:
         "high_uncertainty_sqs": high_uncertainty_sqs,
         "human_review_priority": priority,
         "overall_policy": overall_policy,
+        "overall_judgment_artifact": {
+            **judgment_artifact,
+            "artifact_id": f"overall-judgment:{state.get('outcome', '')}",
+            "policy": overall_policy,
+            "label": judgment,
+            "rationale": rationale,
+        },
     }
 
 

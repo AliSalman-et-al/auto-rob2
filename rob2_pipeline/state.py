@@ -90,6 +90,10 @@ class RoB2State(TypedDict, total=False):
     initial_domain_judgments: Annotated[dict[str, str], merge_dicts]
     initial_domain_rationales: Annotated[dict[str, str], merge_dicts]
     d1_judgment_artifact: Annotated[dict, take_latest]
+    d2_judgment_artifact: Annotated[dict, take_latest]
+    d3_judgment_artifact: Annotated[dict, take_latest]
+    d4_judgment_artifact: Annotated[dict, take_latest]
+    d5_judgment_artifact: Annotated[dict, take_latest]
     domain_judgments: Annotated[dict[str, str], merge_dicts]
     domain_rationales: Annotated[dict[str, str], merge_dicts]
     pivotality_tests: Annotated[dict[str, list[PivotalityTest]], merge_dicts]
@@ -100,6 +104,7 @@ class RoB2State(TypedDict, total=False):
     # === OVERALL ===
     overall_judgment: Annotated[str, take_latest]
     overall_rationale: Annotated[str, take_latest]
+    overall_judgment_artifact: Annotated[dict, take_latest]
 
     # === QUALITY FLAGS ===
     ni_count: Annotated[int, take_latest]
