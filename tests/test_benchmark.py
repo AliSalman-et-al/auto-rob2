@@ -1146,6 +1146,111 @@ def test_write_benchmark_report_renders_timing_summary(tmp_path):
     assert "node_spans" not in json.dumps(benchmark_json["summary"])
 
 
+def test_write_benchmark_report_emits_machine_readable_schema(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    primary_pdf = workspace / "TITAN.pdf"
+    primary_pdf.write_bytes(b"primary pdf")
+    assessment_dir = tmp_path / "out" / "TITAN_os"
+    assessment_dir.mkdir(parents=True)
+    assessment_json = assessment_dir / "TITAN_rob2_data.json"
+    assessment_json.write_text('{"overall_judgment": "Low"}', encoding="utf-8")
+
+    results = [
+        {
+            "id": "TITAN:OS",
+            "trial": "TITAN",
+            "outcome_code": "OS",
+            "outcome": "Overall Survival",
+            "cohort": "calibration",
+            "pdf_path": str(primary_pdf),
+            "assessment_output_dir": str(assessment_dir),
+            "assessment_artifacts": {
+                "rob2_data_json": str(assessment_json),
+            },
+            "skipped": False,
+            "error": None,
+            "notes": "",
+            "comparison": {
+                "D1": True,
+                "D2": True,
+                "D3": True,
+                "D4": True,
+                "D5": True,
+                "Overall": True,
+            },
+            "reference": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+                "D5": "Low",
+                "Overall Risk": "Low",
+            },
+            "pipeline": {
+                "domain_judgments": {
+                    "D1": "Low",
+                    "D2": "Low",
+                    "D3": "Low",
+                    "D4": "Low",
+                    "D5": "Low",
+                },
+                "overall_judgment": "Low",
+            },
+            "packet_quality": {
+                "D1": {"grade": "strong"},
+            },
+            "schema_failures": [],
+            "timing": {
+                "total_wall_ms": 100,
+                "llm_total_ms": 40,
+                "llm_calls": 2,
+                "llm_cache_hits": 1,
+                "llm_repairs": 1,
+                "llm_parse_errors": 0,
+                "slowest_nodes": [],
+                "_node_spans": [{"node": "private", "duration_ms": 1}],
+            },
+        }
+    ]
+    summary = summarize_benchmark(results)
+
+    write_benchmark_report(results, summary, tmp_path / "out" / "benchmark_report.md")
+
+    benchmark_json = json.loads(
+        (tmp_path / "out" / "benchmark_results.json").read_text(encoding="utf-8")
+    )
+    schema = benchmark_json["schema"]
+    assert schema["schema_name"] == "auto_rob2_benchmark_result"
+    assert schema["schema_version"] == 1
+    assert "aggregate" in schema["sections"]
+    assert "assessments" in schema["sections"]
+    assert schema["diagnostics"]["classification"] == "engineering_only"
+    assert set(schema["diagnostics"]["fields"]) >= {
+        "timing",
+        "parser_metrics",
+        "cache_reuse",
+        "llm_latency",
+        "cost_metadata",
+    }
+
+    manifest = benchmark_json["artifact_manifest"]
+    assert manifest["workspace"]["path"] == str((tmp_path / "out").resolve())
+    assert len(manifest["workspace"]["sha256"]) == 64
+    assert manifest["assessments"][0]["id"] == "TITAN:OS"
+    assert (
+        len(manifest["assessments"][0]["artifacts"]["rob2_data_json"]["sha256"]) == 64
+    )
+
+    assessment = benchmark_json["assessments"][0]
+    assert assessment["agreement"]["comparison"]["Overall"] is True
+    assert assessment["packet_quality"] == {"D1": {"grade": "strong"}}
+    assert assessment["schema_failures"] == []
+    assert assessment["diagnostics"]["timing"]["llm_calls"] == 2
+    assert "_node_spans" not in json.dumps(assessment["diagnostics"])
+    assert "timing" not in assessment["agreement"]
+
+
 def test_write_benchmark_report_renders_adjudication_summary(tmp_path):
     results = [
         {

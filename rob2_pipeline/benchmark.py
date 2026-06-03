@@ -1,4 +1,5 @@
 import csv
+import hashlib
 import json
 import logging
 import time
@@ -278,6 +279,202 @@ def _public_result(result: dict[str, Any]) -> dict[str, Any]:
     if isinstance(timing, dict):
         public["timing"] = _timing_without_private_fields(timing)
     return public
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _hash_file_reference(path: object) -> dict[str, Any]:
+    path_text = _strip(path)
+    reference: dict[str, Any] = {
+        "path": path_text,
+        "exists": False,
+        "sha256": "",
+        "size_bytes": 0,
+    }
+    if not path_text:
+        return reference
+    candidate = Path(path_text)
+    try:
+        if candidate.exists() and candidate.is_file():
+            reference.update(
+                {
+                    "path": str(candidate.resolve()),
+                    "exists": True,
+                    "sha256": _sha256_file(candidate),
+                    "size_bytes": candidate.stat().st_size,
+                }
+            )
+    except OSError as exc:
+        reference["error"] = str(exc)
+    return reference
+
+
+def _hash_directory_reference(path: Path) -> dict[str, Any]:
+    reference: dict[str, Any] = {
+        "path": str(path.resolve()),
+        "exists": path.exists(),
+        "sha256": "",
+        "file_count": 0,
+    }
+    if not path.exists() or not path.is_dir():
+        return reference
+
+    digest = hashlib.sha256()
+    file_count = 0
+    for candidate in sorted(item for item in path.rglob("*") if item.is_file()):
+        try:
+            relative = candidate.relative_to(path).as_posix()
+            file_digest = _sha256_file(candidate)
+        except OSError:
+            continue
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(file_digest.encode("ascii"))
+        digest.update(b"\0")
+        file_count += 1
+    reference["sha256"] = digest.hexdigest()
+    reference["file_count"] = file_count
+    return reference
+
+
+def _assessment_artifact_paths(result: dict[str, Any]) -> dict[str, str]:
+    artifacts = {
+        key: _strip(value)
+        for key, value in (result.get("assessment_artifacts") or {}).items()
+        if _strip(value)
+    }
+    assessment_output_dir = _strip(result.get("assessment_output_dir"))
+    trial = _strip(result.get("trial"))
+    if assessment_output_dir and trial:
+        defaults = {
+            "rob2_data_json": f"{trial}_rob2_data.json",
+            "trace_json": f"{trial}_trace.json",
+            "report_markdown": f"{trial}_rob2_report.md",
+        }
+        for key, filename in defaults.items():
+            artifacts.setdefault(key, str(Path(assessment_output_dir) / filename))
+    return artifacts
+
+
+def _artifact_manifest(
+    results: list[dict[str, Any]], workspace_path: Path
+) -> dict[str, Any]:
+    assessments = []
+    for result in results:
+        artifact_paths = _assessment_artifact_paths(result)
+        artifacts = {
+            key: _hash_file_reference(path)
+            for key, path in sorted(artifact_paths.items())
+        }
+        assessments.append(
+            {
+                "id": _strip(result.get("id")),
+                "trial": _strip(result.get("trial")),
+                "outcome_code": _strip(result.get("outcome_code")),
+                "primary_pdf": _hash_file_reference(result.get("pdf_path")),
+                "supplements": [
+                    _hash_file_reference(path)
+                    for path in result.get("supplementary_paths") or []
+                ],
+                "assessment_output_dir": _strip(result.get("assessment_output_dir")),
+                "artifacts": artifacts,
+            }
+        )
+    return {
+        "workspace": _hash_directory_reference(workspace_path),
+        "assessments": assessments,
+    }
+
+
+def _parser_metrics_from_timing(timing: dict[str, Any]) -> dict[str, int]:
+    return {
+        "llm_repairs": _coerce_int_ms(timing.get("llm_repairs")),
+        "llm_parse_errors": _coerce_int_ms(timing.get("llm_parse_errors")),
+    }
+
+
+def _cost_metadata_from_timing(timing: dict[str, Any]) -> dict[str, int | None]:
+    return {
+        "input_tokens": _coerce_int_ms(timing.get("adjudication_llm_input_tokens")),
+        "output_tokens": _coerce_int_ms(timing.get("adjudication_llm_output_tokens")),
+        "estimated_cost_usd": None,
+    }
+
+
+def _benchmark_assessment_record(result: dict[str, Any]) -> dict[str, Any]:
+    timing = _timing_without_private_fields(result.get("timing") or {})
+    return {
+        "id": _strip(result.get("id")),
+        "trial": _strip(result.get("trial")),
+        "outcome_code": _strip(result.get("outcome_code")),
+        "outcome": _strip(result.get("outcome")),
+        "cohort": _strip(result.get("cohort")) or "unspecified",
+        "status": {
+            "skipped": bool(result.get("skipped")),
+            "error": result.get("error"),
+            "notes": _strip(result.get("notes")),
+        },
+        "agreement": {
+            "reference": result.get("reference") or {},
+            "pipeline": result.get("pipeline") or {},
+            "comparison": result.get("comparison") or {},
+            "audit_caught_mismatches": result.get("audit_caught_mismatches") or {},
+        },
+        "packet_quality": result.get("packet_quality") or {},
+        "schema_failures": result.get("schema_failures") or [],
+        "artifacts": _assessment_artifact_paths(result),
+        "diagnostics": {
+            "timing": timing,
+            "parser_metrics": _parser_metrics_from_timing(timing),
+            "cache_reuse": {
+                "llm_cache_hits": _coerce_int_ms(timing.get("llm_cache_hits")),
+            },
+            "llm_latency": {
+                "llm_calls": _coerce_int_ms(timing.get("llm_calls")),
+                "llm_total_ms": _coerce_int_ms(timing.get("llm_total_ms")),
+            },
+            "cost_metadata": _cost_metadata_from_timing(timing),
+        },
+    }
+
+
+def _benchmark_schema_envelope(
+    results: list[dict[str, Any]],
+    summary: dict[str, Any],
+    workspace_path: Path,
+) -> dict[str, Any]:
+    return {
+        "schema": {
+            "schema_name": "auto_rob2_benchmark_result",
+            "schema_version": 1,
+            "sections": {
+                "aggregate": "Agreement, confusion, audit, timing, and adjudication summaries across evaluated assessments.",
+                "assessments": "Per-assessment agreement, artifacts, packet quality, schema failures, and engineering diagnostics.",
+                "artifact_manifest": "SHA-256 references for benchmark workspace and assessment artifacts.",
+            },
+            "diagnostics": {
+                "classification": "engineering_only",
+                "fields": [
+                    "timing",
+                    "parser_metrics",
+                    "cache_reuse",
+                    "llm_latency",
+                    "cost_metadata",
+                ],
+            },
+        },
+        "artifact_manifest": _artifact_manifest(results, workspace_path),
+        "aggregate": summary,
+        "assessments": [_benchmark_assessment_record(result) for result in results],
+        "results": [_public_result(result) for result in results],
+        "summary": summary,
+    }
 
 
 def _iter_outcome_map(outcome_map) -> list[tuple[str, str, str]]:
@@ -581,6 +778,16 @@ def run_benchmark(
             continue
 
         assessment_output_dir = output_dir_path / f"{pdf_path.stem}_{code.lower()}"
+        trial_result["assessment_output_dir"] = str(assessment_output_dir)
+        trial_result["assessment_artifacts"] = {
+            "rob2_data_json": str(
+                assessment_output_dir / f"{pdf_path.stem}_rob2_data.json"
+            ),
+            "trace_json": str(assessment_output_dir / f"{pdf_path.stem}_trace.json"),
+            "report_markdown": str(
+                assessment_output_dir / f"{pdf_path.stem}_rob2_report.md"
+            ),
+        }
         cache_key = _trial_artifact_cache_key(pdf_path, supplement_paths)
         cached_artifacts = ingestion_cache.get(cache_key, {})
         start_wall = time.perf_counter()
@@ -630,6 +837,12 @@ def run_benchmark(
             final_domain_judgments = pipeline_output.get("domain_judgments") or {}
             final_overall_judgment = _normalize_judgment(
                 pipeline_output.get("overall_judgment")
+            )
+            trial_result["packet_quality"] = pipeline_output.get("packet_grades") or {}
+            trial_result["schema_failures"] = (
+                pipeline_output.get("schema_failures")
+                or pipeline_output.get("schema_validation_failures")
+                or []
             )
             initial_domain_judgments = _derive_initial_domain_judgments(pipeline_output)
             initial_overall_judgment = _normalize_judgment(
@@ -976,10 +1189,7 @@ def write_benchmark_report(results, summary, output_path):
 
     json_path.write_text(
         json.dumps(
-            {
-                "results": [_public_result(result) for result in results],
-                "summary": summary,
-            },
+            _benchmark_schema_envelope(results, summary, output_path.parent),
             indent=2,
             ensure_ascii=False,
         ),
