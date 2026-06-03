@@ -12,8 +12,10 @@ from rob2_pipeline.nodes.evidence_contracts import (
     EvidenceContract,
 )
 from rob2_pipeline.nodes.evidence_source_selection import (
+    DOMAIN_SOURCE_ROLE_PREFERENCES,
     contract_terms,
     looks_like_wrong_outcome,
+    role_rank,
 )
 from rob2_pipeline.state import RoB2State
 from rob2_pipeline.types import EvidenceFact, PacketReadiness, PacketSource, RetrievalGrade
@@ -273,16 +275,131 @@ def contradictions_for_sources(
         return []
 
     return [
-        {
-            "artifact_id": f"evidence-contradiction:{contract.domain}:{contract.sq_id}:allocation-concealment",
-            "domain": contract.domain,
-            "sq_ids": [contract.sq_id],
-            "label": "allocation_concealment",
-            "reason": "Selected sources make conflicting claims about allocation concealment.",
-            "dominant_source": _source_summary(positive),
-            "conflicting_source": _source_summary(negative),
-        }
+        resolve_source_conflict(
+            domain=contract.domain,
+            sq_id=contract.sq_id,
+            label="allocation_concealment",
+            positive=positive,
+            negative=negative,
+        )
     ]
+
+
+def resolve_source_conflict(
+    *,
+    domain: str,
+    sq_id: str,
+    label: str,
+    positive: PacketSource,
+    negative: PacketSource,
+    override_source: PacketSource | None = None,
+    override_rationale: str = "",
+    override_quote: str = "",
+) -> dict:
+    """Resolve a two-claim source conflict while preserving audit details."""
+    hierarchy = list(DOMAIN_SOURCE_ROLE_PREFERENCES.get(domain, []))
+    positive_summary = _source_summary(positive)
+    negative_summary = _source_summary(negative)
+    hierarchy_winner = min(
+        (positive, negative),
+        key=lambda source: role_rank(domain, source.get("document_role", "")),
+    )
+    dominant = hierarchy_winner
+    hierarchy_override = False
+    override_rejected_reason = ""
+    if override_source is not None:
+        if override_rationale.strip() and _quote_is_supported(
+            override_source, override_quote
+        ):
+            dominant = override_source
+            hierarchy_override = dominant is not hierarchy_winner
+        else:
+            override_rejected_reason = (
+                "Hierarchy override requires explicit rationale and quote support."
+            )
+    conflicting = negative if dominant is positive else positive
+    dominant_is_positive = dominant is positive
+    dominant_claim = (
+        f"{_claim_label(label)} was reported."
+        if dominant_is_positive
+        else f"{_claim_label(label)} was contradicted."
+    )
+    conflicting_claim = (
+        f"{_claim_label(label)} was contradicted."
+        if dominant_is_positive
+        else f"{_claim_label(label)} was reported."
+    )
+    rationale = _resolution_rationale(
+        domain=domain,
+        dominant=dominant,
+        conflicting=conflicting,
+        hierarchy_override=hierarchy_override,
+        override_rationale=override_rationale,
+    )
+    artifact = {
+        "artifact_id": f"evidence-contradiction:{domain}:{sq_id}:{slug(label)}",
+        "domain": domain,
+        "sq_ids": [sq_id],
+        "label": label,
+        "reason": f"Selected sources make conflicting claims about {label.replace('_', ' ')}.",
+        "source_roles": [
+            positive.get("document_role", ""),
+            negative.get("document_role", ""),
+        ],
+        "support_levels": {
+            "dominant": _source_support_level(dominant),
+            "conflicting": _source_support_level(conflicting),
+        },
+        "source_hierarchy": hierarchy,
+        "dominant_source": _source_summary(dominant),
+        "conflicting_source": _source_summary(conflicting),
+        "dominant_claim": dominant_claim,
+        "conflicting_claim": conflicting_claim,
+        "rationale": rationale,
+        "hierarchy_override": hierarchy_override,
+        "override_rationale": override_rationale if hierarchy_override else "",
+        "override_quote": override_quote if hierarchy_override else "",
+    }
+    if override_rejected_reason:
+        artifact["override_rejected_reason"] = override_rejected_reason
+    if positive_summary != artifact["dominant_source"]:
+        artifact["positive_source"] = positive_summary
+    if negative_summary != artifact["dominant_source"]:
+        artifact["negative_source"] = negative_summary
+    return artifact
+
+
+def _claim_label(label: str) -> str:
+    return label.replace("_", " ").capitalize()
+
+
+def _quote_is_supported(source: PacketSource, quote: str) -> bool:
+    quote = compact(quote, 240).casefold()
+    if not quote:
+        return False
+    return quote in source.get("text", "").casefold()
+
+
+def _source_support_level(source: PacketSource) -> str:
+    return "strong" if source.get("text", "").strip() else "unsupported"
+
+
+def _resolution_rationale(
+    *,
+    domain: str,
+    dominant: PacketSource,
+    conflicting: PacketSource,
+    hierarchy_override: bool,
+    override_rationale: str,
+) -> str:
+    if hierarchy_override:
+        return override_rationale.strip()
+    dominant_role = dominant.get("document_role", "") or "unknown"
+    conflicting_role = conflicting.get("document_role", "") or "unknown"
+    return (
+        f"Selected {dominant_role} as dominant because it ranks above "
+        f"{conflicting_role} in the {domain} source hierarchy."
+    )
 
 
 def _has_positive_concealment(text: str) -> bool:
