@@ -13,6 +13,7 @@ from rob2_pipeline.types import (
     PacketReadiness,
     ParseArtifact,
     PivotalityTest,
+    RetrievalRepairArtifact,
     RetrievalGrade,
     SourceDocument,
     SqSupportAdjudication,
@@ -55,6 +56,9 @@ class RoB2State(TypedDict, total=False):
     evidence_store: Annotated[EvidenceStoreArtifact, take_latest]
     packet_grades: Annotated[dict[str, RetrievalGrade], merge_dicts]
     packet_readiness: Annotated[dict[str, PacketReadiness], merge_dicts]
+    retrieval_repair_artifacts: Annotated[
+        dict[str, RetrievalRepairArtifact], merge_dicts
+    ]
     verification_actions: Annotated[list[dict], take_latest]
 
     # === PRELIMINARY INFO ===

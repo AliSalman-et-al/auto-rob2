@@ -77,6 +77,12 @@ def build_evidence_packets(state: RoB2State) -> dict:
     }
 
 
+def build_packet_for_contract(
+    state: RoB2State, contract: EvidenceContract
+) -> EvidencePacket:
+    return _build_packet_for_contract(state, contract)
+
+
 def packet_block_for_domain(
     evidence_packets: dict[str, EvidencePacket], domain: str, max_chars: int = 6500
 ) -> str:
