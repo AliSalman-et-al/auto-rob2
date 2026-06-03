@@ -139,6 +139,25 @@ class EvidenceGap(TypedDict, total=False):
     reason: str
 
 
+class DecisionTableRow(TypedDict, total=False):
+    answer: str
+    rule: str
+    allowed_by_packet: bool
+    supporting_facts: list[dict]
+    evidence_gaps: list[dict]
+    insufficient_evidence_default: bool
+
+
+class DecisionTable(TypedDict, total=False):
+    artifact_id: str
+    schema_version: str
+    sq_id: str
+    allowed_answers: list[str]
+    rows: list[DecisionTableRow]
+    default_insufficient_evidence_answer: str
+    classifier_instruction: str
+
+
 class EvidenceStoreArtifact(TypedDict, total=False):
     artifact_id: str
     schema_version: str
@@ -159,6 +178,7 @@ class EvidencePacket(TypedDict, total=False):
     gaps: list[EvidenceGap]
     failed_claims: list[EvidenceFact]
     contradictions: list[dict]
+    decision_table: DecisionTable
     text: str
     retrieval_confidence: float
     missing_evidence: list[str]

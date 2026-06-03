@@ -130,6 +130,7 @@ class EvidencePacketRecord(BaseModel):
     gaps: list[EvidenceGap] = Field(default_factory=list)
     failed_claims: list[EvidenceFactRecord] = Field(default_factory=list)
     contradictions: list[dict] = Field(default_factory=list)
+    decision_table: dict = Field(default_factory=dict)
     text: str = ""
     retrieval_confidence: float = Field(ge=0.0, le=1.0)
     missing_evidence: list[str] = Field(default_factory=list)

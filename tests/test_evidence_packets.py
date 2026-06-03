@@ -82,6 +82,62 @@ def test_d1_packet_schema_validates_required_artifact_fields():
     assert packet.outcome == "Progression-Free Survival"
 
 
+def test_packet_includes_decision_table_with_default_insufficient_evidence_row():
+    state = _state_with_chunks(
+        "d1",
+        [
+            {
+                "text": "Participants were randomized by a computer-generated sequence.",
+                "section": "Methods",
+                "page_numbers": [2],
+                "score": 0.1,
+                "document_id": "primary:TITAN",
+                "document_name": "TITAN primary report",
+                "document_role": "primary",
+                "source_kind": "rag_chunk",
+                "source_path": "inputs/benchmark/TITAN.pdf",
+            }
+        ],
+    )
+
+    result = build_evidence_packets(state)
+
+    packet = result["evidence_packets"]["1.1"]
+    table = packet["decision_table"]
+    assert table["sq_id"] == "1.1"
+    assert table["default_insufficient_evidence_answer"] == "NI"
+    assert "selected packet evidence" in table["classifier_instruction"]
+    assert {row["answer"] for row in table["rows"]} >= {"Y", "PY", "NI"}
+    y_row = next(row for row in table["rows"] if row["answer"] == "Y")
+    assert y_row["supporting_facts"]
+    assert y_row["evidence_gaps"] == []
+    ni_row = next(row for row in table["rows"] if row["answer"] == "NI")
+    assert ni_row["insufficient_evidence_default"] is True
+
+
+def test_packet_block_renders_decision_table_classifier_constraint():
+    state = _state_with_chunks(
+        "d3",
+        [
+            {
+                "text": "The analysis used available participants and reported missing outcome data were uncommon.",
+                "section": "Results",
+                "page_numbers": [8],
+                "score": 0.2,
+            }
+        ],
+    )
+
+    result = build_evidence_packets(state)
+
+    block = packet_block_for_domain(result["evidence_packets"], "d3")
+
+    assert "Mini decision table:" in block
+    assert "- Y:" in block
+    assert "- NI: Default when selected packet evidence is insufficient" in block
+    assert "Choose only from selected packet evidence" in block
+
+
 def test_unsupported_d1_claims_appear_as_gaps_and_failed_claims():
     state = _state_with_chunks(
         "d1",
