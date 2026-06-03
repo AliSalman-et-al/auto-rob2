@@ -237,8 +237,82 @@ def _family_response_from_prompt(prompt: str) -> str:
             sq_id = line.removeprefix("SQ ID: ").strip()
             break
     domain = f"d{sq_id.split('.')[0]}"
-    family = "prespecification" if domain == "d5" else "randomization_allocation"
-    if family == "prespecification":
+    family_by_sq = {
+        "1.1": "randomization_allocation",
+        "1.2": "randomization_allocation",
+        "2.1": "masking_awareness",
+        "2.2": "masking_awareness",
+        "2.3": "deviations_adherence",
+        "2.4": "deviations_adherence",
+        "2.5": "deviations_adherence",
+        "2.6": "analysis_population",
+        "2.7": "analysis_population",
+        "3.1": "missing_outcome_data",
+        "3.2": "missing_outcome_data",
+        "3.3": "missing_outcome_data",
+        "3.4": "missing_outcome_data",
+        "4.1": "outcome_measurement",
+        "4.2": "outcome_measurement",
+        "4.3": "outcome_measurement",
+        "4.4": "outcome_measurement",
+        "4.5": "outcome_measurement",
+        "5.1": "prespecification",
+        "5.2": "result_reporting",
+        "5.3": "result_reporting",
+    }
+    family = family_by_sq[sq_id]
+    if family == "randomization_allocation":
+        family_fields = {
+            "method": "computer-generated sequence",
+            "allocation_concealment": "central concealment",
+            "unit_of_randomization": "participant",
+        }
+        claim_type = "trial_method"
+    elif family == "masking_awareness":
+        family_fields = {
+            "participant_awareness": "participants were blinded",
+            "personnel_awareness": "personnel were blinded",
+            "masking_method": "matched placebo",
+            "awareness_context": "double-blind trial conduct",
+        }
+        claim_type = "trial_method"
+    elif family == "deviations_adherence":
+        family_fields = {
+            "awareness_status": "participants and personnel blinded",
+            "deviation_description": "no important protocol deviations",
+            "adherence_population": "all randomized participants",
+            "analysis_population": "intention-to-treat",
+            "outcome_impact": "no important impact on mortality",
+        }
+        claim_type = "trial_method"
+    elif family == "analysis_population":
+        family_fields = {
+            "population_label": "intention-to-treat",
+            "included_participants": "all randomized participants",
+            "excluded_participants": "none reported",
+            "analysis_principle": "analyzed as randomized",
+            "exclusion_impact": "no important impact",
+        }
+        claim_type = "analysis"
+    elif family == "missing_outcome_data":
+        family_fields = {
+            "randomized_count": "100",
+            "outcome_data_count": "100",
+            "missing_count": "0",
+            "missing_reason": "no missing outcome data",
+            "analysis_handling": "all randomized participants analyzed",
+        }
+        claim_type = "analysis"
+    elif family == "outcome_measurement":
+        family_fields = {
+            "assessed_outcome": "mortality",
+            "measurement_method": "death from any cause",
+            "measurement_timing": "during follow-up",
+            "assessor_awareness": "objective vital-status endpoint",
+            "influence_risk": "not likely influenced by awareness",
+        }
+        claim_type = "outcome_measurement"
+    elif family == "prespecification":
         family_fields = {
             "artifact_type": "registry",
             "identifier": "NCT00000000",
@@ -248,11 +322,13 @@ def _family_response_from_prompt(prompt: str) -> str:
         claim_type = "registry"
     else:
         family_fields = {
-            "method": "computer-generated sequence",
-            "allocation_concealment": "central concealment",
-            "unit_of_randomization": "participant",
+            "reported_outcome": "mortality",
+            "reported_measurement": "death from any cause",
+            "reported_analysis": "intention-to-treat",
+            "result_metric": "risk ratio with confidence interval",
+            "matches_prespecification": "matches the prespecified registry outcome",
         }
-        claim_type = "trial_method"
+        claim_type = "result_reporting"
     return json.dumps(
         {
             "facts": [
@@ -599,7 +675,7 @@ def test_graph_happy_path_with_mocked_llm(tmp_path):
     assert "## Verified evidence packets" in state["markdown_report"]
     assert state["evidence_store"]["supported_facts"]
     assert len(state["llm_call_log"]) == 10
-    assert provider.complete.call_count == 13
+    assert provider.complete.call_count == 30
 
 
 def test_graph_pfs_composite_endpoint_blocks_d4_when_packet_needs_repair(tmp_path):

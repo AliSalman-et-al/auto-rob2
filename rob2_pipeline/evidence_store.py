@@ -22,7 +22,16 @@ ClaimType = Literal[
     "registry",
     "other",
 ]
-EvidenceFamily = Literal["randomization_allocation", "prespecification"]
+EvidenceFamily = Literal[
+    "randomization_allocation",
+    "masking_awareness",
+    "deviations_adherence",
+    "analysis_population",
+    "missing_outcome_data",
+    "outcome_measurement",
+    "prespecification",
+    "result_reporting",
+]
 
 
 class RandomizationAllocationFields(BaseModel):
@@ -42,7 +51,75 @@ class PrespecificationFields(BaseModel):
     prespecified_analysis: str = Field(min_length=1)
 
 
-FamilyFields = RandomizationAllocationFields | PrespecificationFields
+class MaskingAwarenessFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    participant_awareness: str = Field(min_length=1)
+    personnel_awareness: str = Field(min_length=1)
+    masking_method: str = Field(min_length=1)
+    awareness_context: str = Field(min_length=1)
+
+
+class DeviationsAdherenceFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    awareness_status: str = Field(min_length=1)
+    deviation_description: str = Field(min_length=1)
+    adherence_population: str = Field(min_length=1)
+    analysis_population: str = Field(min_length=1)
+    outcome_impact: str = Field(min_length=1)
+
+
+class AnalysisPopulationFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    population_label: str = Field(min_length=1)
+    included_participants: str = Field(min_length=1)
+    excluded_participants: str = Field(min_length=1)
+    analysis_principle: str = Field(min_length=1)
+    exclusion_impact: str = Field(min_length=1)
+
+
+class MissingOutcomeDataFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    randomized_count: str = Field(min_length=1)
+    outcome_data_count: str = Field(min_length=1)
+    missing_count: str = Field(min_length=1)
+    missing_reason: str = Field(min_length=1)
+    analysis_handling: str = Field(min_length=1)
+
+
+class OutcomeMeasurementFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    assessed_outcome: str = Field(min_length=1)
+    measurement_method: str = Field(min_length=1)
+    measurement_timing: str = Field(min_length=1)
+    assessor_awareness: str = Field(min_length=1)
+    influence_risk: str = Field(min_length=1)
+
+
+class ResultReportingFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reported_outcome: str = Field(min_length=1)
+    reported_measurement: str = Field(min_length=1)
+    reported_analysis: str = Field(min_length=1)
+    result_metric: str = Field(min_length=1)
+    matches_prespecification: str = Field(min_length=1)
+
+
+FamilyFields = (
+    RandomizationAllocationFields
+    | MaskingAwarenessFields
+    | DeviationsAdherenceFields
+    | AnalysisPopulationFields
+    | MissingOutcomeDataFields
+    | OutcomeMeasurementFields
+    | PrespecificationFields
+    | ResultReportingFields
+)
 
 
 class EvidenceProvenance(BaseModel):
@@ -94,12 +171,59 @@ class EvidenceFactRecord(BaseModel):
                 "randomization_allocation facts require method, "
                 "allocation_concealment, and unit_of_randomization"
             )
+        if self.family == "masking_awareness" and not isinstance(
+            self.family_fields, MaskingAwarenessFields
+        ):
+            raise ValueError(
+                "masking_awareness facts require participant_awareness, "
+                "personnel_awareness, masking_method, and awareness_context"
+            )
+        if self.family == "deviations_adherence" and not isinstance(
+            self.family_fields, DeviationsAdherenceFields
+        ):
+            raise ValueError(
+                "deviations_adherence facts require awareness_status, "
+                "deviation_description, adherence_population, analysis_population, "
+                "and outcome_impact"
+            )
+        if self.family == "analysis_population" and not isinstance(
+            self.family_fields, AnalysisPopulationFields
+        ):
+            raise ValueError(
+                "analysis_population facts require population_label, "
+                "included_participants, excluded_participants, analysis_principle, "
+                "and exclusion_impact"
+            )
+        if self.family == "missing_outcome_data" and not isinstance(
+            self.family_fields, MissingOutcomeDataFields
+        ):
+            raise ValueError(
+                "missing_outcome_data facts require randomized_count, "
+                "outcome_data_count, missing_count, missing_reason, "
+                "and analysis_handling"
+            )
+        if self.family == "outcome_measurement" and not isinstance(
+            self.family_fields, OutcomeMeasurementFields
+        ):
+            raise ValueError(
+                "outcome_measurement facts require assessed_outcome, "
+                "measurement_method, measurement_timing, assessor_awareness, "
+                "and influence_risk"
+            )
         if self.family == "prespecification" and not isinstance(
             self.family_fields, PrespecificationFields
         ):
             raise ValueError(
                 "prespecification facts require artifact_type, identifier, "
                 "prespecified_outcome, and prespecified_analysis"
+            )
+        if self.family == "result_reporting" and not isinstance(
+            self.family_fields, ResultReportingFields
+        ):
+            raise ValueError(
+                "result_reporting facts require reported_outcome, "
+                "reported_measurement, reported_analysis, result_metric, "
+                "and matches_prespecification"
             )
         if self.family is None and self.family_fields is not None:
             raise ValueError("family_fields require a family")
@@ -166,8 +290,25 @@ class EvidenceStore(BaseModel):
 FAMILY_BY_SQ: dict[str, EvidenceFamily] = {
     "1.1": "randomization_allocation",
     "1.2": "randomization_allocation",
+    "2.1": "masking_awareness",
+    "2.2": "masking_awareness",
+    "2.3": "deviations_adherence",
+    "2.4": "deviations_adherence",
+    "2.5": "deviations_adherence",
+    "2.6": "analysis_population",
+    "2.7": "analysis_population",
+    "3.1": "missing_outcome_data",
+    "3.2": "missing_outcome_data",
+    "3.3": "missing_outcome_data",
+    "3.4": "missing_outcome_data",
+    "4.1": "outcome_measurement",
+    "4.2": "outcome_measurement",
+    "4.3": "outcome_measurement",
+    "4.4": "outcome_measurement",
+    "4.5": "outcome_measurement",
     "5.1": "prespecification",
-    "5.2": "prespecification",
+    "5.2": "result_reporting",
+    "5.3": "result_reporting",
 }
 
 FAMILY_SCHEMA_TEXT: dict[EvidenceFamily, str] = {
@@ -175,9 +316,33 @@ FAMILY_SCHEMA_TEXT: dict[EvidenceFamily, str] = {
         "family_fields must contain method, allocation_concealment, "
         "and unit_of_randomization."
     ),
+    "masking_awareness": (
+        "family_fields must contain participant_awareness, personnel_awareness, "
+        "masking_method, and awareness_context."
+    ),
+    "deviations_adherence": (
+        "family_fields must contain awareness_status, deviation_description, "
+        "adherence_population, analysis_population, and outcome_impact."
+    ),
+    "analysis_population": (
+        "family_fields must contain population_label, included_participants, "
+        "excluded_participants, analysis_principle, and exclusion_impact."
+    ),
+    "missing_outcome_data": (
+        "family_fields must contain randomized_count, outcome_data_count, "
+        "missing_count, missing_reason, and analysis_handling."
+    ),
+    "outcome_measurement": (
+        "family_fields must contain assessed_outcome, measurement_method, "
+        "measurement_timing, assessor_awareness, and influence_risk."
+    ),
     "prespecification": (
         "family_fields must contain artifact_type (registry, protocol, or sap), "
         "identifier, prespecified_outcome, and prespecified_analysis."
+    ),
+    "result_reporting": (
+        "family_fields must contain reported_outcome, reported_measurement, "
+        "reported_analysis, result_metric, and matches_prespecification."
     ),
 }
 
@@ -350,11 +515,16 @@ def _select_family_packets(
 
 def _is_wrong_outcome_fact(fact: EvidenceFactRecord, outcome: str) -> bool:
     fields = fact.family_fields
-    if not isinstance(fields, PrespecificationFields):
+    fact_outcome = ""
+    if isinstance(fields, PrespecificationFields):
+        fact_outcome = fields.prespecified_outcome
+    elif isinstance(fields, OutcomeMeasurementFields):
+        fact_outcome = fields.assessed_outcome
+    elif isinstance(fields, ResultReportingFields):
+        fact_outcome = fields.reported_outcome
+    if not fact_outcome:
         return False
-    return _normalize_outcome(fields.prespecified_outcome) != _normalize_outcome(
-        outcome
-    )
+    return _normalize_outcome(fact_outcome) != _normalize_outcome(outcome)
 
 
 def _normalize_outcome(value: str) -> str:
