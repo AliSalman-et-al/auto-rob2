@@ -371,6 +371,54 @@ def write_d1_sq_answer_workspace(
     )
 
 
+def write_d1_judgment_workspace(
+    *,
+    trial_id: str,
+    outcome_id: str,
+    workspace_root: str | Path,
+    trial_workspace_dir: str | Path,
+    upstream_artifact_paths: dict[str, str | Path],
+    outcome_definition: dict,
+    rob2_settings: dict,
+    d1_judgment_artifact: dict,
+) -> OutcomeWorkspaceManifest:
+    root = outcome_workspace_dir(workspace_root, outcome_id)
+    artifact_path = root / "d1-judgment.json"
+    _write_json(artifact_path, d1_judgment_artifact)
+
+    upstream_hashes = {
+        artifact_id: file_sha256(path)
+        for artifact_id, path in sorted(upstream_artifact_paths.items())
+        if Path(path).exists()
+    }
+    identity = build_outcome_artifact_identity(
+        artifact_id=d1_judgment_artifact.get("artifact_id", f"d1-judgment:{outcome_id}"),
+        schema_version=d1_judgment_artifact.get("schema_version", "d1-judgment-v1"),
+        producer="d1-deterministic-judge",
+        producer_version=d1_judgment_artifact.get("judge_version", "unknown-judge"),
+        content_hash=file_sha256(artifact_path),
+        upstream_trial_workspace_hashes=upstream_hashes,
+        outcome_definition=outcome_definition,
+        rob2_settings=rob2_settings,
+        config={
+            "judge_version": d1_judgment_artifact.get("judge_version", ""),
+            "rule_table_version": d1_judgment_artifact.get("rule_table_version", ""),
+            "schema_version": d1_judgment_artifact.get("schema_version", ""),
+        },
+    )
+    artifacts = _existing_outcome_artifacts(workspace_root, outcome_id, identity)
+    return write_outcome_workspace_manifest(
+        trial_id=trial_id,
+        outcome_id=outcome_id,
+        workspace_root=workspace_root,
+        trial_workspace_dir=trial_workspace_dir,
+        upstream_artifact_paths=upstream_artifact_paths,
+        outcome_definition=outcome_definition,
+        rob2_settings=rob2_settings,
+        artifacts=[*artifacts, identity],
+    )
+
+
 def evaluate_artifact_status(
     manifest: TrialWorkspaceManifest,
     current_identity: ArtifactIdentity,
@@ -991,6 +1039,7 @@ __all__ = [
     "read_trial_workspace_manifest",
     "stable_payload_sha256",
     "write_outcome_workspace_manifest",
+    "write_d1_judgment_workspace",
     "write_d1_sq_answer_workspace",
     "write_outcome_normalization_workspace",
     "write_evidence_store_trial_workspace",

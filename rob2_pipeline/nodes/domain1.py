@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from rob2_pipeline.judges.domain1 import judge_domain1
+from rob2_pipeline.judges.domain1 import judge_domain1, judge_domain1_artifact
 from rob2_pipeline.llm_contracts import call_json_contract_llm
 from rob2_pipeline.nodes.common import (
     add_domain_judgment_with_pivotality_tests,
@@ -265,7 +265,23 @@ def _d1_classifier_fallback(reason: str) -> dict:
 
 
 def domain1_judge_node(state: RoB2State) -> RoB2State:
-    judgment, rationale = judge_domain1(state["sq_answers"])
-    return add_domain_judgment_with_pivotality_tests(
+    judgment_artifact = judge_domain1_artifact(state["sq_answers"])
+    judgment = judgment_artifact["label"]
+    rationale = judgment_artifact["rationale"]
+    update = add_domain_judgment_with_pivotality_tests(
         state, "D1", judgment, rationale, judge_domain1, DOMAIN1_STAGE.sq_ids
     )
+    final_sq_answers = update.get("sq_answers", state["sq_answers"])
+    final_judgment = update["domain_judgments"]["D1"]
+    final_rationale = update["domain_rationales"]["D1"]
+    if final_judgment != judgment or final_rationale != rationale:
+        judgment_artifact = judge_domain1_artifact(final_sq_answers)
+    update["d1_judgment_artifact"] = {
+        **judgment_artifact,
+        "artifact_id": f"d1-judgment:{state.get('outcome', '')}",
+        "pivotality_tests": update.get("pivotality_tests", {}).get("D1", []),
+        "sq_support_adjudications": update.get("sq_support_adjudications", {}).get(
+            "D1", []
+        ),
+    }
+    return update

@@ -15,6 +15,7 @@ from rob2_pipeline.trial_workspace import (
     load_trial_workspace_artifacts,
     read_trial_workspace_manifest,
     write_evidence_store_trial_workspace,
+    write_d1_judgment_workspace,
     write_d1_sq_answer_workspace,
     write_outcome_normalization_workspace,
     write_parse_trial_workspace,
@@ -861,6 +862,79 @@ def test_d1_sq_answer_workspace_records_invalid_answers_and_missing_support_meta
             ],
         }
     ]
+
+
+def test_d1_judgment_workspace_persists_artifact_and_invalidates_on_versions(tmp_path):
+    trial_manifest_path = tmp_path / "trial_workspace" / "trial-workspace-manifest.json"
+    trial_manifest_path.parent.mkdir(parents=True)
+    trial_manifest_path.write_text('{"trial": "manifest"}\n', encoding="utf-8")
+    sq_answer_path = tmp_path / "outcomes" / "overall-survival" / "d1-sq-answers.json"
+    sq_answer_path.parent.mkdir(parents=True)
+    sq_answer_path.write_text('{"answers": []}\n', encoding="utf-8")
+    artifact = {
+        "artifact_id": "d1-judgment:overall-survival",
+        "schema_version": "d1-judgment-v1",
+        "domain": "d1",
+        "judge_version": "d1-judge-v1",
+        "rule_table_version": "rob2-d1-rule-table-v1",
+        "input_sq_answers": {
+            "1.1": {"answer": "Y"},
+            "1.2": {"answer": "Y"},
+            "1.3": {"answer": "N"},
+        },
+        "applied_rule_path": "d1-row-1:y-py-ni/y-py/ni-n-pn",
+        "label": "Low",
+        "rationale": "Row: Y-PY-NI / Y-PY / NI-N-PN -> Low",
+    }
+
+    manifest = write_d1_judgment_workspace(
+        trial_id="trial-001",
+        outcome_id="overall-survival",
+        workspace_root=tmp_path / "outcomes",
+        trial_workspace_dir=tmp_path / "trial_workspace",
+        upstream_artifact_paths={
+            "trial-workspace-manifest": trial_manifest_path,
+            "d1-sq-answer-set": sq_answer_path,
+        },
+        outcome_definition={"outcome": "Overall survival"},
+        rob2_settings={"effect_of_interest": "ITT"},
+        d1_judgment_artifact=artifact,
+    )
+
+    artifact_path = tmp_path / "outcomes" / "overall-survival" / "d1-judgment.json"
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    identity = manifest.artifacts[0]
+
+    assert payload == artifact
+    assert identity.artifact_id == "d1-judgment:overall-survival"
+    assert identity.schema_version == "d1-judgment-v1"
+    assert identity.producer == "d1-deterministic-judge"
+    assert identity.producer_version == "d1-judge-v1"
+    assert identity.upstream_trial_workspace_hashes["d1-sq-answer-set"] == file_sha256(
+        sq_answer_path
+    )
+    assert identity.content_hash == file_sha256(artifact_path)
+
+    changed_versions = write_d1_judgment_workspace(
+        trial_id="trial-001",
+        outcome_id="overall-survival",
+        workspace_root=tmp_path / "other-outcomes",
+        trial_workspace_dir=tmp_path / "trial_workspace",
+        upstream_artifact_paths={
+            "trial-workspace-manifest": trial_manifest_path,
+            "d1-sq-answer-set": sq_answer_path,
+        },
+        outcome_definition={"outcome": "Overall survival"},
+        rob2_settings={"effect_of_interest": "ITT"},
+        d1_judgment_artifact={
+            **artifact,
+            "judge_version": "d1-judge-v2",
+            "rule_table_version": "rob2-d1-rule-table-v2",
+        },
+    )
+
+    assert changed_versions.artifacts[0].config_hash != identity.config_hash
+    assert changed_versions.artifacts[0].producer_version == "d1-judge-v2"
 
 
 def _source_document(path, *, document_id="primary", document_role="primary"):

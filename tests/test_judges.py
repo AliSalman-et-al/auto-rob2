@@ -2,12 +2,14 @@ import pytest
 
 from rob2_pipeline.judges import (
     judge_domain1,
+    judge_domain1_artifact,
     judge_domain2,
     judge_domain3,
     judge_domain4,
     judge_domain5,
     judge_overall,
 )
+from rob2_pipeline.nodes.domain1 import domain1_judge_node
 from rob2_pipeline.nodes.domain3 import domain3_judge_node
 from rob2_pipeline.models import empty_paper_evidence
 from rob2_pipeline.nodes.domain4 import domain4_judge_node, domain4_sq_node
@@ -38,6 +40,36 @@ def sq(**answers):
 )
 def test_judge_domain1(answers, expected):
     assert judge_domain1(answers)[0] == expected
+
+
+def test_judge_domain1_artifact_records_rule_path_and_inputs():
+    answers = sq(**{"1.1": "Y", "1.2": "Y", "1.3": "N"})
+
+    artifact = judge_domain1_artifact(answers)
+
+    assert artifact["judge_version"] == "d1-judge-v1"
+    assert artifact["rule_table_version"] == "rob2-d1-rule-table-v1"
+    assert artifact["input_sq_answers"] == answers
+    assert artifact["applied_rule_path"] == "d1-row-1:y-py-ni/y-py/ni-n-pn"
+    assert artifact["label"] == "Low"
+    assert artifact["rationale"] == "Row: Y-PY-NI / Y-PY / NI-N-PN -> Low"
+
+
+def test_domain1_judge_node_emits_versioned_judgment_artifact():
+    result = domain1_judge_node(
+        {
+            "outcome": "Overall survival",
+            "sq_answers": sq(**{"1.1": "Y", "1.2": "Y", "1.3": "N"}),
+            "domain_judgments": {},
+            "domain_rationales": {},
+        }
+    )
+
+    artifact = result["d1_judgment_artifact"]
+    assert artifact["artifact_id"] == "d1-judgment:Overall survival"
+    assert artifact["schema_version"] == "d1-judgment-v1"
+    assert artifact["label"] == result["domain_judgments"]["D1"]
+    assert artifact["rationale"] == result["domain_rationales"]["D1"]
 
 
 @pytest.mark.parametrize(

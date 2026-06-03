@@ -9,6 +9,7 @@ from rob2_pipeline.state import RoB2State
 from rob2_pipeline.state_factory import create_initial_state
 from rob2_pipeline.trace import end_trace, start_trace
 from rob2_pipeline.trial_workspace import (
+    write_d1_judgment_workspace,
     write_d1_sq_answer_workspace,
     write_outcome_normalization_workspace,
     write_evidence_store_trial_workspace,
@@ -51,6 +52,7 @@ JSON_OUTPUT_KEYS = (
     "sq_answers",
     "initial_domain_judgments",
     "initial_domain_rationales",
+    "d1_judgment_artifact",
     "domain_judgments",
     "domain_rationales",
     "pivotality_tests",
@@ -185,6 +187,23 @@ def _write_workspace_artifacts(
             model_metadata=_model_metadata_from_state(state),
             contract_metadata=_d1_contract_metadata_from_state(state),
         )
+    if state.get("d1_judgment_artifact"):
+        write_d1_judgment_workspace(
+            trial_id=base,
+            outcome_id=_outcome_id_from_state(state),
+            workspace_root=output_path / f"{base}_outcome_workspaces",
+            trial_workspace_dir=trial_workspace_dir,
+            upstream_artifact_paths={
+                **_outcome_workspace_upstream_paths(
+                    trial_workspace_dir,
+                    state["parse_artifacts"],
+                ),
+                **_d1_sq_answer_upstream_path(output_path, base, state),
+            },
+            outcome_definition=_outcome_definition_from_state(state),
+            rob2_settings=_rob2_settings_from_state(state),
+            d1_judgment_artifact=state["d1_judgment_artifact"],
+        )
 
 
 def _evidence_store_upstream_paths(
@@ -303,6 +322,22 @@ def _d1_contract_metadata_from_state(state: RoB2State) -> dict:
             "provider": log_entry.get("provider", config.PROVIDER_NAME),
             "model": log_entry.get("model", config.LLM_MODEL),
         },
+    }
+
+
+def _d1_sq_answer_upstream_path(
+    output_path: Path,
+    base: str,
+    state: RoB2State,
+) -> dict[str, Path]:
+    if not state.get("d1_sq_classifier_artifact"):
+        return {}
+    outcome_dir = re.sub(r"[^A-Za-z0-9_.-]+", "_", _outcome_id_from_state(state))
+    return {
+        "d1-sq-answer-set": output_path
+        / f"{base}_outcome_workspaces"
+        / outcome_dir
+        / "d1-sq-answers.json"
     }
 
 

@@ -160,6 +160,21 @@ def test_workspace_output_writes_d1_sq_answer_artifact(tmp_path):
         "outcome_classification_support": {"support_level": "strong"},
         "effect_of_interest": "ITT",
         "overall_policy": "rob2-default",
+        "d1_judgment_artifact": {
+            "artifact_id": "d1-judgment:Overall survival",
+            "schema_version": "d1-judgment-v1",
+            "domain": "d1",
+            "judge_version": "d1-judge-v1",
+            "rule_table_version": "rob2-d1-rule-table-v1",
+            "input_sq_answers": {
+                "1.1": {"answer": "Y"},
+                "1.2": {"answer": "NI"},
+                "1.3": {"answer": "N"},
+            },
+            "applied_rule_path": "d1-row-4:any/ni/n-pn-ni",
+            "label": "Some concerns",
+            "rationale": "Row: Any / NI / N-PN-NI -> Some concerns (concealment unclear)",
+        },
         "d1_sq_classifier_artifact": {
             "schema_version": "d1-sq-classifier-v1",
             "domain": "d1",
@@ -191,14 +206,25 @@ def test_workspace_output_writes_d1_sq_answer_artifact(tmp_path):
     manifest_path = artifact_path.parent / "outcome-workspace-manifest.json"
     artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    judgment = json.loads(
+        (artifact_path.parent / "d1-judgment.json").read_text(encoding="utf-8")
+    )
 
     assert artifact["artifact_id"] == "d1-sq-answer-set:Overall survival"
     assert artifact["schema_version"] == "d1-sq-answer-set-v1"
     assert artifact["classifier_schema_version"] == "d1-sq-classifier-v1"
     assert artifact["classifier_prompt_version"] == "d1-sq-classifier-prompt-v1"
     assert artifact["validation"]["status"] == "validated"
-    assert manifest["artifacts"][0]["artifact_id"] == artifact["artifact_id"]
-    assert manifest["artifacts"][0]["producer"] == "d1-sq-classifier"
+    manifest_artifacts = {
+        item["artifact_id"]: item for item in manifest["artifacts"]
+    }
+    assert manifest_artifacts[artifact["artifact_id"]]["producer"] == "d1-sq-classifier"
+    assert judgment["artifact_id"] == "d1-judgment:Overall survival"
+    assert judgment["judge_version"] == "d1-judge-v1"
+    assert {
+        "d1-sq-answer-set:Overall survival",
+        "d1-judgment:Overall survival",
+    }.issubset(manifest_artifacts)
 
 
 def _source_document(path):

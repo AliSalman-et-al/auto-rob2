@@ -89,6 +89,7 @@ class RoB2State(TypedDict, total=False):
     # === DOMAIN JUDGMENTS (set by deterministic nodes) ===
     initial_domain_judgments: Annotated[dict[str, str], merge_dicts]
     initial_domain_rationales: Annotated[dict[str, str], merge_dicts]
+    d1_judgment_artifact: Annotated[dict, take_latest]
     domain_judgments: Annotated[dict[str, str], merge_dicts]
     domain_rationales: Annotated[dict[str, str], merge_dicts]
     pivotality_tests: Annotated[dict[str, list[PivotalityTest]], merge_dicts]
