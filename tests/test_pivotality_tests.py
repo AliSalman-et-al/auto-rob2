@@ -216,6 +216,29 @@ def test_strong_and_moderate_answers_do_not_receive_pivotality_tests():
     )
 
     assert "pivotality_tests" not in result
+    assert result["micro_agent_routing_decisions"]["D1"] == [
+        {
+            "sq_id": "1.1",
+            "status": "no_escalation",
+            "route": "none",
+            "trigger_conditions": [],
+            "reason": "Answer support is strong and no support constraints were recorded.",
+        },
+        {
+            "sq_id": "1.2",
+            "status": "no_escalation",
+            "route": "none",
+            "trigger_conditions": [],
+            "reason": "Answer support is moderate and no support constraints were recorded.",
+        },
+        {
+            "sq_id": "1.3",
+            "status": "no_escalation",
+            "route": "none",
+            "trigger_conditions": [],
+            "reason": "Answer support is strong and no support constraints were recorded.",
+        },
+    ]
 
 
 def test_unsupported_answers_receive_pivotality_tests():
@@ -233,6 +256,16 @@ def test_unsupported_answers_receive_pivotality_tests():
     assert (
         result["pivotality_tests"]["D5"][0]["acceptance_status"] == "needs_adjudication"
     )
+    assert result["micro_agent_routing_decisions"]["D5"][2] == {
+        "sq_id": "5.3",
+        "status": "needs_adjudication",
+        "route": "sq_support_adjudication",
+        "trigger_conditions": [
+            "support_level=unsupported",
+            "pivotality_test=pivotal",
+        ],
+        "reason": "Pivotal unsupported SQ answer requires targeted support adjudication.",
+    }
 
 
 def test_constrained_answers_receive_visible_non_blocking_audit_records():
@@ -271,6 +304,60 @@ def test_constrained_answers_receive_visible_non_blocking_audit_records():
                 "reason": "The cited quote was not found in source text.",
             }
         ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("constraint_type", "expected_route"),
+    [
+        ("missing_required_evidence", "retrieval_repair"),
+        ("semantic_support_conflict", "contradiction_resolution"),
+        ("quote_untraceable", "sq_support_adjudication"),
+    ],
+)
+def test_pivotal_constraints_route_to_named_micro_agent_policies(
+    constraint_type, expected_route
+):
+    result = domain1_judge_node(
+        {
+            "sq_answers": {
+                "1.1": _answer("Y", "strong"),
+                "1.2": _answer("Y", "strong"),
+                "1.3": _answer("Y", "strong"),
+            },
+            "support_constraints": [
+                {
+                    "constraint_type": constraint_type,
+                    "sq_id": "1.3",
+                    "reason": "The answer requires escalation.",
+                }
+            ],
+            "domain_judgments": {},
+            "domain_rationales": {},
+        }
+    )
+
+    assert result["micro_agent_routing_decisions"]["D1"][2] == {
+        "sq_id": "1.3",
+        "status": "needs_adjudication",
+        "route": expected_route,
+        "trigger_conditions": [
+            f"support_constraint={constraint_type}",
+            "pivotality_test=pivotal",
+        ],
+        "reason": {
+            "retrieval_repair": (
+                "Pivotal answer is missing required evidence and should repair "
+                "retrieval before acceptance."
+            ),
+            "contradiction_resolution": (
+                "Pivotal answer has a semantic support conflict and should "
+                "resolve contradiction before acceptance."
+            ),
+            "sq_support_adjudication": (
+                "Pivotal strong SQ answer requires targeted support adjudication."
+            ),
+        }[expected_route],
     }
 
 
@@ -323,6 +410,30 @@ def test_pivotality_tests_are_in_json_output():
     }
 
     assert _assessment_json(state)["pivotality_tests"] == state["pivotality_tests"]
+
+
+def test_micro_agent_routing_decisions_are_in_json_output():
+    state = {
+        "micro_agent_routing_decisions": {
+            "D1": [
+                {
+                    "sq_id": "1.3",
+                    "status": "needs_adjudication",
+                    "route": "sq_support_adjudication",
+                    "trigger_conditions": [
+                        "support_level=weak",
+                        "pivotality_test=pivotal",
+                    ],
+                    "reason": "Pivotal weak SQ answer requires targeted support adjudication.",
+                }
+            ]
+        }
+    }
+
+    assert (
+        _assessment_json(state)["micro_agent_routing_decisions"]
+        == state["micro_agent_routing_decisions"]
+    )
 
 
 def _state(sq_answers: dict[str, tuple[str, str]]) -> dict:

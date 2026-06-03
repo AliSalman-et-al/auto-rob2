@@ -16,6 +16,7 @@ from rob2_pipeline.types import (
     RetrievalGrade,
     SourceDocument,
     SqSupportAdjudication,
+    MicroAgentRoutingDecision,
     SupportConstraint,
     TrialFacts,
     VerifierTraceEntry,
@@ -97,6 +98,9 @@ class RoB2State(TypedDict, total=False):
     domain_judgments: Annotated[dict[str, str], merge_dicts]
     domain_rationales: Annotated[dict[str, str], merge_dicts]
     pivotality_tests: Annotated[dict[str, list[PivotalityTest]], merge_dicts]
+    micro_agent_routing_decisions: Annotated[
+        dict[str, list[MicroAgentRoutingDecision]], merge_dicts
+    ]
     sq_support_adjudications: Annotated[
         dict[str, list[SqSupportAdjudication]], merge_dicts
     ]

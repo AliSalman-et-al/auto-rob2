@@ -63,6 +63,7 @@ JSON_OUTPUT_KEYS = (
     "domain_judgments",
     "domain_rationales",
     "pivotality_tests",
+    "micro_agent_routing_decisions",
     "sq_support_adjudications",
     "overall_judgment",
     "overall_rationale",

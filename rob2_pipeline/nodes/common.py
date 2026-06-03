@@ -287,6 +287,7 @@ def add_domain_judgment_with_pivotality_tests(
     update["initial_domain_judgments"] = initial_domain_judgments
     update["initial_domain_rationales"] = initial_domain_rationales
     pivotality_tests = list(state.get("pivotality_tests", {}).get(domain, []))
+    new_pivotality_tests_by_sq = {}
 
     for sq_id in sq_ids:
         sq_answer = initial_sq_answers.get(sq_id)
@@ -324,11 +325,26 @@ def add_domain_judgment_with_pivotality_tests(
         if constraints:
             test_record["constraints"] = constraints
         pivotality_tests.append(test_record)
+        new_pivotality_tests_by_sq[sq_id] = test_record
 
     if pivotality_tests:
         all_tests = dict(state.get("pivotality_tests", {}))
         all_tests[domain] = pivotality_tests
         update["pivotality_tests"] = all_tests
+    routing_decisions = [
+        _micro_agent_routing_decision(
+            sq_id,
+            initial_sq_answers[sq_id],
+            _constraints_for_sq(state, sq_id),
+            new_pivotality_tests_by_sq.get(sq_id),
+        )
+        for sq_id in sq_ids
+        if sq_id in initial_sq_answers
+    ]
+    if routing_decisions:
+        all_decisions = dict(state.get("micro_agent_routing_decisions", {}))
+        all_decisions[domain] = routing_decisions
+        update["micro_agent_routing_decisions"] = all_decisions
     if state.get("sq_support_adjudications"):
         update["sq_support_adjudications"] = state["sq_support_adjudications"]
     if state.get("sq_answers"):
@@ -369,6 +385,87 @@ def _constraints_for_sq(state: dict, sq_id: str) -> list[dict]:
         for constraint in state.get("support_constraints", [])
         if constraint.get("sq_id") == sq_id
     ]
+
+
+def _micro_agent_routing_decision(
+    sq_id: str,
+    sq_answer: dict,
+    constraints: list[dict],
+    pivotality_test: dict | None,
+) -> dict:
+    support_level = str(sq_answer.get("support_level", "")).lower()
+    trigger_conditions = _routing_trigger_conditions(
+        support_level, constraints, pivotality_test
+    )
+    if not trigger_conditions:
+        return {
+            "sq_id": sq_id,
+            "status": "no_escalation",
+            "route": "none",
+            "trigger_conditions": [],
+            "reason": (
+                f"Answer support is {support_level or 'unspecified'} and no support "
+                "constraints were recorded."
+            ),
+        }
+
+    if pivotality_test and pivotality_test.get("pivotal"):
+        route = _route_for_constraints(constraints) or "sq_support_adjudication"
+        status = str(pivotality_test.get("acceptance_status", "needs_adjudication"))
+        return {
+            "sq_id": sq_id,
+            "status": status,
+            "route": route,
+            "trigger_conditions": trigger_conditions,
+            "reason": _routing_reason(route, support_level, pivotal=True),
+        }
+
+    return {
+        "sq_id": sq_id,
+        "status": "accepted",
+        "route": "none",
+        "trigger_conditions": trigger_conditions,
+        "reason": "Recorded audit trigger is non-pivotal, so no micro-agent is routed.",
+    }
+
+
+def _routing_trigger_conditions(
+    support_level: str,
+    constraints: list[dict],
+    pivotality_test: dict | None,
+) -> list[str]:
+    conditions = []
+    if support_level in WEAK_SUPPORT_LEVELS:
+        conditions.append(f"support_level={support_level}")
+    for constraint in constraints:
+        constraint_type = constraint.get("constraint_type", "unknown")
+        conditions.append(f"support_constraint={constraint_type}")
+    if pivotality_test:
+        pivotal_status = "pivotal" if pivotality_test.get("pivotal") else "non_pivotal"
+        conditions.append(f"pivotality_test={pivotal_status}")
+    return conditions
+
+
+def _route_for_constraints(constraints: list[dict]) -> str | None:
+    constraint_types = {constraint.get("constraint_type") for constraint in constraints}
+    if "missing_required_evidence" in constraint_types:
+        return "retrieval_repair"
+    if "semantic_support_conflict" in constraint_types:
+        return "contradiction_resolution"
+    if "quote_untraceable" in constraint_types or "wrong_outcome_context" in constraint_types:
+        return "sq_support_adjudication"
+    return None
+
+
+def _routing_reason(route: str, support_level: str, *, pivotal: bool) -> str:
+    if route == "retrieval_repair":
+        return "Pivotal answer is missing required evidence and should repair retrieval before acceptance."
+    if route == "contradiction_resolution":
+        return "Pivotal answer has a semantic support conflict and should resolve contradiction before acceptance."
+    if pivotal:
+        level = support_level or "constrained"
+        return f"Pivotal {level} SQ answer requires targeted support adjudication."
+    return "No escalation route selected."
 
 
 def _acceptance_status(
