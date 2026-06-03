@@ -143,6 +143,23 @@ def test_assessment_json_preserves_judgment_artifacts():
     assert data["overall_judgment_artifact"] == state["overall_judgment_artifact"]
 
 
+def test_assessment_json_preserves_automation_confidence():
+    state = {
+        "automation_confidence": {
+            "artifact_id": "automation-confidence:Overall survival",
+            "schema_version": "automation-confidence-v1",
+            "status": "auto_accept_candidate",
+            "blocking_reasons": [],
+            "non_acceptance_reasons": [],
+        },
+        "rag_chunk_metadata": {},
+    }
+
+    data = _assessment_json(state)
+
+    assert data["automation_confidence"] == state["automation_confidence"]
+
+
 def test_workspace_output_writes_outcome_manifest_with_trial_hashes(tmp_path):
     primary = tmp_path / "trial.pdf"
     primary.write_bytes(b"primary trial report")

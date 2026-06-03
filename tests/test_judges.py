@@ -523,6 +523,150 @@ def test_overall_priority_ignores_moderate_and_isolated_non_pivotal_weak_support
     assert result["human_review_priority"] == "LOW"
 
 
+def test_automation_confidence_auto_accepts_moderate_pivotal_support():
+    result = overall_judge_node(
+        {
+            "outcome": "Overall survival",
+            "domain_judgments": _complete_low_domain_judgments(),
+            "sq_answers": {
+                "1.3": {
+                    "answer": "N",
+                    "support_level": "moderate",
+                    "uncertainty_flag": "NORMAL",
+                }
+            },
+            "pivotality_tests": {
+                "D1": [
+                    {
+                        "sq_id": "1.3",
+                        "original_answer": "N",
+                        "support_level": "moderate",
+                        "conservative_test_answer": "NI",
+                        "original_domain_judgment": "Low",
+                        "test_domain_judgment": "Some concerns",
+                        "pivotal": True,
+                        "acceptance_status": "accepted",
+                    }
+                ]
+            },
+        }
+    )
+
+    confidence = result["automation_confidence"]
+    assert confidence["status"] == "auto_accept_candidate"
+    assert confidence["non_acceptance_reasons"] == []
+    assert confidence["completion"]["completed_domains"] == ["D1", "D2", "D3", "D4", "D5"]
+
+
+def test_automation_confidence_records_non_pivotal_weak_without_blocking():
+    result = overall_judge_node(
+        {
+            "domain_judgments": _complete_low_domain_judgments(),
+            "sq_answers": {
+                "1.1": {
+                    "answer": "Y",
+                    "support_level": "weak",
+                    "uncertainty_flag": "NORMAL",
+                }
+            },
+            "pivotality_tests": {
+                "D1": [
+                    {
+                        "sq_id": "1.1",
+                        "original_answer": "Y",
+                        "support_level": "weak",
+                        "conservative_test_answer": "NI",
+                        "original_domain_judgment": "Low",
+                        "test_domain_judgment": "Low",
+                        "pivotal": False,
+                        "acceptance_status": "accepted",
+                    }
+                ]
+            },
+        }
+    )
+
+    assert result["automation_confidence"]["status"] == "auto_accept_candidate"
+
+
+def test_automation_confidence_rejects_pivotal_weak_or_untraceable_support():
+    result = overall_judge_node(
+        {
+            "domain_judgments": _complete_low_domain_judgments(),
+            "sq_answers": {
+                "5.3": {
+                    "answer": "N",
+                    "support_level": "weak",
+                    "uncertainty_flag": "NORMAL",
+                }
+            },
+            "pivotality_tests": {
+                "D5": [
+                    {
+                        "sq_id": "5.3",
+                        "original_answer": "N",
+                        "support_level": "weak",
+                        "conservative_test_answer": "NI",
+                        "original_domain_judgment": "Low",
+                        "test_domain_judgment": "Some concerns",
+                        "pivotal": True,
+                        "acceptance_status": "needs_adjudication",
+                        "constraints": [
+                            {
+                                "constraint_type": "quote_untraceable",
+                                "sq_id": "5.3",
+                                "reason": "The cited quote was not found.",
+                            }
+                        ],
+                    }
+                ]
+            },
+        }
+    )
+
+    confidence = result["automation_confidence"]
+    assert confidence["status"] == "not_auto_acceptable"
+    assert {
+        reason["kind"] for reason in confidence["non_acceptance_reasons"]
+    } == {"pivotal_support_below_moderate", "pivotal_quote_not_traceable"}
+
+
+def test_automation_confidence_blocks_only_incomplete_or_failed_required_artifacts():
+    result = overall_judge_node(
+        {
+            "domain_judgments": {
+                "D1": "Low",
+                "D2": "Low",
+                "D3": "Low",
+                "D4": "Low",
+            },
+            "sq_answers": {
+                "5.1": {
+                    "answer": "NI",
+                    "support_level": "unsupported",
+                    "uncertainty_flag": "HIGH",
+                    "classification_blocked": True,
+                    "packet_status": "needs_retrieval_repair",
+                    "support_rationale": "Required prespecification evidence is missing.",
+                }
+            },
+            "packet_readiness": {
+                "5.1": {
+                    "status": "needs_retrieval_repair",
+                    "blocking_reason": "Selected packet sources do not cover required evidence.",
+                }
+            },
+        }
+    )
+
+    confidence = result["automation_confidence"]
+    assert confidence["status"] == "blocked"
+    assert {reason["kind"] for reason in confidence["blocking_reasons"]} == {
+        "incomplete_required_input",
+        "failed_required_artifact",
+    }
+
+
 @pytest.mark.parametrize(
     "adjudicated_answer",
     [
@@ -676,6 +820,10 @@ def test_domain_nodes_do_not_override_algorithm_by_outcome_label():
         "domain_rationales": {},
     }
     assert domain5_judge_node(d5_state)["domain_judgments"]["D5"] == "Some concerns"
+
+
+def _complete_low_domain_judgments():
+    return {"D1": "Low", "D2": "Low", "D3": "Low", "D4": "Low", "D5": "Low"}
 
 
 def test_domain4_autosets_clinician_assessor_awareness_in_open_label_trial(monkeypatch):

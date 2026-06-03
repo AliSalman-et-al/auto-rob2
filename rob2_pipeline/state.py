@@ -105,6 +105,7 @@ class RoB2State(TypedDict, total=False):
     overall_judgment: Annotated[str, take_latest]
     overall_rationale: Annotated[str, take_latest]
     overall_judgment_artifact: Annotated[dict, take_latest]
+    automation_confidence: Annotated[dict, take_latest]
 
     # === QUALITY FLAGS ===
     ni_count: Annotated[int, take_latest]

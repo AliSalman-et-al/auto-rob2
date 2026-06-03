@@ -67,6 +67,7 @@ JSON_OUTPUT_KEYS = (
     "overall_judgment",
     "overall_rationale",
     "overall_judgment_artifact",
+    "automation_confidence",
     "ni_count",
     "high_uncertainty_sqs",
     "human_review_priority",
