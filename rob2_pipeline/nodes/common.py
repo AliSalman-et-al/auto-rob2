@@ -576,6 +576,28 @@ def _adjudicate_pivotal_sq_answers(
                 "changed": changed,
                 "changed_answer": changed_answer,
                 "changed_support": changed_support,
+                "semantic_support_decision": {
+                    "support_level": _support_level(adjudicated) or "unsupported",
+                    "rationale": adjudicated.get("support_rationale")
+                    or adjudicated.get("justification", ""),
+                    "residual_uncertainty": adjudicated.get(
+                        "residual_uncertainty",
+                        "No residual uncertainty reported.",
+                    ),
+                },
+                "effect_on_sq_status": {
+                    "initial_answer": sq_answer.get("answer", "NI"),
+                    "adjudicated_answer": adjudicated.get("answer", "NI"),
+                    "changed_answer": changed_answer,
+                    "changed_support": changed_support,
+                },
+                "effect_on_packet_status": _adjudication_packet_status_effect(
+                    updated_state, sq_id, adjudicated
+                ),
+                "traceability_status": {
+                    "initial": _traceability_status(sq_answer),
+                    "adjudicated": _traceability_status(adjudicated, sq_answer),
+                },
                 "rationale": adjudicated.get("support_rationale")
                 or adjudicated.get("justification", ""),
                 "constraints": constraints,
@@ -610,6 +632,31 @@ def _source_domain_for(domain: str) -> str:
 
 def _support_level(answer: dict) -> str:
     return str(answer.get("support_level", "")).lower()
+
+
+def _traceability_status(answer: dict, fallback: dict | None = None) -> str:
+    return str(
+        answer.get("quote_traceability_status")
+        or (fallback or {}).get("quote_traceability_status")
+        or "traceability_not_assessed"
+    )
+
+
+def _adjudication_packet_status_effect(
+    state: dict, sq_id: str, adjudicated: dict
+) -> dict:
+    packet = state.get("evidence_packets", {}).get(sq_id, {})
+    readiness = packet.get("packet_readiness", {})
+    initial_status = readiness.get("status") or packet.get("status") or "unknown"
+    adjudicated_status = (
+        "audit_limited"
+        if _support_level(adjudicated) in WEAK_SUPPORT_LEVELS
+        else "accepted"
+    )
+    return {
+        "initial_status": initial_status,
+        "adjudicated_status": adjudicated_status,
+    }
 
 
 def _adjudication_domain_impact(
