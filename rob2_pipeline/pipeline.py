@@ -9,6 +9,7 @@ from rob2_pipeline.state import RoB2State
 from rob2_pipeline.state_factory import create_initial_state
 from rob2_pipeline.trace import end_trace, start_trace
 from rob2_pipeline.trial_workspace import (
+    write_outcome_workspace_manifest,
     write_evidence_store_trial_workspace,
     write_parse_trial_workspace,
 )
@@ -116,29 +117,50 @@ def run_assessment(
             encoding="utf-8",
         )
         if state.get("source_documents") and state.get("parse_artifacts"):
-            workspace_dir = output_path / f"{base}_trial_workspace"
-            write_parse_trial_workspace(
-                trial_id=base,
-                workspace_dir=workspace_dir,
-                source_documents=state["source_documents"],
-                parse_artifacts=state["parse_artifacts"],
-            )
-            if state.get("evidence_store"):
-                write_evidence_store_trial_workspace(
-                    trial_id=base,
-                    workspace_dir=workspace_dir,
-                    evidence_store=state["evidence_store"],
-                    upstream_artifact_paths=_evidence_store_upstream_paths(
-                        workspace_dir,
-                        state["parse_artifacts"],
-                    ),
-                    model_metadata=_model_metadata_from_state(state),
-                )
+            _write_workspace_artifacts(base, output_path, state)
         return state
     finally:
         trace = end_trace()
         if trace is not None:
             trace.write(output_dir)
+
+
+def _write_workspace_artifacts(
+    base: str,
+    output_path: Path,
+    state: RoB2State,
+) -> None:
+    trial_workspace_dir = output_path / f"{base}_trial_workspace"
+    write_parse_trial_workspace(
+        trial_id=base,
+        workspace_dir=trial_workspace_dir,
+        source_documents=state["source_documents"],
+        parse_artifacts=state["parse_artifacts"],
+    )
+    if state.get("evidence_store"):
+        write_evidence_store_trial_workspace(
+            trial_id=base,
+            workspace_dir=trial_workspace_dir,
+            evidence_store=state["evidence_store"],
+            upstream_artifact_paths=_evidence_store_upstream_paths(
+                trial_workspace_dir,
+                state["parse_artifacts"],
+            ),
+            model_metadata=_model_metadata_from_state(state),
+        )
+
+    write_outcome_workspace_manifest(
+        trial_id=base,
+        outcome_id=_outcome_id_from_state(state),
+        workspace_root=output_path / f"{base}_outcome_workspaces",
+        trial_workspace_dir=trial_workspace_dir,
+        upstream_artifact_paths=_outcome_workspace_upstream_paths(
+            trial_workspace_dir,
+            state["parse_artifacts"],
+        ),
+        outcome_definition=_outcome_definition_from_state(state),
+        rob2_settings=_rob2_settings_from_state(state),
+    )
 
 
 def _evidence_store_upstream_paths(
@@ -158,6 +180,38 @@ def _evidence_store_upstream_paths(
             workspace_dir / "page_artifacts" / filename
         )
     return paths
+
+
+def _outcome_workspace_upstream_paths(
+    workspace_dir: Path,
+    parse_artifacts: list[dict],
+) -> dict[str, Path]:
+    return {
+        "trial-workspace-manifest": workspace_dir / "trial-workspace-manifest.json",
+        **_evidence_store_upstream_paths(workspace_dir, parse_artifacts),
+    }
+
+
+def _outcome_id_from_state(state: RoB2State) -> str:
+    return str(state.get("outcome") or "unspecified-outcome")
+
+
+def _outcome_definition_from_state(state: RoB2State) -> dict:
+    return {
+        "outcome": state.get("outcome"),
+        "numerical_result": state.get("numerical_result"),
+        "outcome_type": state.get("outcome_type"),
+        "outcome_properties": state.get("outcome_properties") or {},
+        "outcome_classification_support": state.get("outcome_classification_support")
+        or {},
+    }
+
+
+def _rob2_settings_from_state(state: RoB2State) -> dict:
+    return {
+        "effect_of_interest": state.get("effect_of_interest"),
+        "overall_policy": state.get("overall_policy"),
+    }
 
 
 def _model_metadata_from_state(state: RoB2State) -> dict:

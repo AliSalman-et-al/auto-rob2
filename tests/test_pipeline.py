@@ -1,4 +1,7 @@
-from rob2_pipeline.pipeline import _assessment_json
+import json
+
+from rob2_pipeline.pipeline import _assessment_json, _write_workspace_artifacts
+from rob2_pipeline.trial_workspace import file_sha256
 
 
 def test_assessment_json_includes_supplement_fields():
@@ -104,3 +107,77 @@ def test_assessment_json_preserves_outcome_classification_support():
         data["outcome_classification_support"]
         == state["outcome_classification_support"]
     )
+
+
+def test_workspace_output_writes_outcome_manifest_with_trial_hashes(tmp_path):
+    primary = tmp_path / "trial.pdf"
+    primary.write_bytes(b"primary trial report")
+    state = {
+        "source_documents": [_source_document(primary)],
+        "parse_artifacts": [_parse_artifact(primary)],
+        "outcome": "Overall survival",
+        "outcome_type": "vital-status",
+        "outcome_properties": {"death_only_objective_event": True},
+        "outcome_classification_support": {"support_level": "strong"},
+        "numerical_result": "HR 0.80",
+        "effect_of_interest": "ITT",
+        "overall_policy": "rob2-default",
+    }
+
+    _write_workspace_artifacts("trial", tmp_path, state)
+
+    outcome_manifest_path = (
+        tmp_path
+        / "trial_outcome_workspaces"
+        / "Overall_survival"
+        / "outcome-workspace-manifest.json"
+    )
+    payload = json.loads(outcome_manifest_path.read_text(encoding="utf-8"))
+    trial_manifest_path = (
+        tmp_path / "trial_trial_workspace" / "trial-workspace-manifest.json"
+    )
+    page_path = tmp_path / "trial_trial_workspace" / "page_artifacts" / "primary.json"
+
+    assert payload["trial_id"] == "trial"
+    assert payload["outcome_id"] == "Overall survival"
+    assert payload["upstream_trial_workspace_hashes"][
+        "trial-workspace-manifest"
+    ] == file_sha256(trial_manifest_path)
+    assert payload["upstream_trial_workspace_hashes"][
+        "primary:page-aware-artifacts"
+    ] == file_sha256(page_path)
+
+
+def _source_document(path):
+    return {
+        "document_id": "primary",
+        "document_name": path.name,
+        "document_role": "primary",
+        "source_kind": "rag_chunk",
+        "path": str(path),
+        "is_primary": True,
+        "status": "parsed",
+    }
+
+
+def _parse_artifact(path):
+    return {
+        "source_identity": _source_document(path),
+        "pages": [
+            {
+                "page_number": 1,
+                "text": "Methods\nParticipants were randomized.\nResults\nDone.",
+                "width": 612.0,
+                "height": 792.0,
+            }
+        ],
+        "diagnostics": [],
+        "parse_time_ms": 17,
+        "provenance": {
+            "parser_name": "liteparse",
+            "parser_version": "2.0.4",
+            "adapter_name": "liteparse",
+            "artifact_schema_version": "parse-artifact-v1",
+            "config": {"ocr_enabled": False},
+        },
+    }

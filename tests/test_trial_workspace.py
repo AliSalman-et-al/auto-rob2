@@ -265,9 +265,12 @@ def test_parse_trial_workspace_persists_loadable_artifacts_and_diagnostics(tmp_p
         },
         "diagnostics": [],
     }
-    assert read_trial_workspace_manifest(
-        tmp_path / "workspace" / "trial-workspace-manifest.json"
-    ) == manifest
+    assert (
+        read_trial_workspace_manifest(
+            tmp_path / "workspace" / "trial-workspace-manifest.json"
+        )
+        == manifest
+    )
     assert {artifact.artifact_id for artifact in manifest.artifacts} == {
         "primary:parse-artifact",
         "primary:page-aware-artifacts",
@@ -340,8 +343,7 @@ def test_evidence_store_workspace_persists_jsonl_search_fields_and_hashes(tmp_pa
 
     jsonl_path = tmp_path / "workspace" / "evidence_store" / "facts.jsonl"
     records = [
-        json.loads(line)
-        for line in jsonl_path.read_text(encoding="utf-8").splitlines()
+        json.loads(line) for line in jsonl_path.read_text(encoding="utf-8").splitlines()
     ]
 
     assert [record["record_kind"] for record in records] == ["fact", "gap"]
@@ -494,6 +496,117 @@ def test_load_parse_trial_workspace_reuses_only_unaffected_artifacts(tmp_path):
     assert loaded.artifact_statuses["protocol:parse-artifact"] == "stale"
     assert loaded.artifact_statuses["protocol:page-aware-artifacts"] == "stale"
     assert set(loaded.reusable_artifacts["parse_artifacts"]) == {"primary"}
+
+
+def test_outcome_workspace_manifest_records_trial_hashes_and_settings(tmp_path):
+    trial_manifest_path = tmp_path / "trial_workspace" / "trial-workspace-manifest.json"
+    trial_manifest_path.parent.mkdir(parents=True)
+    trial_manifest_path.write_text('{"trial": "manifest"}\n', encoding="utf-8")
+    page_path = tmp_path / "trial_workspace" / "page_artifacts" / "primary.json"
+    page_path.parent.mkdir(parents=True)
+    page_path.write_text('{"pages": []}\n', encoding="utf-8")
+
+    from rob2_pipeline.trial_workspace import write_outcome_workspace_manifest
+
+    manifest = write_outcome_workspace_manifest(
+        trial_id="trial-001",
+        outcome_id="overall-survival",
+        workspace_root=tmp_path / "outcomes",
+        trial_workspace_dir=tmp_path / "trial_workspace",
+        upstream_artifact_paths={
+            "trial-workspace-manifest": trial_manifest_path,
+            "primary:page-aware-artifacts": page_path,
+        },
+        outcome_definition={"name": "Overall survival", "timepoint": "24 months"},
+        rob2_settings={"effect_of_interest": "ITT", "outcome_type": "vital-status"},
+    )
+
+    payload = json.loads(
+        (
+            tmp_path
+            / "outcomes"
+            / "overall-survival"
+            / "outcome-workspace-manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert manifest.trial_id == "trial-001"
+    assert manifest.outcome_id == "overall-survival"
+    assert payload["upstream_trial_workspace_hashes"] == {
+        "primary:page-aware-artifacts": file_sha256(page_path),
+        "trial-workspace-manifest": file_sha256(trial_manifest_path),
+    }
+    assert payload["outcome_definition_hash"]
+    assert payload["rob2_settings_hash"]
+    assert payload["artifacts"] == []
+
+
+def test_outcome_definition_or_rob2_settings_change_marks_outcome_artifact_stale(
+    tmp_path,
+):
+    upstream = {"trial-workspace-manifest": "trial-hash-a"}
+    from rob2_pipeline.trial_workspace import (
+        build_outcome_artifact_identity,
+        build_outcome_workspace_manifest,
+        evaluate_outcome_artifact_status,
+    )
+
+    previous = build_outcome_workspace_manifest(
+        trial_id="trial-001",
+        outcome_id="overall-survival",
+        trial_workspace_dir=tmp_path / "trial_workspace",
+        upstream_trial_workspace_hashes=upstream,
+        outcome_definition={"name": "Overall survival"},
+        rob2_settings={"effect_of_interest": "ITT"},
+        artifacts=[
+            build_outcome_artifact_identity(
+                artifact_id="evidence-packets",
+                schema_version="evidence-packets-v1",
+                producer="evidence-packet-builder",
+                producer_version="1",
+                content_hash="packets-a",
+                upstream_trial_workspace_hashes=upstream,
+                outcome_definition={"name": "Overall survival"},
+                rob2_settings={"effect_of_interest": "ITT"},
+            )
+        ],
+    )
+
+    changed_outcome = build_outcome_artifact_identity(
+        artifact_id="evidence-packets",
+        schema_version="evidence-packets-v1",
+        producer="evidence-packet-builder",
+        producer_version="1",
+        content_hash="packets-a",
+        upstream_trial_workspace_hashes=upstream,
+        outcome_definition={"name": "Progression-free survival"},
+        rob2_settings={"effect_of_interest": "ITT"},
+    )
+    changed_settings = build_outcome_artifact_identity(
+        artifact_id="evidence-packets",
+        schema_version="evidence-packets-v1",
+        producer="evidence-packet-builder",
+        producer_version="1",
+        content_hash="packets-a",
+        upstream_trial_workspace_hashes=upstream,
+        outcome_definition={"name": "Overall survival"},
+        rob2_settings={"effect_of_interest": "per-protocol"},
+    )
+
+    assert evaluate_outcome_artifact_status(previous, changed_outcome) == "stale"
+    assert evaluate_outcome_artifact_status(previous, changed_settings) == "stale"
+
+
+def test_outcome_workspace_paths_are_separated_by_outcome_id(tmp_path):
+    from rob2_pipeline.trial_workspace import outcome_workspace_dir
+
+    root = tmp_path / "outcomes"
+
+    assert outcome_workspace_dir(root, "Overall Survival") == root / "Overall_Survival"
+    assert (
+        outcome_workspace_dir(root, "Progression-Free Survival")
+        == root / "Progression-Free_Survival"
+    )
 
 
 def _source_document(path, *, document_id="primary", document_role="primary"):
