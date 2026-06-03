@@ -297,6 +297,73 @@ class _FakeProvider:
         return LLMResponse(_response_by_node(node_name), "test-model", 1, 1, 1.0)
 
 
+def _d1_contract_result(state, prompt, node_name, **kwargs):
+    del state, prompt, kwargs
+    return {
+        "artifact": {
+            "schema_version": "d1-sq-classifier-v1",
+            "domain": "d1",
+            "answers": [
+                _d1_contract_answer("1.1", "Y", "computer-generated sequence"),
+                _d1_contract_answer("1.2", "Y", "concealed centrally"),
+                _d1_contract_answer("1.3", "N", "baseline balanced"),
+            ],
+        },
+        "log": [
+            {
+                "node": node_name,
+                "validation_status": "validated",
+                "model": "test-model",
+                "prompt_version": "d1-sq-classifier-prompt-v1",
+                "schema_version": "d1-sq-classifier-v1",
+                "attempts": [{"attempt": 1}],
+            }
+        ],
+        "status": "validated",
+    }
+
+
+def _pfs_d1_contract_result(state, prompt, node_name, **kwargs):
+    del state, prompt, kwargs
+    return {
+        "artifact": {
+            "schema_version": "d1-sq-classifier-v1",
+            "domain": "d1",
+            "answers": [
+                _d1_contract_answer("1.1", "PY", "randomly assigned"),
+                _d1_contract_answer("1.2", "PY", "central statistical center"),
+                _d1_contract_answer("1.3", "N", "balanced"),
+            ],
+        },
+        "log": [
+            {
+                "node": node_name,
+                "validation_status": "validated",
+                "model": "test-model",
+                "prompt_version": "d1-sq-classifier-prompt-v1",
+                "schema_version": "d1-sq-classifier-v1",
+                "attempts": [{"attempt": 1}],
+            }
+        ],
+        "status": "validated",
+    }
+
+
+def _d1_contract_answer(sq_id: str, answer: str, quote: str) -> dict:
+    return {
+        "sq_id": sq_id,
+        "answer": answer,
+        "quote": quote,
+        "justification": "Selected D1 packet evidence supports this answer.",
+        "support_level": "strong",
+        "support_rationale": "Supported by selected packet evidence.",
+        "uncertainty": False,
+        "packet_artifact_id": f"evidence-packet:d1:{sq_id}",
+        "decision_table_artifact_id": f"decision-table:d1:{sq_id}",
+        "supporting_fact_artifact_ids": [],
+    }
+
+
 def _pfs_response_by_node(node_name: str):
     responses = dict(
         paper_evidence_extraction="""
@@ -502,6 +569,10 @@ def test_graph_happy_path_with_mocked_llm(tmp_path):
     with (
         patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
         patch("rob2_pipeline.ingestion.evidence.build_provider", return_value=provider),
+        patch(
+            "rob2_pipeline.nodes.domain1.call_json_contract_llm",
+            side_effect=_d1_contract_result,
+        ),
         patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
         patch(
             "rob2_pipeline.ingestion.assessment.extract_full_text",
@@ -528,7 +599,7 @@ def test_graph_happy_path_with_mocked_llm(tmp_path):
     assert "## Verified evidence packets" in state["markdown_report"]
     assert state["evidence_store"]["supported_facts"]
     assert len(state["llm_call_log"]) == 10
-    assert provider.complete.call_count == 14
+    assert provider.complete.call_count == 13
 
 
 def test_graph_pfs_composite_endpoint_blocks_d4_when_packet_needs_repair(tmp_path):
@@ -552,6 +623,10 @@ def test_graph_pfs_composite_endpoint_blocks_d4_when_packet_needs_repair(tmp_pat
     with (
         patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
         patch("rob2_pipeline.ingestion.evidence.build_provider", return_value=provider),
+        patch(
+            "rob2_pipeline.nodes.domain1.call_json_contract_llm",
+            side_effect=_pfs_d1_contract_result,
+        ),
         patch(
             "rob2_pipeline.registration_api.fetch_registration",
             return_value=fake_reg_data,
@@ -597,6 +672,10 @@ def test_graph_stops_for_non_rct(tmp_path):
             "rob2_pipeline.ingestion.evidence.build_provider",
             return_value=_FakeProvider(),
         ),
+        patch(
+            "rob2_pipeline.nodes.domain1.call_json_contract_llm",
+            side_effect=_d1_contract_result,
+        ),
         patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
         patch(
             "rob2_pipeline.ingestion.assessment.extract_full_text",
@@ -629,6 +708,10 @@ def test_rct_screener_prompt_includes_randomization_context(tmp_path):
     with (
         patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
         patch("rob2_pipeline.ingestion.evidence.build_provider", return_value=provider),
+        patch(
+            "rob2_pipeline.nodes.domain1.call_json_contract_llm",
+            side_effect=_d1_contract_result,
+        ),
         patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
         patch(
             "rob2_pipeline.ingestion.assessment.extract_full_text",
@@ -653,6 +736,10 @@ def test_run_assessment_writes_outputs(tmp_path):
     with (
         patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
         patch("rob2_pipeline.ingestion.evidence.build_provider", return_value=provider),
+        patch(
+            "rob2_pipeline.nodes.domain1.call_json_contract_llm",
+            side_effect=_d1_contract_result,
+        ),
         patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
         patch(
             "rob2_pipeline.ingestion.assessment.extract_full_text",

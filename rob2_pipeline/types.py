@@ -1,4 +1,4 @@
-from typing import NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 
 class LLMCallLogEntry(TypedDict):
@@ -11,6 +11,14 @@ class LLMCallLogEntry(TypedDict):
     input_tokens: NotRequired[int]
     output_tokens: NotRequired[int]
     cached: NotRequired[bool]
+    provider: NotRequired[str]
+    prompt_version: NotRequired[str]
+    schema_version: NotRequired[str]
+    parse_status: NotRequired[str]
+    validation_status: NotRequired[str]
+    attempts: NotRequired[list[dict[str, Any]]]
+    fallback_artifact: NotRequired[dict[str, Any]]
+    failure_reason: NotRequired[str]
     suspected_parse_failures: NotRequired[list[str]]
     chunk_sources: NotRequired[list[str]]
 

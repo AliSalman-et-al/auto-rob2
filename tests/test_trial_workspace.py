@@ -15,6 +15,8 @@ from rob2_pipeline.trial_workspace import (
     load_trial_workspace_artifacts,
     read_trial_workspace_manifest,
     write_evidence_store_trial_workspace,
+    write_d1_judgment_workspace,
+    write_d1_sq_answer_workspace,
     write_outcome_normalization_workspace,
     write_parse_trial_workspace,
     write_trial_workspace_manifest,
@@ -661,6 +663,278 @@ def test_outcome_normalization_workspace_persists_artifact_and_manifest_identity
     assert manifest.artifacts[0].producer == "outcome-resolver"
     assert manifest.artifacts[0].producer_version == "gpt-4.1"
     assert manifest.artifacts[0].content_hash == file_sha256(artifact_path)
+
+
+def test_d1_sq_answer_workspace_persists_loadable_artifact_and_contract_identity(
+    tmp_path,
+):
+    trial_manifest_path = tmp_path / "trial_workspace" / "trial-workspace-manifest.json"
+    trial_manifest_path.parent.mkdir(parents=True)
+    trial_manifest_path.write_text('{"trial": "manifest"}\n', encoding="utf-8")
+    packet_path = tmp_path / "outcomes" / "overall-survival" / "d1-packets.json"
+    packet_path.parent.mkdir(parents=True)
+    packet_path.write_text('{"packet": "v1"}\n', encoding="utf-8")
+
+    artifact = {
+        "artifact_id": "d1-sq-answer-set:overall-survival",
+        "schema_version": "d1-sq-answer-set-v1",
+        "classifier_schema_version": "d1-sq-classifier-v1",
+        "classifier_prompt_version": "d1-sq-classifier-prompt-v1",
+        "domain": "d1",
+        "answers": [
+            {
+                "sq_id": "1.1",
+                "answer": "Y",
+                "quote": "computer-generated sequence",
+                "justification": "The packet supports random sequence generation.",
+                "support_level": "strong",
+                "support_rationale": "Directly supported by the selected packet.",
+                "uncertainty": False,
+                "packet_artifact_id": "evidence-packet:d1:1.1",
+                "decision_table_artifact_id": "decision-table:d1:1.1",
+                "supporting_fact_artifact_ids": ["evidence-fact:d1:1.1:0"],
+            },
+            {
+                "sq_id": "1.2",
+                "answer": "NI",
+                "quote": "No relevant text found",
+                "justification": "The packet does not establish concealment.",
+                "support_level": "unsupported",
+                "support_rationale": "No selected fact supports allocation concealment.",
+                "uncertainty": True,
+                "packet_artifact_id": "evidence-packet:d1:1.2",
+                "decision_table_artifact_id": "decision-table:d1:1.2",
+                "supporting_fact_artifact_ids": [],
+            },
+            {
+                "sq_id": "1.3",
+                "answer": "N",
+                "quote": "Baseline factors were balanced",
+                "justification": "The packet supports no important baseline imbalance.",
+                "support_level": "moderate",
+                "support_rationale": "Supported by selected baseline evidence.",
+                "uncertainty": False,
+                "packet_artifact_id": "evidence-packet:d1:1.3",
+                "decision_table_artifact_id": "decision-table:d1:1.3",
+                "supporting_fact_artifact_ids": [],
+            },
+        ],
+        "validation": {
+            "status": "validated",
+            "missing_support_metadata": [],
+            "invalid_answers": [],
+        },
+    }
+
+    manifest = write_d1_sq_answer_workspace(
+        trial_id="trial-001",
+        outcome_id="overall-survival",
+        workspace_root=tmp_path / "outcomes",
+        trial_workspace_dir=tmp_path / "trial_workspace",
+        upstream_artifact_paths={
+            "trial-workspace-manifest": trial_manifest_path,
+            "d1:evidence-packets": packet_path,
+        },
+        outcome_definition={"outcome": "Overall survival"},
+        rob2_settings={"effect_of_interest": "ITT"},
+        d1_sq_answer_artifact=artifact,
+        model_metadata={"provider": "openai", "model": "gpt-4.1"},
+        contract_metadata={
+            "schema_version": "d1-sq-answer-set-v1",
+            "classifier_schema_version": "d1-sq-classifier-v1",
+            "classifier_prompt_version": "d1-sq-classifier-prompt-v1",
+            "retry_policy": {"max_attempts": 2},
+            "model_affecting_settings": {"temperature": 0},
+        },
+    )
+
+    artifact_path = tmp_path / "outcomes" / "overall-survival" / "d1-sq-answers.json"
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    identity = manifest.artifacts[0]
+
+    assert payload == artifact
+    assert identity.artifact_id == "d1-sq-answer-set:overall-survival"
+    assert identity.schema_version == "d1-sq-answer-set-v1"
+    assert identity.producer == "d1-sq-classifier"
+    assert identity.producer_version == "gpt-4.1"
+    assert identity.upstream_trial_workspace_hashes["d1:evidence-packets"] == file_sha256(
+        packet_path
+    )
+    assert identity.content_hash == file_sha256(artifact_path)
+
+    changed_contract = write_d1_sq_answer_workspace(
+        trial_id="trial-001",
+        outcome_id="overall-survival",
+        workspace_root=tmp_path / "other-outcomes",
+        trial_workspace_dir=tmp_path / "trial_workspace",
+        upstream_artifact_paths={
+            "trial-workspace-manifest": trial_manifest_path,
+            "d1:evidence-packets": packet_path,
+        },
+        outcome_definition={"outcome": "Overall survival"},
+        rob2_settings={"effect_of_interest": "ITT"},
+        d1_sq_answer_artifact=artifact,
+        model_metadata={"provider": "openai", "model": "gpt-4.1"},
+        contract_metadata={
+            "schema_version": "d1-sq-answer-set-v1",
+            "classifier_schema_version": "d1-sq-classifier-v2",
+            "classifier_prompt_version": "d1-sq-classifier-prompt-v1",
+            "retry_policy": {"max_attempts": 2},
+            "model_affecting_settings": {"temperature": 0},
+        },
+    )
+
+    assert changed_contract.artifacts[0].config_hash != identity.config_hash
+
+
+def test_d1_sq_answer_workspace_records_invalid_answers_and_missing_support_metadata(
+    tmp_path,
+):
+    trial_manifest_path = tmp_path / "trial_workspace" / "trial-workspace-manifest.json"
+    trial_manifest_path.parent.mkdir(parents=True)
+    trial_manifest_path.write_text('{"trial": "manifest"}\n', encoding="utf-8")
+
+    write_d1_sq_answer_workspace(
+        trial_id="trial-001",
+        outcome_id="overall-survival",
+        workspace_root=tmp_path / "outcomes",
+        trial_workspace_dir=tmp_path / "trial_workspace",
+        upstream_artifact_paths={"trial-workspace-manifest": trial_manifest_path},
+        outcome_definition={"outcome": "Overall survival"},
+        rob2_settings={"effect_of_interest": "ITT"},
+        d1_sq_answer_artifact={
+            "artifact_id": "d1-sq-answer-set:overall-survival",
+            "schema_version": "d1-sq-answer-set-v1",
+            "domain": "d1",
+            "answers": [
+                {
+                    "sq_id": "1.1",
+                    "answer": "YES",
+                    "quote": "computer-generated sequence",
+                    "justification": "Invalid answer code should be visible.",
+                    "support_level": "strong",
+                    "support_rationale": "Supported.",
+                    "packet_artifact_id": "evidence-packet:d1:1.1",
+                    "decision_table_artifact_id": "decision-table:d1:1.1",
+                },
+                {
+                    "sq_id": "1.2",
+                    "answer": "NI",
+                    "quote": "No relevant text found",
+                    "justification": "Support metadata is incomplete.",
+                },
+            ],
+        },
+        model_metadata={"model": "gpt-4.1"},
+        contract_metadata={
+            "schema_version": "d1-sq-answer-set-v1",
+            "classifier_schema_version": "d1-sq-classifier-v1",
+            "classifier_prompt_version": "d1-sq-classifier-prompt-v1",
+            "retry_policy": {"max_attempts": 2},
+        },
+    )
+
+    payload = json.loads(
+        (
+            tmp_path
+            / "outcomes"
+            / "overall-survival"
+            / "d1-sq-answers.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert payload["validation"]["status"] == "invalid"
+    assert payload["validation"]["invalid_answers"] == [
+        {
+            "sq_id": "1.1",
+            "answer": "YES",
+            "reason": "Answer is not a canonical RoB 2 SQ answer.",
+        }
+    ]
+    assert payload["validation"]["missing_support_metadata"] == [
+        {
+            "sq_id": "1.2",
+            "missing_fields": [
+                "decision_table_artifact_id",
+                "packet_artifact_id",
+                "support_level",
+                "support_rationale",
+            ],
+        }
+    ]
+
+
+def test_d1_judgment_workspace_persists_artifact_and_invalidates_on_versions(tmp_path):
+    trial_manifest_path = tmp_path / "trial_workspace" / "trial-workspace-manifest.json"
+    trial_manifest_path.parent.mkdir(parents=True)
+    trial_manifest_path.write_text('{"trial": "manifest"}\n', encoding="utf-8")
+    sq_answer_path = tmp_path / "outcomes" / "overall-survival" / "d1-sq-answers.json"
+    sq_answer_path.parent.mkdir(parents=True)
+    sq_answer_path.write_text('{"answers": []}\n', encoding="utf-8")
+    artifact = {
+        "artifact_id": "d1-judgment:overall-survival",
+        "schema_version": "d1-judgment-v1",
+        "domain": "d1",
+        "judge_version": "d1-judge-v1",
+        "rule_table_version": "rob2-d1-rule-table-v1",
+        "input_sq_answers": {
+            "1.1": {"answer": "Y"},
+            "1.2": {"answer": "Y"},
+            "1.3": {"answer": "N"},
+        },
+        "applied_rule_path": "d1-row-1:y-py-ni/y-py/ni-n-pn",
+        "label": "Low",
+        "rationale": "Row: Y-PY-NI / Y-PY / NI-N-PN -> Low",
+    }
+
+    manifest = write_d1_judgment_workspace(
+        trial_id="trial-001",
+        outcome_id="overall-survival",
+        workspace_root=tmp_path / "outcomes",
+        trial_workspace_dir=tmp_path / "trial_workspace",
+        upstream_artifact_paths={
+            "trial-workspace-manifest": trial_manifest_path,
+            "d1-sq-answer-set": sq_answer_path,
+        },
+        outcome_definition={"outcome": "Overall survival"},
+        rob2_settings={"effect_of_interest": "ITT"},
+        d1_judgment_artifact=artifact,
+    )
+
+    artifact_path = tmp_path / "outcomes" / "overall-survival" / "d1-judgment.json"
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    identity = manifest.artifacts[0]
+
+    assert payload == artifact
+    assert identity.artifact_id == "d1-judgment:overall-survival"
+    assert identity.schema_version == "d1-judgment-v1"
+    assert identity.producer == "d1-deterministic-judge"
+    assert identity.producer_version == "d1-judge-v1"
+    assert identity.upstream_trial_workspace_hashes["d1-sq-answer-set"] == file_sha256(
+        sq_answer_path
+    )
+    assert identity.content_hash == file_sha256(artifact_path)
+
+    changed_versions = write_d1_judgment_workspace(
+        trial_id="trial-001",
+        outcome_id="overall-survival",
+        workspace_root=tmp_path / "other-outcomes",
+        trial_workspace_dir=tmp_path / "trial_workspace",
+        upstream_artifact_paths={
+            "trial-workspace-manifest": trial_manifest_path,
+            "d1-sq-answer-set": sq_answer_path,
+        },
+        outcome_definition={"outcome": "Overall survival"},
+        rob2_settings={"effect_of_interest": "ITT"},
+        d1_judgment_artifact={
+            **artifact,
+            "judge_version": "d1-judge-v2",
+            "rule_table_version": "rob2-d1-rule-table-v2",
+        },
+    )
+
+    assert changed_versions.artifacts[0].config_hash != identity.config_hash
+    assert changed_versions.artifacts[0].producer_version == "d1-judge-v2"
 
 
 def _source_document(path, *, document_id="primary", document_role="primary"):

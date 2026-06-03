@@ -9,6 +9,9 @@ from rob2_pipeline.state import RoB2State
 from rob2_pipeline.state_factory import create_initial_state
 from rob2_pipeline.trace import end_trace, start_trace
 from rob2_pipeline.trial_workspace import (
+    write_d1_engineering_diagnostics_workspace,
+    write_d1_judgment_workspace,
+    write_d1_sq_answer_workspace,
     write_outcome_normalization_workspace,
     write_evidence_store_trial_workspace,
     write_parse_trial_workspace,
@@ -50,6 +53,7 @@ JSON_OUTPUT_KEYS = (
     "sq_answers",
     "initial_domain_judgments",
     "initial_domain_rationales",
+    "d1_judgment_artifact",
     "domain_judgments",
     "domain_rationales",
     "pivotality_tests",
@@ -168,6 +172,57 @@ def _write_workspace_artifacts(
         ),
         model_metadata=_model_metadata_from_state(state),
     )
+    if state.get("d1_sq_classifier_artifact"):
+        write_d1_sq_answer_workspace(
+            trial_id=base,
+            outcome_id=_outcome_id_from_state(state),
+            workspace_root=output_path / f"{base}_outcome_workspaces",
+            trial_workspace_dir=trial_workspace_dir,
+            upstream_artifact_paths=_outcome_workspace_upstream_paths(
+                trial_workspace_dir,
+                state["parse_artifacts"],
+            ),
+            outcome_definition=_outcome_definition_from_state(state),
+            rob2_settings=_rob2_settings_from_state(state),
+            d1_sq_answer_artifact=_d1_sq_answer_artifact_from_state(state),
+            model_metadata=_model_metadata_from_state(state),
+            contract_metadata=_d1_contract_metadata_from_state(state),
+        )
+    if state.get("d1_judgment_artifact"):
+        write_d1_judgment_workspace(
+            trial_id=base,
+            outcome_id=_outcome_id_from_state(state),
+            workspace_root=output_path / f"{base}_outcome_workspaces",
+            trial_workspace_dir=trial_workspace_dir,
+            upstream_artifact_paths={
+                **_outcome_workspace_upstream_paths(
+                    trial_workspace_dir,
+                    state["parse_artifacts"],
+                ),
+                **_d1_sq_answer_upstream_path(output_path, base, state),
+            },
+            outcome_definition=_outcome_definition_from_state(state),
+            rob2_settings=_rob2_settings_from_state(state),
+            d1_judgment_artifact=state["d1_judgment_artifact"],
+        )
+    if state.get("d1_sq_classifier_artifact") or state.get("d1_judgment_artifact"):
+        write_d1_engineering_diagnostics_workspace(
+            trial_id=base,
+            outcome_id=_outcome_id_from_state(state),
+            workspace_root=output_path / f"{base}_outcome_workspaces",
+            trial_workspace_dir=trial_workspace_dir,
+            upstream_artifact_paths={
+                **_outcome_workspace_upstream_paths(
+                    trial_workspace_dir,
+                    state["parse_artifacts"],
+                ),
+                **_d1_sq_answer_upstream_path(output_path, base, state),
+                **_d1_judgment_upstream_path(output_path, base, state),
+            },
+            outcome_definition=_outcome_definition_from_state(state),
+            rob2_settings=_rob2_settings_from_state(state),
+            diagnostics_artifact=_d1_engineering_diagnostics_from_state(state),
+        )
 
 
 def _evidence_store_upstream_paths(
@@ -254,3 +309,242 @@ def _model_metadata_from_state(state: RoB2State) -> dict:
         if model:
             return {"model": model}
     return {"model": config.LLM_MODEL}
+
+
+def _d1_sq_answer_artifact_from_state(state: RoB2State) -> dict:
+    classifier_artifact = state["d1_sq_classifier_artifact"]
+    return {
+        "artifact_id": f"d1-sq-answer-set:{_outcome_id_from_state(state)}",
+        "schema_version": "d1-sq-answer-set-v1",
+        "classifier_schema_version": classifier_artifact.get("schema_version", ""),
+        "classifier_prompt_version": _d1_contract_metadata_from_state(state).get(
+            "classifier_prompt_version", ""
+        ),
+        "domain": "d1",
+        "answers": classifier_artifact.get("answers", []),
+    }
+
+
+def _d1_contract_metadata_from_state(state: RoB2State) -> dict:
+    log_entry = _latest_llm_log_entry(state, "domain1_sq_json")
+    attempts = log_entry.get("attempts") or []
+    max_attempts = max(
+        [int(attempt.get("attempt", 0) or 0) for attempt in attempts] or [1]
+    )
+    return {
+        "schema_version": "d1-sq-answer-set-v1",
+        "classifier_schema_version": log_entry.get("schema_version")
+        or state.get("d1_sq_classifier_artifact", {}).get("schema_version", ""),
+        "classifier_prompt_version": log_entry.get("prompt_version", ""),
+        "retry_policy": {"max_attempts": max_attempts},
+        "model_affecting_settings": {
+            "provider": log_entry.get("provider", config.PROVIDER_NAME),
+            "model": log_entry.get("model", config.LLM_MODEL),
+        },
+    }
+
+
+def _d1_sq_answer_upstream_path(
+    output_path: Path,
+    base: str,
+    state: RoB2State,
+) -> dict[str, Path]:
+    if not state.get("d1_sq_classifier_artifact"):
+        return {}
+    outcome_dir = re.sub(r"[^A-Za-z0-9_.-]+", "_", _outcome_id_from_state(state))
+    return {
+        "d1-sq-answer-set": output_path
+        / f"{base}_outcome_workspaces"
+        / outcome_dir
+        / "d1-sq-answers.json"
+    }
+
+
+def _d1_judgment_upstream_path(
+    output_path: Path,
+    base: str,
+    state: RoB2State,
+) -> dict[str, Path]:
+    if not state.get("d1_judgment_artifact"):
+        return {}
+    outcome_dir = re.sub(r"[^A-Za-z0-9_.-]+", "_", _outcome_id_from_state(state))
+    return {
+        "d1-judgment": output_path
+        / f"{base}_outcome_workspaces"
+        / outcome_dir
+        / "d1-judgment.json"
+    }
+
+
+def _latest_llm_log_entry(state: RoB2State, node: str) -> dict:
+    for entry in reversed(state.get("llm_call_log", [])):
+        if entry.get("node") == node:
+            return entry
+    return {}
+
+
+def _d1_engineering_diagnostics_from_state(state: RoB2State) -> dict:
+    outcome_id = _outcome_id_from_state(state)
+    d1_calls = [
+        entry
+        for entry in state.get("llm_call_log", [])
+        if str(entry.get("node", "")).startswith("domain1")
+    ]
+    latest_call = d1_calls[-1] if d1_calls else {}
+    schema_status = latest_call.get("validation_status") or "not_run"
+    packet_readiness = state.get("packet_readiness") or {}
+    d1_packet_status = packet_readiness.get("d1") or _packet_status_from_state(state)
+    judge_artifact = state.get("d1_judgment_artifact") or {}
+    parse_status = _parse_status_from_state(state)
+    model_status = _model_call_status(schema_status, d1_calls)
+    judge_status = "ok" if judge_artifact.get("label") else "not_run"
+    statuses = {
+        "parse": parse_status,
+        "packet": d1_packet_status,
+        "schema_validation": schema_status,
+        "model_call": model_status,
+        "judge": judge_status,
+    }
+    return {
+        "artifact_id": f"d1-engineering-diagnostics:{outcome_id}",
+        "schema_version": "d1-engineering-diagnostics-v1",
+        "producer_version": "d1-engineering-diagnostics-v1",
+        "domain": "d1",
+        "outcome_id": outcome_id,
+        "reviewer_report_artifact_id": None,
+        "statuses": statuses,
+        "parse": {
+            "status": parse_status,
+            "documents": [_parse_document_diagnostics(item) for item in state.get("parse_artifacts", [])],
+        },
+        "packets": {
+            "status": d1_packet_status,
+            "packet_readiness": packet_readiness,
+            "packet_grades": state.get("packet_grades") or {},
+            "evidence_packet_count": _evidence_packet_count(state.get("evidence_packets")),
+        },
+        "schema_validation": {
+            "status": schema_status,
+            "schema_version": latest_call.get("schema_version"),
+            "prompt_version": latest_call.get("prompt_version"),
+            "failure_reason": latest_call.get("failure_reason"),
+            "attempts": _validation_attempts(latest_call),
+        },
+        "model_calls": [_model_call_diagnostics(entry) for entry in d1_calls],
+        "judge": {
+            "status": judge_status,
+            "artifact_id": judge_artifact.get("artifact_id"),
+            "schema_version": judge_artifact.get("schema_version"),
+            "judge_version": judge_artifact.get("judge_version"),
+            "rule_table_version": judge_artifact.get("rule_table_version"),
+            "applied_rule_path": judge_artifact.get("applied_rule_path"),
+            "label": judge_artifact.get("label"),
+        },
+        "failure_summary": _d1_failure_summary(statuses, latest_call),
+    }
+
+
+def _parse_status_from_state(state: RoB2State) -> str:
+    parse_artifacts = state.get("parse_artifacts") or []
+    if not parse_artifacts:
+        return "missing"
+    if any(artifact.get("diagnostics") for artifact in parse_artifacts):
+        return "diagnostics_present"
+    return "ok"
+
+
+def _parse_document_diagnostics(parse_artifact: dict) -> dict:
+    pages = parse_artifact.get("pages", [])
+    provenance = parse_artifact.get("provenance") or {}
+    source = parse_artifact.get("source_identity") or {}
+    return {
+        "document_id": source.get("document_id"),
+        "document_name": source.get("document_name"),
+        "document_role": source.get("document_role"),
+        "parser_name": provenance.get("parser_name"),
+        "parser_version": provenance.get("parser_version"),
+        "adapter_name": provenance.get("adapter_name"),
+        "parse_time_ms": parse_artifact.get("parse_time_ms"),
+        "page_count": len(pages),
+        "text_character_count": sum(len(page.get("text", "")) for page in pages),
+        "diagnostic_count": len(parse_artifact.get("diagnostics") or []),
+        "diagnostics": parse_artifact.get("diagnostics") or [],
+    }
+
+
+def _packet_status_from_state(state: RoB2State) -> str:
+    if state.get("evidence_packets"):
+        return "ready"
+    return "missing"
+
+
+def _evidence_packet_count(evidence_packets: object) -> int:
+    if not isinstance(evidence_packets, dict):
+        return 0
+    count = 0
+    for value in evidence_packets.values():
+        if isinstance(value, dict):
+            count += len(value)
+        elif isinstance(value, list):
+            count += len(value)
+        elif value:
+            count += 1
+    return count
+
+
+def _model_call_status(schema_status: object, d1_calls: list[dict]) -> str:
+    if not d1_calls:
+        return "not_run"
+    if schema_status == "fallback":
+        return "fallback"
+    if schema_status in {"validated", "not_validated"}:
+        return "ok"
+    return str(schema_status or "unknown")
+
+
+def _validation_attempts(log_entry: dict) -> list[dict]:
+    return [
+        {
+            "attempt": attempt.get("attempt"),
+            "parse_status": attempt.get("parse_status"),
+            "validation_status": attempt.get("validation_status"),
+            "parse_error": attempt.get("parse_error"),
+            "validation_error": attempt.get("validation_error"),
+            "is_repair": attempt.get("is_repair"),
+        }
+        for attempt in log_entry.get("attempts", [])
+    ]
+
+
+def _model_call_diagnostics(log_entry: dict) -> dict:
+    return {
+        "node": log_entry.get("node"),
+        "provider": log_entry.get("provider"),
+        "model": log_entry.get("model"),
+        "prompt_version": log_entry.get("prompt_version"),
+        "schema_version": log_entry.get("schema_version"),
+        "latency_ms": log_entry.get("latency_ms"),
+        "input_tokens": log_entry.get("input_tokens"),
+        "output_tokens": log_entry.get("output_tokens"),
+        "cached": log_entry.get("cached"),
+        "cache_hit": log_entry.get("cache_hit"),
+        "cost_usd": log_entry.get("cost_usd"),
+        "parse_status": log_entry.get("parse_status"),
+        "validation_status": log_entry.get("validation_status"),
+        "attempt_count": len(log_entry.get("attempts") or []),
+        "failure_reason": log_entry.get("failure_reason"),
+    }
+
+
+def _d1_failure_summary(statuses: dict, latest_call: dict) -> list[dict]:
+    failures = []
+    for stage, status in statuses.items():
+        if status in {"ok", "ready", "validated"}:
+            continue
+        if stage == "model_call" and statuses.get("schema_validation") == "fallback":
+            continue
+        reason = None
+        if stage in {"schema_validation", "model_call"}:
+            reason = latest_call.get("failure_reason")
+        failures.append({"stage": stage, "status": status, "reason": reason})
+    return failures

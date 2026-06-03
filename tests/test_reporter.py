@@ -3,6 +3,55 @@ import pytest
 from rob2_pipeline.nodes.reporter import report_formatter_node
 
 
+def test_markdown_report_renders_d1_reviewer_skeleton_from_artifacts():
+    state = {
+        "d1_artifact": {
+            "domain": "D1",
+            "judgment": "Some concerns",
+            "rationale": "Sequence generation was reported, but concealment details were limited.",
+            "automation_confidence": {
+                "status": "needs_adjudication",
+                "rationale": "One pivotal SQ has weak support.",
+            },
+            "key_evidence": [
+                {
+                    "label": "random_sequence",
+                    "claim": "Patients were randomly assigned 1:1.",
+                    "quote": "Patients were randomly assigned in a 1:1 ratio.",
+                    "support_level": "strong",
+                }
+            ],
+            "contradictions": [
+                "Baseline ECOG performance status was imbalanced between groups."
+            ],
+            "audit_limitations": [
+                "Allocation concealment quote does not identify who held the sequence."
+            ],
+            "timing_ms": 1250,
+            "cost_usd": 0.03,
+        },
+        "sq_answers": {},
+        "domain_judgments": {},
+        "domain_rationales": {},
+    }
+
+    report = report_formatter_node(state)["markdown_report"]
+
+    assert "## D1 reviewer skeleton" in report
+    assert "**D1 judgment: Some concerns**" in report
+    assert "Sequence generation was reported, but concealment details were limited." in report
+    assert "Automation confidence: needs_adjudication" in report
+    assert "One pivotal SQ has weak support." in report
+    assert "Patients were randomly assigned 1:1." in report
+    assert "**Strong**" in report
+    assert "Baseline ECOG performance status was imbalanced between groups." in report
+    assert "Allocation concealment quote does not identify who held the sequence." in report
+    assert "timing_ms" not in report
+    assert "cost_usd" not in report
+    assert "1250" not in report
+    assert "0.03" not in report
+
+
 @pytest.mark.parametrize(
     ("sq_id", "support_level", "support_rationale"),
     [

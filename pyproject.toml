@@ -17,7 +17,6 @@ dependencies = [
     "liteparse>=2.0.4",
     "lxml>=6.1.0",
     "pydantic>=2.13.3",
-    "pytest>=9.0.3",
     "python-dotenv>=1.2.2",
     "sentence-transformers>=3.0",
     "tenacity>=9.1.4",
@@ -31,6 +30,7 @@ pythonpath = ["."]
 
 [dependency-groups]
 dev = [
+    "pytest>=9.0.3",
     "ruff>=0.15.13",
     "ty>=0.0.42",
 ]
