@@ -9,6 +9,7 @@ from rob2_pipeline.state import RoB2State
 from rob2_pipeline.state_factory import create_initial_state
 from rob2_pipeline.trace import end_trace, start_trace
 from rob2_pipeline.trial_workspace import (
+    write_d1_sq_answer_workspace,
     write_outcome_normalization_workspace,
     write_evidence_store_trial_workspace,
     write_parse_trial_workspace,
@@ -168,6 +169,22 @@ def _write_workspace_artifacts(
         ),
         model_metadata=_model_metadata_from_state(state),
     )
+    if state.get("d1_sq_classifier_artifact"):
+        write_d1_sq_answer_workspace(
+            trial_id=base,
+            outcome_id=_outcome_id_from_state(state),
+            workspace_root=output_path / f"{base}_outcome_workspaces",
+            trial_workspace_dir=trial_workspace_dir,
+            upstream_artifact_paths=_outcome_workspace_upstream_paths(
+                trial_workspace_dir,
+                state["parse_artifacts"],
+            ),
+            outcome_definition=_outcome_definition_from_state(state),
+            rob2_settings=_rob2_settings_from_state(state),
+            d1_sq_answer_artifact=_d1_sq_answer_artifact_from_state(state),
+            model_metadata=_model_metadata_from_state(state),
+            contract_metadata=_d1_contract_metadata_from_state(state),
+        )
 
 
 def _evidence_store_upstream_paths(
@@ -254,3 +271,43 @@ def _model_metadata_from_state(state: RoB2State) -> dict:
         if model:
             return {"model": model}
     return {"model": config.LLM_MODEL}
+
+
+def _d1_sq_answer_artifact_from_state(state: RoB2State) -> dict:
+    classifier_artifact = state["d1_sq_classifier_artifact"]
+    return {
+        "artifact_id": f"d1-sq-answer-set:{_outcome_id_from_state(state)}",
+        "schema_version": "d1-sq-answer-set-v1",
+        "classifier_schema_version": classifier_artifact.get("schema_version", ""),
+        "classifier_prompt_version": _d1_contract_metadata_from_state(state).get(
+            "classifier_prompt_version", ""
+        ),
+        "domain": "d1",
+        "answers": classifier_artifact.get("answers", []),
+    }
+
+
+def _d1_contract_metadata_from_state(state: RoB2State) -> dict:
+    log_entry = _latest_llm_log_entry(state, "domain1_sq_json")
+    attempts = log_entry.get("attempts") or []
+    max_attempts = max(
+        [int(attempt.get("attempt", 0) or 0) for attempt in attempts] or [1]
+    )
+    return {
+        "schema_version": "d1-sq-answer-set-v1",
+        "classifier_schema_version": log_entry.get("schema_version")
+        or state.get("d1_sq_classifier_artifact", {}).get("schema_version", ""),
+        "classifier_prompt_version": log_entry.get("prompt_version", ""),
+        "retry_policy": {"max_attempts": max_attempts},
+        "model_affecting_settings": {
+            "provider": log_entry.get("provider", config.PROVIDER_NAME),
+            "model": log_entry.get("model", config.LLM_MODEL),
+        },
+    }
+
+
+def _latest_llm_log_entry(state: RoB2State, node: str) -> dict:
+    for entry in reversed(state.get("llm_call_log", [])):
+        if entry.get("node") == node:
+            return entry
+    return {}

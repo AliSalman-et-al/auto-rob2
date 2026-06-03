@@ -148,6 +148,59 @@ def test_workspace_output_writes_outcome_manifest_with_trial_hashes(tmp_path):
     ] == file_sha256(page_path)
 
 
+def test_workspace_output_writes_d1_sq_answer_artifact(tmp_path):
+    primary = tmp_path / "trial.pdf"
+    primary.write_bytes(b"primary trial report")
+    state = {
+        "source_documents": [_source_document(primary)],
+        "parse_artifacts": [_parse_artifact(primary)],
+        "outcome": "Overall survival",
+        "outcome_type": "vital-status",
+        "outcome_properties": {"death_only_objective_event": True},
+        "outcome_classification_support": {"support_level": "strong"},
+        "effect_of_interest": "ITT",
+        "overall_policy": "rob2-default",
+        "d1_sq_classifier_artifact": {
+            "schema_version": "d1-sq-classifier-v1",
+            "domain": "d1",
+            "answers": [
+                _d1_answer("1.1", "Y"),
+                _d1_answer("1.2", "NI", support_level="unsupported"),
+                _d1_answer("1.3", "N"),
+            ],
+        },
+        "llm_call_log": [
+            {
+                "node": "domain1_sq_json",
+                "model": "gpt-4.1",
+                "prompt_version": "d1-sq-classifier-prompt-v1",
+                "schema_version": "d1-sq-classifier-v1",
+                "attempts": [{"attempt": 1}],
+            }
+        ],
+    }
+
+    _write_workspace_artifacts("trial", tmp_path, state)
+
+    artifact_path = (
+        tmp_path
+        / "trial_outcome_workspaces"
+        / "Overall_survival"
+        / "d1-sq-answers.json"
+    )
+    manifest_path = artifact_path.parent / "outcome-workspace-manifest.json"
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert artifact["artifact_id"] == "d1-sq-answer-set:Overall survival"
+    assert artifact["schema_version"] == "d1-sq-answer-set-v1"
+    assert artifact["classifier_schema_version"] == "d1-sq-classifier-v1"
+    assert artifact["classifier_prompt_version"] == "d1-sq-classifier-prompt-v1"
+    assert artifact["validation"]["status"] == "validated"
+    assert manifest["artifacts"][0]["artifact_id"] == artifact["artifact_id"]
+    assert manifest["artifacts"][0]["producer"] == "d1-sq-classifier"
+
+
 def _source_document(path):
     return {
         "document_id": "primary",
@@ -180,4 +233,19 @@ def _parse_artifact(path):
             "artifact_schema_version": "parse-artifact-v1",
             "config": {"ocr_enabled": False},
         },
+    }
+
+
+def _d1_answer(sq_id, answer, *, support_level="strong"):
+    return {
+        "sq_id": sq_id,
+        "answer": answer,
+        "quote": "computer-generated sequence",
+        "justification": "The selected packet supports this answer.",
+        "support_level": support_level,
+        "support_rationale": "Supported by selected packet evidence.",
+        "uncertainty": support_level == "unsupported",
+        "packet_artifact_id": f"evidence-packet:d1:{sq_id}",
+        "decision_table_artifact_id": f"decision-table:d1:{sq_id}",
+        "supporting_fact_artifact_ids": [],
     }
