@@ -45,6 +45,10 @@ def _response(
     rationale: str,
     props: dict[str, bool],
     quote: str,
+    *,
+    definition: str = "",
+    aliases: list[str] | None = None,
+    uncertainty: bool = False,
 ):
     def flag(name: str) -> str:
         return str(props.get(name, False)).lower()
@@ -52,8 +56,13 @@ def _response(
     return f"""
 <outcome_resolution>
   <outcome_type>{outcome_type}</outcome_type>
+  <normalized_definition>{definition or "Assessed outcome definition."}</normalized_definition>
+  <aliases>
+    {"".join(f"<alias>{alias}</alias>" for alias in (aliases or []))}
+  </aliases>
   <support_level>{support_level}</support_level>
   <support_rationale>{rationale}</support_rationale>
+  <uncertainty>{str(uncertainty).lower()}</uncertainty>
   <properties>
     <patient_reported>{flag("patient_reported")}</patient_reported>
     <safety_harm>{flag("safety_harm")}</safety_harm>
@@ -82,8 +91,14 @@ def test_resolver_uses_assessed_outcome_bound_llm_evidence(monkeypatch):
             """
 <outcome_resolution>
   <outcome_type>vital-status</outcome_type>
+  <normalized_definition>Time from randomization to death from any cause.</normalized_definition>
+  <aliases>
+    <alias>OS</alias>
+    <alias>overall survival</alias>
+  </aliases>
   <support_level>strong</support_level>
   <support_rationale>The assessed outcome is OS and the measurement quote defines it as death from any cause.</support_rationale>
+  <uncertainty>false</uncertainty>
   <properties>
     <patient_reported>false</patient_reported>
     <safety_harm>false</safety_harm>
@@ -122,7 +137,22 @@ def test_resolver_uses_assessed_outcome_bound_llm_evidence(monkeypatch):
             "source": "d4_outcome_meas",
         }
     ]
+    assert result["outcome_normalization_artifact"] == {
+        "artifact_id": "outcome-normalization:Overall survival",
+        "schema_version": "outcome-normalization-v1",
+        "outcome": "Overall survival",
+        "normalized_definition": "Time from randomization to death from any cause.",
+        "aliases": ["OS", "overall survival"],
+        "outcome_type": "vital-status",
+        "outcome_properties": result["outcome_properties"],
+        "binding_support": result["outcome_classification_support"],
+        "auto_accept_blocked": False,
+        "uncertainty": False,
+    }
     assert "Progression-free survival" in calls[0]["prompt"]
+    assert "<normalized_definition>" in calls[0]["prompt"]
+    assert "<aliases>" in calls[0]["prompt"]
+    assert "<uncertainty>" in calls[0]["prompt"]
     assert calls[0]["node_name"] == "outcome_resolver"
 
 
@@ -148,6 +178,8 @@ def test_invalid_llm_output_falls_back_to_unsupported_without_regex_semantics(
     assert result["outcome_type"] == "clinician-composite"
     assert result["outcome_properties"] == outcome_resolver.DEFAULT_OUTCOME_PROPERTIES
     assert result["outcome_classification_support"]["support_level"] == "unsupported"
+    assert result["outcome_normalization_artifact"]["auto_accept_blocked"] is True
+    assert result["outcome_normalization_artifact"]["uncertainty"] is True
     assert (
         result["support_constraints"][0]["constraint_type"]
         == "missing_required_evidence"
@@ -195,6 +227,7 @@ def test_untraceable_quote_creates_constraint_and_unsupported_classification(
     assert result["outcome_type"] == "clinician-composite"
     assert result["outcome_classification_support"]["support_level"] == "unsupported"
     assert result["support_constraints"][0]["constraint_type"] == "quote_untraceable"
+    assert result["outcome_normalization_artifact"]["auto_accept_blocked"] is True
 
 
 def test_clinician_composite_progression_outcome(monkeypatch):

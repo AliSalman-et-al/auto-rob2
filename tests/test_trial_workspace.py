@@ -15,6 +15,7 @@ from rob2_pipeline.trial_workspace import (
     load_trial_workspace_artifacts,
     read_trial_workspace_manifest,
     write_evidence_store_trial_workspace,
+    write_outcome_normalization_workspace,
     write_parse_trial_workspace,
     write_trial_workspace_manifest,
 )
@@ -607,6 +608,59 @@ def test_outcome_workspace_paths_are_separated_by_outcome_id(tmp_path):
         outcome_workspace_dir(root, "Progression-Free Survival")
         == root / "Progression-Free_Survival"
     )
+
+
+def test_outcome_normalization_workspace_persists_artifact_and_manifest_identity(
+    tmp_path,
+):
+    trial_manifest_path = tmp_path / "trial_workspace" / "trial-workspace-manifest.json"
+    trial_manifest_path.parent.mkdir(parents=True)
+    trial_manifest_path.write_text('{"trial": "manifest"}\n', encoding="utf-8")
+
+    artifact = {
+        "artifact_id": "outcome-normalization:Overall survival",
+        "schema_version": "outcome-normalization-v1",
+        "outcome": "Overall survival",
+        "normalized_definition": "Time from randomization to death.",
+        "aliases": ["OS"],
+        "outcome_type": "vital-status",
+        "outcome_properties": {"objective_event": True},
+        "binding_support": {
+            "support_level": "weak",
+            "support_rationale": "Only a partial quote supports the binding.",
+            "quotes": [{"quote": "overall survival", "source": "results"}],
+            "constraints": [],
+        },
+        "auto_accept_blocked": True,
+        "uncertainty": True,
+    }
+
+    manifest = write_outcome_normalization_workspace(
+        trial_id="trial-001",
+        outcome_id="overall-survival",
+        workspace_root=tmp_path / "outcomes",
+        trial_workspace_dir=tmp_path / "trial_workspace",
+        upstream_artifact_paths={"trial-workspace-manifest": trial_manifest_path},
+        outcome_definition={"outcome": "Overall survival"},
+        rob2_settings={"effect_of_interest": "ITT"},
+        outcome_normalization_artifact=artifact,
+        model_metadata={"model": "gpt-4.1"},
+    )
+
+    artifact_path = (
+        tmp_path
+        / "outcomes"
+        / "overall-survival"
+        / "outcome-normalization.json"
+    )
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+
+    assert payload == artifact
+    assert manifest.artifacts[0].artifact_id == "outcome-normalization:Overall survival"
+    assert manifest.artifacts[0].schema_version == "outcome-normalization-v1"
+    assert manifest.artifacts[0].producer == "outcome-resolver"
+    assert manifest.artifacts[0].producer_version == "gpt-4.1"
+    assert manifest.artifacts[0].content_hash == file_sha256(artifact_path)
 
 
 def _source_document(path, *, document_id="primary", document_role="primary"):

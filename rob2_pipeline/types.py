@@ -58,6 +58,19 @@ class OutcomeProperties(TypedDict):
     blinded_adjudication: bool
 
 
+class OutcomeNormalizationArtifact(TypedDict, total=False):
+    artifact_id: str
+    schema_version: str
+    outcome: str
+    normalized_definition: str
+    aliases: list[str]
+    outcome_type: str
+    outcome_properties: OutcomeProperties
+    binding_support: dict
+    auto_accept_blocked: bool
+    uncertainty: bool
+
+
 class TrialFacts(TypedDict, total=False):
     randomization: str
     allocation_concealment: str

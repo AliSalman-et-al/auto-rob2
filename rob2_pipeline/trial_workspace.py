@@ -269,6 +269,53 @@ def write_outcome_workspace_manifest(
     return manifest
 
 
+def write_outcome_normalization_workspace(
+    *,
+    trial_id: str,
+    outcome_id: str,
+    workspace_root: str | Path,
+    trial_workspace_dir: str | Path,
+    upstream_artifact_paths: dict[str, str | Path],
+    outcome_definition: dict,
+    rob2_settings: dict,
+    outcome_normalization_artifact: dict,
+    model_metadata: dict,
+) -> OutcomeWorkspaceManifest:
+    root = outcome_workspace_dir(workspace_root, outcome_id)
+    artifact_path = root / "outcome-normalization.json"
+    _write_json(artifact_path, outcome_normalization_artifact)
+
+    upstream_hashes = {
+        artifact_id: file_sha256(path)
+        for artifact_id, path in sorted(upstream_artifact_paths.items())
+    }
+    model_name = str(model_metadata.get("model") or "unknown-model")
+    identity = build_outcome_artifact_identity(
+        artifact_id=outcome_normalization_artifact["artifact_id"],
+        schema_version=outcome_normalization_artifact["schema_version"],
+        producer="outcome-resolver",
+        producer_version=model_name,
+        content_hash=file_sha256(artifact_path),
+        upstream_trial_workspace_hashes=upstream_hashes,
+        outcome_definition=outcome_definition,
+        rob2_settings=rob2_settings,
+        config={
+            "schema_version": outcome_normalization_artifact["schema_version"],
+            "model_metadata": model_metadata,
+        },
+    )
+    return write_outcome_workspace_manifest(
+        trial_id=trial_id,
+        outcome_id=outcome_id,
+        workspace_root=workspace_root,
+        trial_workspace_dir=trial_workspace_dir,
+        upstream_artifact_paths=upstream_artifact_paths,
+        outcome_definition=outcome_definition,
+        rob2_settings=rob2_settings,
+        artifacts=[identity],
+    )
+
+
 def evaluate_artifact_status(
     manifest: TrialWorkspaceManifest,
     current_identity: ArtifactIdentity,
@@ -812,6 +859,7 @@ __all__ = [
     "read_trial_workspace_manifest",
     "stable_payload_sha256",
     "write_outcome_workspace_manifest",
+    "write_outcome_normalization_workspace",
     "write_evidence_store_trial_workspace",
     "write_parse_trial_workspace",
     "write_trial_workspace_manifest",

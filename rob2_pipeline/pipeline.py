@@ -9,7 +9,7 @@ from rob2_pipeline.state import RoB2State
 from rob2_pipeline.state_factory import create_initial_state
 from rob2_pipeline.trace import end_trace, start_trace
 from rob2_pipeline.trial_workspace import (
-    write_outcome_workspace_manifest,
+    write_outcome_normalization_workspace,
     write_evidence_store_trial_workspace,
     write_parse_trial_workspace,
 )
@@ -25,6 +25,7 @@ JSON_OUTPUT_KEYS = (
     "outcome_type",
     "outcome_properties",
     "outcome_classification_support",
+    "outcome_normalization_artifact",
     "numerical_result",
     "effect_of_interest",
     "registration_number",
@@ -149,7 +150,7 @@ def _write_workspace_artifacts(
             model_metadata=_model_metadata_from_state(state),
         )
 
-    write_outcome_workspace_manifest(
+    write_outcome_normalization_workspace(
         trial_id=base,
         outcome_id=_outcome_id_from_state(state),
         workspace_root=output_path / f"{base}_outcome_workspaces",
@@ -160,6 +161,10 @@ def _write_workspace_artifacts(
         ),
         outcome_definition=_outcome_definition_from_state(state),
         rob2_settings=_rob2_settings_from_state(state),
+        outcome_normalization_artifact=_outcome_normalization_artifact_from_state(
+            state
+        ),
+        model_metadata=_model_metadata_from_state(state),
     )
 
 
@@ -204,6 +209,33 @@ def _outcome_definition_from_state(state: RoB2State) -> dict:
         "outcome_properties": state.get("outcome_properties") or {},
         "outcome_classification_support": state.get("outcome_classification_support")
         or {},
+    }
+
+
+def _outcome_normalization_artifact_from_state(state: RoB2State) -> dict:
+    artifact = state.get("outcome_normalization_artifact")
+    if artifact:
+        return artifact
+    support = state.get("outcome_classification_support") or {
+        "support_level": "unsupported",
+        "support_rationale": "Outcome classification artifact was derived from state.",
+        "quotes": [],
+        "constraints": [],
+    }
+    return {
+        "artifact_id": f"outcome-normalization:{state.get('outcome', '')}",
+        "schema_version": "outcome-normalization-v1",
+        "outcome": state.get("outcome", ""),
+        "normalized_definition": "",
+        "aliases": [],
+        "outcome_type": state.get("outcome_type", "clinician-composite"),
+        "outcome_properties": state.get("outcome_properties") or {},
+        "binding_support": support,
+        "auto_accept_blocked": support.get("support_level") in {
+            "weak",
+            "unsupported",
+        },
+        "uncertainty": support.get("support_level") in {"weak", "unsupported"},
     }
 
 
