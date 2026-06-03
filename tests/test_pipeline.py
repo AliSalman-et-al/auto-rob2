@@ -261,6 +261,77 @@ def test_workspace_output_writes_d1_sq_answer_artifact(tmp_path):
     }.issubset(manifest_artifacts)
 
 
+def test_workspace_output_writes_d2_sq_answer_and_judgment_artifacts(tmp_path):
+    primary = tmp_path / "trial.pdf"
+    primary.write_bytes(b"primary trial report")
+    state = {
+        "source_documents": [_source_document(primary)],
+        "parse_artifacts": [_parse_artifact(primary)],
+        "outcome": "Overall survival",
+        "outcome_type": "vital-status",
+        "outcome_properties": {"death_only_objective_event": True},
+        "outcome_classification_support": {"support_level": "strong"},
+        "effect_of_interest": "ITT",
+        "overall_policy": "rob2-default",
+        "d2_sq12_classifier_artifact": {
+            "schema_version": "d2-sq-classifier-v1",
+            "domain": "d2",
+            "stage": "sq12",
+            "branching": {"effect_of_interest": "ITT"},
+            "answers": [_domain_answer("d2", "2.1", "Y")],
+        },
+        "d2_judgment_artifact": {
+            "artifact_id": "d2-judgment:Overall survival",
+            "schema_version": "d2-judgment-v1",
+            "domain": "d2",
+            "judge_version": "d2-judge-v1",
+            "rule_table_version": "rob2-d2-assignment-rule-table-v1",
+            "input_sq_answers": {"2.1": {"answer": "Y"}},
+            "applied_rule_path": "d2-assignment:part1-low+part2-low",
+            "label": "Low",
+            "rationale": "Part1=Low; Part2=Low",
+        },
+        "llm_call_log": [
+            {
+                "node": "domain2_sq12_json",
+                "model": "gpt-4.1",
+                "prompt_version": "d2-sq12-classifier-prompt-v1",
+                "schema_version": "d2-sq-classifier-v1",
+                "attempts": [{"attempt": 1}],
+            }
+        ],
+    }
+
+    _write_workspace_artifacts("trial", tmp_path, state)
+
+    outcome_dir = tmp_path / "trial_outcome_workspaces" / "Overall_survival"
+    sq_artifact = json.loads(
+        (outcome_dir / "d2-sq-answers.json").read_text(encoding="utf-8")
+    )
+    judgment = json.loads(
+        (outcome_dir / "d2-judgment.json").read_text(encoding="utf-8")
+    )
+    manifest = json.loads(
+        (outcome_dir / "outcome-workspace-manifest.json").read_text(encoding="utf-8")
+    )
+    manifest_artifacts = {
+        item["artifact_id"]: item for item in manifest["artifacts"]
+    }
+
+    assert sq_artifact["artifact_id"] == "d2-sq-answer-set:Overall survival"
+    assert sq_artifact["schema_version"] == "d2-sq-answer-set-v1"
+    assert sq_artifact["classifier_schema_version"] == "d2-sq-classifier-v1"
+    assert sq_artifact["classifier_prompt_version"] == "d2-sq12-classifier-prompt-v1"
+    assert sq_artifact["validation"]["status"] == "validated"
+    assert judgment["artifact_id"] == "d2-judgment:Overall survival"
+    assert manifest_artifacts[sq_artifact["artifact_id"]]["producer"] == (
+        "d2-sq-classifier"
+    )
+    assert manifest_artifacts[judgment["artifact_id"]]["producer"] == (
+        "d2-deterministic-judge"
+    )
+
+
 def test_workspace_output_writes_d1_engineering_diagnostics_for_valid_run(tmp_path):
     primary = tmp_path / "trial.pdf"
     primary.write_bytes(b"primary trial report")
@@ -403,6 +474,21 @@ def _d1_answer(sq_id, answer, *, support_level="strong"):
         "uncertainty": support_level == "unsupported",
         "packet_artifact_id": f"evidence-packet:d1:{sq_id}",
         "decision_table_artifact_id": f"decision-table:d1:{sq_id}",
+        "supporting_fact_artifact_ids": [],
+    }
+
+
+def _domain_answer(domain, sq_id, answer, *, support_level="strong"):
+    return {
+        "sq_id": sq_id,
+        "answer": answer,
+        "quote": "Participants and carers were aware.",
+        "justification": "The selected packet supports this answer.",
+        "support_level": support_level,
+        "support_rationale": "Supported by selected packet evidence.",
+        "uncertainty": support_level == "unsupported",
+        "packet_artifact_id": f"evidence-packet:{domain}:{sq_id}",
+        "decision_table_artifact_id": f"decision-table:{domain}:{sq_id}",
         "supporting_fact_artifact_ids": [],
     }
 

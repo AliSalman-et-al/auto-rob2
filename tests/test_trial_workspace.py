@@ -17,6 +17,8 @@ from rob2_pipeline.trial_workspace import (
     write_evidence_store_trial_workspace,
     write_d1_judgment_workspace,
     write_d1_sq_answer_workspace,
+    write_domain_judgment_workspace,
+    write_domain_sq_answer_workspace,
     write_outcome_normalization_workspace,
     write_parse_trial_workspace,
     write_trial_workspace_manifest,
@@ -935,6 +937,152 @@ def test_d1_judgment_workspace_persists_artifact_and_invalidates_on_versions(tmp
 
     assert changed_versions.artifacts[0].config_hash != identity.config_hash
     assert changed_versions.artifacts[0].producer_version == "d1-judge-v2"
+
+
+def test_d2_sq_answer_workspace_persists_artifact_and_contract_identity(tmp_path):
+    trial_manifest_path = tmp_path / "trial_workspace" / "trial-workspace-manifest.json"
+    trial_manifest_path.parent.mkdir(parents=True)
+    trial_manifest_path.write_text('{"trial": "manifest"}\n', encoding="utf-8")
+    packet_path = tmp_path / "outcomes" / "overall-survival" / "d2-packets.json"
+    packet_path.parent.mkdir(parents=True)
+    packet_path.write_text('{"packet": "v1"}\n', encoding="utf-8")
+
+    artifact = {
+        "artifact_id": "d2-sq-answer-set:overall-survival",
+        "schema_version": "d2-sq-answer-set-v1",
+        "classifier_schema_version": "d2-sq-classifier-v1",
+        "classifier_prompt_version": "d2-sq12-classifier-prompt-v1",
+        "domain": "d2",
+        "stage": "sq12",
+        "branching": {"effect_of_interest": "ITT"},
+        "answers": [
+            {
+                "sq_id": "2.1",
+                "answer": "Y",
+                "quote": "Participants and carers were aware.",
+                "justification": "The selected packet supports awareness.",
+                "support_level": "moderate",
+                "support_rationale": "Directly supported by the selected packet.",
+                "uncertainty": False,
+                "packet_artifact_id": "evidence-packet:d2:2.1",
+                "decision_table_artifact_id": "decision-table:d2:2.1",
+                "supporting_fact_artifact_ids": ["evidence-fact:d2:2.1:0"],
+            }
+        ],
+        "validation": {"status": "validated"},
+    }
+
+    manifest = write_domain_sq_answer_workspace(
+        domain="d2",
+        trial_id="trial-001",
+        outcome_id="overall-survival",
+        workspace_root=tmp_path / "outcomes",
+        trial_workspace_dir=tmp_path / "trial_workspace",
+        upstream_artifact_paths={
+            "trial-workspace-manifest": trial_manifest_path,
+            "d2:evidence-packets": packet_path,
+        },
+        outcome_definition={"outcome": "Overall survival"},
+        rob2_settings={"effect_of_interest": "ITT"},
+        sq_answer_artifact=artifact,
+        model_metadata={"model": "gpt-4.1"},
+        contract_metadata={
+            "schema_version": "d2-sq-answer-set-v1",
+            "classifier_schema_version": "d2-sq-classifier-v1",
+            "classifier_prompt_version": "d2-sq12-classifier-prompt-v1",
+            "retry_policy": {"max_attempts": 2},
+        },
+    )
+
+    artifact_path = tmp_path / "outcomes" / "overall-survival" / "d2-sq-answers.json"
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    identity = manifest.artifacts[0]
+
+    assert payload == {
+        **artifact,
+        "validation": {
+            "status": "validated",
+            "invalid_answers": [],
+            "missing_support_metadata": [],
+        },
+    }
+    assert identity.artifact_id == "d2-sq-answer-set:overall-survival"
+    assert identity.schema_version == "d2-sq-answer-set-v1"
+    assert identity.producer == "d2-sq-classifier"
+    assert identity.producer_version == "gpt-4.1"
+    assert identity.upstream_trial_workspace_hashes["d2:evidence-packets"] == file_sha256(
+        packet_path
+    )
+    assert identity.content_hash == file_sha256(artifact_path)
+
+
+def test_d2_judgment_workspace_persists_artifact_and_invalidates_on_versions(tmp_path):
+    trial_manifest_path = tmp_path / "trial_workspace" / "trial-workspace-manifest.json"
+    trial_manifest_path.parent.mkdir(parents=True)
+    trial_manifest_path.write_text('{"trial": "manifest"}\n', encoding="utf-8")
+    sq_answer_path = tmp_path / "outcomes" / "overall-survival" / "d2-sq-answers.json"
+    sq_answer_path.parent.mkdir(parents=True)
+    sq_answer_path.write_text('{"answers": []}\n', encoding="utf-8")
+    artifact = {
+        "artifact_id": "d2-judgment:overall-survival",
+        "schema_version": "d2-judgment-v1",
+        "domain": "d2",
+        "judge_version": "d2-judge-v1",
+        "rule_table_version": "rob2-d2-assignment-rule-table-v1",
+        "input_sq_answers": {"2.1": {"answer": "N"}},
+        "applied_rule_path": "d2-assignment:part1-low+part2-low",
+        "label": "Low",
+        "rationale": "Part1=Low; Part2=Low",
+    }
+
+    manifest = write_domain_judgment_workspace(
+        domain="d2",
+        trial_id="trial-001",
+        outcome_id="overall-survival",
+        workspace_root=tmp_path / "outcomes",
+        trial_workspace_dir=tmp_path / "trial_workspace",
+        upstream_artifact_paths={
+            "trial-workspace-manifest": trial_manifest_path,
+            "d2-sq-answer-set": sq_answer_path,
+        },
+        outcome_definition={"outcome": "Overall survival"},
+        rob2_settings={"effect_of_interest": "ITT"},
+        judgment_artifact=artifact,
+    )
+
+    artifact_path = tmp_path / "outcomes" / "overall-survival" / "d2-judgment.json"
+    identity = manifest.artifacts[0]
+
+    assert json.loads(artifact_path.read_text(encoding="utf-8")) == artifact
+    assert identity.artifact_id == "d2-judgment:overall-survival"
+    assert identity.schema_version == "d2-judgment-v1"
+    assert identity.producer == "d2-deterministic-judge"
+    assert identity.producer_version == "d2-judge-v1"
+    assert identity.upstream_trial_workspace_hashes["d2-sq-answer-set"] == file_sha256(
+        sq_answer_path
+    )
+
+    changed_versions = write_domain_judgment_workspace(
+        domain="d2",
+        trial_id="trial-001",
+        outcome_id="overall-survival",
+        workspace_root=tmp_path / "other-outcomes",
+        trial_workspace_dir=tmp_path / "trial_workspace",
+        upstream_artifact_paths={
+            "trial-workspace-manifest": trial_manifest_path,
+            "d2-sq-answer-set": sq_answer_path,
+        },
+        outcome_definition={"outcome": "Overall survival"},
+        rob2_settings={"effect_of_interest": "ITT"},
+        judgment_artifact={
+            **artifact,
+            "judge_version": "d2-judge-v2",
+            "rule_table_version": "rob2-d2-assignment-rule-table-v2",
+        },
+    )
+
+    assert changed_versions.artifacts[0].config_hash != identity.config_hash
+    assert changed_versions.artifacts[0].producer_version == "d2-judge-v2"
 
 
 def _source_document(path, *, document_id="primary", document_role="primary"):
