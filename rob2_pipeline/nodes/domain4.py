@@ -4,6 +4,7 @@ from rob2_pipeline.nodes.common import (
     call_node_llm,
 )
 from rob2_pipeline.nodes.domain_context import build_domain4_context
+from rob2_pipeline.nodes.domain_classifier import has_ready_packets, run_json_sq_classifier
 from rob2_pipeline.nodes.domain_helpers import DomainSqStage, run_domain_sq_stage
 from rob2_pipeline.nodes.sq_control import apply_domain4_control
 from rob2_pipeline.prompts import PROMPT_DOMAIN4
@@ -34,6 +35,28 @@ DOMAIN4_STAGE = DomainSqStage(
 
 
 def domain4_sq_node(state: RoB2State) -> RoB2State:
+    if has_ready_packets(state, domain="d4", sq_ids=DOMAIN4_STAGE.sq_ids):
+        outcome_type = state.get("outcome_type", "")
+        return run_json_sq_classifier(
+            state,
+            domain="d4",
+            stage="sq",
+            sq_ids=DOMAIN4_STAGE.sq_ids,
+            node_name="domain4_sq_json",
+            artifact_key="d4_sq_classifier_artifact",
+            branching={"stage": "sq", "outcome_type": outcome_type},
+            outcome_specific_concerns=[
+                {
+                    "concern": f"{outcome_type or 'unknown'} outcome measurement bias",
+                    "support_level": "unsupported",
+                    "rationale": (
+                        "Classifier must update this with packet-supported "
+                        "outcome-specific measurement concerns."
+                    ),
+                }
+            ],
+            postprocess=apply_domain4_control,
+        )
     return run_domain_sq_stage(state, DOMAIN4_STAGE, call_fn=call_node_llm)
 
 

@@ -8,6 +8,7 @@ from rob2_pipeline.nodes.domain_context import (
     build_domain2_conditional_context,
     build_domain2_sq12_context,
 )
+from rob2_pipeline.nodes.domain_classifier import has_ready_packets, run_json_sq_classifier
 from rob2_pipeline.nodes.domain_helpers import DomainSqStage, run_domain_sq_stage
 from rob2_pipeline.nodes.sq_control import (
     apply_domain2_analysis_control,
@@ -48,6 +49,21 @@ DOMAIN2_SQ12_STAGE = DomainSqStage(
 
 
 def domain2_sq12_node(state: RoB2State) -> RoB2State:
+    if has_ready_packets(state, domain="d2", sq_ids=DOMAIN2_SQ12_STAGE.sq_ids):
+        return run_json_sq_classifier(
+            state,
+            domain="d2",
+            stage="sq12",
+            sq_ids=DOMAIN2_SQ12_STAGE.sq_ids,
+            node_name="domain2_sq12_json",
+            artifact_key="d2_sq12_classifier_artifact",
+            branching={
+                "stage": "sq12",
+                "effect_of_interest": state.get("effect_of_interest", "ITT"),
+                "next_stage_rule": "2.3-2.5 are asked only when SQ 2.1/2.2 indicate awareness or deviation concerns.",
+            },
+            postprocess=apply_domain2_sq12_control,
+        )
     return run_domain_sq_stage(state, DOMAIN2_SQ12_STAGE, call_fn=call_node_llm)
 
 
@@ -83,6 +99,21 @@ DOMAIN2_CONDITIONAL_STAGE = DomainSqStage(
 
 
 def domain2_conditional_node(state: RoB2State) -> RoB2State:
+    if has_ready_packets(state, domain="d2", sq_ids=DOMAIN2_CONDITIONAL_STAGE.sq_ids):
+        return run_json_sq_classifier(
+            state,
+            domain="d2",
+            stage="conditional",
+            sq_ids=DOMAIN2_CONDITIONAL_STAGE.sq_ids,
+            node_name="domain2_conditional_json",
+            artifact_key="d2_conditional_classifier_artifact",
+            branching={
+                "stage": "conditional",
+                "effect_of_interest": state.get("effect_of_interest", "ITT"),
+                "active_because": "D2 branching reached deviation signaling questions.",
+            },
+            postprocess=apply_domain2_conditional_control,
+        )
     return run_domain_sq_stage(state, DOMAIN2_CONDITIONAL_STAGE, call_fn=call_node_llm)
 
 
@@ -114,6 +145,25 @@ DOMAIN2_ANALYSIS_STAGE = DomainSqStage(
 
 
 def domain2_analysis_node(state: RoB2State) -> RoB2State:
+    if has_ready_packets(state, domain="d2", sq_ids=DOMAIN2_ANALYSIS_STAGE.sq_ids):
+        return run_json_sq_classifier(
+            state,
+            domain="d2",
+            stage="analysis",
+            sq_ids=DOMAIN2_ANALYSIS_STAGE.sq_ids,
+            node_name="domain2_analysis_json",
+            artifact_key="d2_analysis_classifier_artifact",
+            branching={
+                "stage": "analysis",
+                "effect_of_interest": state.get("effect_of_interest", "ITT"),
+                "analysis_mode": (
+                    "adhering"
+                    if state.get("effect_of_interest", "ITT").lower() == "per-protocol"
+                    else "assignment"
+                ),
+            },
+            postprocess=apply_domain2_analysis_control,
+        )
     return run_domain_sq_stage(state, DOMAIN2_ANALYSIS_STAGE, call_fn=call_node_llm)
 
 

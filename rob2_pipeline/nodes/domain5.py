@@ -3,6 +3,7 @@ from rob2_pipeline.nodes.common import (
     add_domain_judgment_with_pivotality_tests,
 )
 from rob2_pipeline.nodes.domain_context import build_domain5_context
+from rob2_pipeline.nodes.domain_classifier import has_ready_packets, run_json_sq_classifier
 from rob2_pipeline.nodes.domain_helpers import DomainSqStage, run_domain_sq_stage
 from rob2_pipeline.prompts import PROMPT_DOMAIN5
 from rob2_pipeline.state import RoB2State
@@ -45,7 +46,22 @@ def domain5_sq_node(state: RoB2State) -> RoB2State:
             "Intervention not reported; manual review required for Domain 5 assessment."
         )
         human_review_priority = "HIGH"
-    result = run_domain_sq_stage(state, DOMAIN5_STAGE)
+    if has_ready_packets(state, domain="d5", sq_ids=DOMAIN5_STAGE.sq_ids):
+        result = run_json_sq_classifier(
+            state,
+            domain="d5",
+            stage="sq",
+            sq_ids=DOMAIN5_STAGE.sq_ids,
+            node_name="domain5_sq_json",
+            artifact_key="d5_sq_classifier_artifact",
+            branching={
+                "stage": "sq",
+                "outcome_type": state.get("outcome_type", ""),
+                "source_policy": "prespecification evidence before reported-result evidence",
+            },
+        )
+    else:
+        result = run_domain_sq_stage(state, DOMAIN5_STAGE)
     result["errors"] = errors
     result["human_review_priority"] = human_review_priority
     return result

@@ -3,6 +3,7 @@ from rob2_pipeline.nodes.common import (
     add_domain_judgment_with_pivotality_tests,
 )
 from rob2_pipeline.nodes.domain_context import build_domain3_context
+from rob2_pipeline.nodes.domain_classifier import has_ready_packets, run_json_sq_classifier
 from rob2_pipeline.nodes.domain_helpers import DomainSqStage, run_domain_sq_stage
 from rob2_pipeline.nodes.sq_control import apply_domain3_control
 from rob2_pipeline.prompts import PROMPT_DOMAIN3
@@ -34,6 +35,17 @@ DOMAIN3_STAGE = DomainSqStage(
 
 
 def domain3_sq_node(state: RoB2State) -> RoB2State:
+    if has_ready_packets(state, domain="d3", sq_ids=DOMAIN3_STAGE.sq_ids):
+        return run_json_sq_classifier(
+            state,
+            domain="d3",
+            stage="sq",
+            sq_ids=DOMAIN3_STAGE.sq_ids,
+            node_name="domain3_sq_json",
+            artifact_key="d3_sq_classifier_artifact",
+            branching={"stage": "sq", "domain_focus": "missing outcome data"},
+            postprocess=apply_domain3_control,
+        )
     return run_domain_sq_stage(state, DOMAIN3_STAGE)
 
 
