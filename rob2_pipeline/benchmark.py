@@ -7,7 +7,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 from statistics import mean, median
-from typing import Any
+from typing import Any, cast
 
 from rob2_pipeline.ingestion.assessment import AssessmentIngestionResult
 from rob2_pipeline.judges.overall import judge_overall
@@ -168,6 +168,186 @@ def _required_supplement_failures(
         elif document.get("status") not in {"parsed", "partial"}:
             failures.append(f"{requested.name} ({document.get('status', 'unknown')})")
     return failures
+
+
+def _empty_gold_recall() -> dict[str, Any]:
+    return {"matched": 0, "total": 0, "rate": None}
+
+
+def _load_gold_evidence(path: Path | None) -> dict[str, Any]:
+    if path is None:
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        LOGGER.warning("Gold evidence fixture not found: %s", path)
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError("Gold evidence fixture must be a JSON object")
+    return data
+
+
+def _gold_fixture_for_trial(
+    fixtures: dict[str, Any], trial_name: str, outcome_code: str
+) -> dict[str, list[dict[str, Any]]]:
+    trial_block = None
+    for key, value in fixtures.items():
+        if _normalize_trial(key) == _normalize_trial(trial_name):
+            trial_block = value
+            break
+    if not isinstance(trial_block, dict):
+        return {}
+
+    outcome_block = None
+    for key, value in trial_block.items():
+        if _strip(key).casefold() == _strip(outcome_code).casefold():
+            outcome_block = value
+            break
+    if outcome_block is None:
+        outcome_block = trial_block.get("gold_evidence")
+    if not isinstance(outcome_block, dict):
+        return {}
+
+    normalized: dict[str, list[dict[str, Any]]] = {}
+    for sq_id, records in outcome_block.items():
+        sq_key = _sq_id_from_reference_field(sq_id) or _strip(sq_id)
+        if not sq_key:
+            continue
+        if isinstance(records, dict):
+            records = [records]
+        if not isinstance(records, list):
+            continue
+        normalized[sq_key] = [
+            record for record in records if isinstance(record, dict)
+        ]
+    return normalized
+
+
+def _source_matches_gold(source: dict[str, Any], gold: dict[str, Any]) -> bool:
+    gold_page = gold.get("page") or gold.get("page_number")
+    if gold_page is not None:
+        source_pages = source.get("page_numbers") or source.get("pages") or []
+        if not isinstance(source_pages, list):
+            source_pages = [source_pages]
+        try:
+            if int(gold_page) in {int(page) for page in source_pages}:
+                return True
+        except (TypeError, ValueError):
+            pass
+
+    snippet = _strip(gold.get("snippet") or gold.get("quote")).casefold()
+    if not snippet:
+        return False
+    source_text = _strip(
+        source.get("text") or source.get("quote") or source.get("content")
+    ).casefold()
+    return snippet in source_text if source_text else False
+
+
+def _flatten_retrieval_sources(rag_sources: object) -> list[dict[str, Any]]:
+    if isinstance(rag_sources, list):
+        return [
+            cast(dict[str, Any], source)
+            for source in rag_sources
+            if isinstance(source, dict)
+        ]
+    if not isinstance(rag_sources, dict):
+        return []
+    sources: list[dict[str, Any]] = []
+    for items in rag_sources.values():
+        if isinstance(items, list):
+            sources.extend(
+                cast(dict[str, Any], source)
+                for source in items
+                if isinstance(source, dict)
+            )
+    return sources
+
+
+def _flatten_packet_sources(evidence_packets: object) -> list[dict[str, Any]]:
+    if not isinstance(evidence_packets, dict):
+        return []
+    sources: list[dict[str, Any]] = []
+    for packet in evidence_packets.values():
+        if not isinstance(packet, dict):
+            continue
+        packet = cast(dict[str, Any], packet)
+        packet_sources = packet.get("sources") or packet.get("selected_sources") or []
+        if isinstance(packet_sources, list):
+            sources.extend(
+                cast(dict[str, Any], source)
+                for source in packet_sources
+                if isinstance(source, dict)
+            )
+    return sources
+
+
+def _score_gold_recall(
+    gold_fixture: dict[str, list[dict[str, Any]]],
+    candidate_sources: list[dict[str, Any]],
+) -> dict[str, Any]:
+    total = 0
+    matched = 0
+    by_sq: dict[str, dict[str, int | float | None]] = {}
+    for sq_id, gold_records in sorted(gold_fixture.items()):
+        sq_total = len(gold_records)
+        sq_matched = sum(
+            1
+            for gold in gold_records
+            if any(_source_matches_gold(source, gold) for source in candidate_sources)
+        )
+        total += sq_total
+        matched += sq_matched
+        by_sq[sq_id] = {
+            "matched": sq_matched,
+            "total": sq_total,
+            "rate": (sq_matched / sq_total) if sq_total else None,
+        }
+    return {
+        "matched": matched,
+        "total": total,
+        "rate": (matched / total) if total else None,
+        "by_sq": by_sq,
+    }
+
+
+def _gold_evidence_metrics(
+    gold_fixture: dict[str, list[dict[str, Any]]],
+    pipeline_output: dict[str, Any],
+) -> dict[str, Any]:
+    if not gold_fixture:
+        return {
+            "fixture_found": False,
+            "retrieval_recall": _empty_gold_recall(),
+            "packet_evidence_recall": _empty_gold_recall(),
+            "by_sq": {},
+        }
+    retrieval = _score_gold_recall(
+        gold_fixture,
+        _flatten_retrieval_sources(pipeline_output.get("rag_sources")),
+    )
+    packet = _score_gold_recall(
+        gold_fixture,
+        _flatten_packet_sources(pipeline_output.get("evidence_packets")),
+    )
+    return {
+        "fixture_found": True,
+        "retrieval_recall": {
+            key: retrieval[key] for key in ("matched", "total", "rate")
+        },
+        "packet_evidence_recall": {
+            key: packet[key] for key in ("matched", "total", "rate")
+        },
+        "by_sq": {
+            sq_id: {
+                "retrieval_recall": retrieval["by_sq"].get(sq_id, _empty_gold_recall()),
+                "packet_evidence_recall": packet["by_sq"].get(
+                    sq_id, _empty_gold_recall()
+                ),
+            }
+            for sq_id in sorted(gold_fixture)
+        },
+    }
 
 
 def _coerce_int_ms(value: object) -> int:
@@ -564,6 +744,7 @@ def _benchmark_assessment_record(result: dict[str, Any]) -> dict[str, Any]:
             "audit_caught_mismatches": result.get("audit_caught_mismatches") or {},
         },
         "packet_quality": result.get("packet_quality") or {},
+        "gold_evidence": result.get("gold_evidence") or {},
         "schema_failures": schema_failures,
         "artifacts": _assessment_artifact_paths(result),
         "diagnostics": {
@@ -1034,12 +1215,16 @@ def run_benchmark(
     supplement_dir=None,
     use_supplements: bool = False,
     supplement_policy: str = "auto",
+    gold_evidence_path=None,
     **run_kwargs,
 ) -> list[dict]:
     pdf_dir_path = Path(pdf_dir)
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
     ingestion_cache: dict[tuple, dict[str, Any]] = {}
+    gold_evidence_fixtures = _load_gold_evidence(
+        Path(gold_evidence_path) if gold_evidence_path else None
+    )
 
     normalized_refs: dict[str, dict[str, dict]] = {}
     for outcome_code, csv_path in reference_csvs.items():
@@ -1062,6 +1247,12 @@ def run_benchmark(
             "supplementary_paths": [],
             "supplements_found": 0,
             "supplement_policy": supplement_policy,
+            "gold_evidence": {
+                "fixture_found": False,
+                "retrieval_recall": _empty_gold_recall(),
+                "packet_evidence_recall": _empty_gold_recall(),
+                "by_sq": {},
+            },
             "skipped": False,
             "error": None,
             "notes": "",
@@ -1201,6 +1392,13 @@ def run_benchmark(
             trial_result["support_constraints"] = (
                 pipeline_output.get("support_constraints") or []
             )
+            gold_fixture = _gold_fixture_for_trial(
+                gold_evidence_fixtures, trial_name, code
+            )
+            trial_result["gold_evidence"] = _gold_evidence_metrics(
+                gold_fixture,
+                pipeline_output,
+            )
             initial_domain_judgments = _derive_initial_domain_judgments(pipeline_output)
             initial_overall_judgment = _normalize_judgment(
                 pipeline_output.get("initial_overall_judgment")
@@ -1324,6 +1522,38 @@ def _summarize_results_subset(results) -> dict:
         "mismatch_classification": {"categories": mismatch_categories},
         "confusion_matrices": confusion,
         "judgment_order": list(JUDGMENT_ORDER),
+    }
+
+
+def _combine_gold_recall(results: list[dict[str, Any]]) -> dict[str, Any]:
+    retrieval = {"matched": 0, "total": 0}
+    packet = {"matched": 0, "total": 0}
+    fixture_count = 0
+    for result in results:
+        metrics = result.get("gold_evidence") or {}
+        if not metrics.get("fixture_found"):
+            continue
+        fixture_count += 1
+        retrieval_metrics = metrics.get("retrieval_recall") or {}
+        packet_metrics = metrics.get("packet_evidence_recall") or {}
+        retrieval["matched"] += _coerce_int_ms(retrieval_metrics.get("matched"))
+        retrieval["total"] += _coerce_int_ms(retrieval_metrics.get("total"))
+        packet["matched"] += _coerce_int_ms(packet_metrics.get("matched"))
+        packet["total"] += _coerce_int_ms(packet_metrics.get("total"))
+    return {
+        "fixtures_evaluated": fixture_count,
+        "retrieval_recall": {
+            **retrieval,
+            "rate": (retrieval["matched"] / retrieval["total"])
+            if retrieval["total"]
+            else None,
+        },
+        "packet_evidence_recall": {
+            **packet,
+            "rate": (packet["matched"] / packet["total"])
+            if packet["total"]
+            else None,
+        },
     }
 
 
@@ -1566,6 +1796,7 @@ def summarize_benchmark(results) -> dict:
     summary["timing"] = _summarize_timing_results(results)
     summary["adjudication_metrics"] = _summarize_adjudication_results(results)
     summary["diagnostics"] = _summarize_engineering_diagnostics(results)
+    summary["gold_evidence"] = _combine_gold_recall(results)
     return summary
 
 
@@ -1658,6 +1889,28 @@ def write_benchmark_report(results, summary, output_path):
         )
         for category in MISMATCH_CATEGORIES:
             lines.append(f"| {category} | {mismatch_categories.get(category, 0)} |")
+
+    gold_evidence = summary.get("gold_evidence") or {}
+    if gold_evidence.get("fixtures_evaluated"):
+        retrieval = gold_evidence.get("retrieval_recall") or {}
+        packet = gold_evidence.get("packet_evidence_recall") or {}
+        lines.extend(
+            [
+                "",
+                "## Gold Evidence Recall",
+                "",
+                "| Metric | Recall |",
+                "| --- | ---: |",
+            ]
+        )
+        for label, metrics in (
+            ("Retrieval", retrieval),
+            ("Packet evidence", packet),
+        ):
+            total = _coerce_int_ms(metrics.get("total"))
+            matched = _coerce_int_ms(metrics.get("matched"))
+            rate = (matched / total * 100) if total else 0.0
+            lines.append(f"| {label} | {rate:.1f}% ({matched}/{total}) |")
 
     if has_meaningful_cohort and summary.get("cohorts"):
         lines.extend(

@@ -550,6 +550,125 @@ def test_run_benchmark_reuses_trial_artifacts_across_outcomes(tmp_path, monkeypa
     assert calls[1]["trial_retrieval_indexes"]
 
 
+def test_run_benchmark_scores_gold_evidence_fixtures_when_present(
+    tmp_path, monkeypatch
+):
+    pdf_dir = tmp_path / "benchmark"
+    pdf_dir.mkdir()
+    (pdf_dir / "TITAN.pdf").write_bytes(b"pdf")
+    reference_csv = tmp_path / "ref.csv"
+    reference_csv.write_text(
+        "Trial,D1,D2,D3,D4,D5,Overall Risk\nTITAN,Low,Low,Low,Low,Low,Low\n",
+        encoding="utf-8",
+    )
+    gold_evidence = tmp_path / "gold_evidence.json"
+    gold_evidence.write_text(
+        json.dumps(
+            {
+                "TITAN": {
+                    "OS": {
+                        "1.1": [
+                            {"page": 3, "snippet": "randomized centrally"},
+                            {"page": 4, "snippet": "permuted blocks"},
+                        ],
+                        "3.1": [{"page": 8, "snippet": "data were available"}],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_run_assessment(**kwargs):
+        assessment_dir = Path(kwargs["output_dir"])
+        assessment_dir.mkdir(parents=True)
+        (assessment_dir / "TITAN_rob2_data.json").write_text(
+            json.dumps(
+                {
+                    "domain_judgments": {
+                        "D1": "Low",
+                        "D2": "Low",
+                        "D3": "Low",
+                        "D4": "Low",
+                        "D5": "Low",
+                    },
+                    "overall_judgment": "Low",
+                    "rag_sources": {
+                        "D1": [
+                            {
+                                "page_numbers": [3],
+                                "text": "Trial participants were randomized centrally.",
+                            }
+                        ],
+                        "D3": [
+                            {
+                                "page_numbers": [8],
+                                "text": "Outcome data were available for most participants.",
+                            }
+                        ],
+                    },
+                    "evidence_packets": {
+                        "1.1": {
+                            "sources": [
+                                {
+                                    "page_numbers": [3],
+                                    "text": "Trial participants were randomized centrally.",
+                                }
+                            ]
+                        },
+                        "3.1": {"sources": []},
+                    },
+                    "source_documents": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr("rob2_pipeline.benchmark.run_assessment", fake_run_assessment)
+
+    results = run_benchmark(
+        pdf_dir=pdf_dir,
+        reference_csvs={"OS": reference_csv},
+        outcome_map=[
+            {"trial": "TITAN", "outcome_code": "OS"},
+            {"trial": "MISSING", "outcome_code": "OS"},
+        ],
+        output_dir=tmp_path / "out",
+        gold_evidence_path=gold_evidence,
+    )
+    summary = summarize_benchmark(results)
+    write_benchmark_report(results, summary, tmp_path / "out" / "benchmark_report.md")
+    benchmark_json = json.loads(
+        (tmp_path / "out" / "benchmark_results.json").read_text(encoding="utf-8")
+    )
+
+    assert results[0]["gold_evidence"]["fixture_found"] is True
+    assert results[0]["gold_evidence"]["retrieval_recall"] == {
+        "matched": 2,
+        "total": 3,
+        "rate": 2 / 3,
+    }
+    assert results[0]["gold_evidence"]["packet_evidence_recall"] == {
+        "matched": 1,
+        "total": 3,
+        "rate": 1 / 3,
+    }
+    assert results[1]["skipped"] is True
+    assert summary["gold_evidence"]["retrieval_recall"] == {
+        "matched": 2,
+        "total": 3,
+        "rate": 2 / 3,
+    }
+    assert benchmark_json["assessments"][0]["gold_evidence"][
+        "packet_evidence_recall"
+    ] == {"matched": 1, "total": 3, "rate": 1 / 3}
+    assert benchmark_json["aggregate"]["gold_evidence"]["fixtures_evaluated"] == 1
+    report = (tmp_path / "out" / "benchmark_report.md").read_text(encoding="utf-8")
+    assert "## Gold Evidence Recall" in report
+    assert "| Retrieval | 66.7% (2/3) |" in report
+    assert "| Packet evidence | 33.3% (1/3) |" in report
+
+
 def test_summarize_benchmark_agreement_and_confusion_dicts():
     results = [
         {

@@ -126,6 +126,11 @@ def main():
         action="store_true",
         help="Validate inputs and print planned runs only.",
     )
+    parser.add_argument(
+        "--gold-evidence",
+        default=None,
+        help="Optional JSON fixture path for expected pages/snippets by trial/outcome/SQ.",
+    )
     args = parser.parse_args()
 
     if args.no_cache:
@@ -179,6 +184,7 @@ def main():
         supplement_dir=Path(args.supplement_dir) if args.supplement_dir else None,
         use_supplements=args.use_supplements,
         supplement_policy=args.supplement_policy,
+        gold_evidence_path=Path(args.gold_evidence) if args.gold_evidence else None,
     )
     summary = summarize_benchmark(results)
     write_benchmark_report(results, summary, output_dir / "benchmark_report.md")
