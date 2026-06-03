@@ -14,6 +14,7 @@ from rob2_pipeline.trial_workspace import (
     load_parse_trial_workspace,
     load_trial_workspace_artifacts,
     read_trial_workspace_manifest,
+    write_evidence_store_trial_workspace,
     write_parse_trial_workspace,
     write_trial_workspace_manifest,
 )
@@ -271,6 +272,96 @@ def test_parse_trial_workspace_persists_loadable_artifacts_and_diagnostics(tmp_p
         "primary:parse-artifact",
         "primary:page-aware-artifacts",
         "primary:parser-diagnostics",
+    }
+
+
+def test_evidence_store_workspace_persists_jsonl_search_fields_and_hashes(tmp_path):
+    parse_path = tmp_path / "workspace" / "parse_artifacts" / "primary.json"
+    parse_path.parent.mkdir(parents=True)
+    parse_path.write_text('{"parse": "artifact"}\n', encoding="utf-8")
+    page_path = tmp_path / "workspace" / "page_artifacts" / "primary.json"
+    page_path.parent.mkdir(parents=True)
+    page_path.write_text('{"sections": [], "chunks": []}\n', encoding="utf-8")
+
+    evidence_store = {
+        "artifact_id": "evidence-store:TITAN:overall-survival",
+        "schema_version": "1.0",
+        "supported_facts": [
+            {
+                "artifact_id": "evidence-fact:d1:1.1:central-randomization",
+                "fact_type": "randomization_sequence",
+                "domain": "d1",
+                "sq_ids": ["1.1"],
+                "claim_type": "trial_method",
+                "claim": "Participants were assigned centrally.",
+                "quote": "Participants were assigned centrally.",
+                "support_level": "strong",
+                "support_status": "supported",
+                "uncertainty": False,
+                "provenance": {
+                    "document_id": "primary:TITAN",
+                    "document_name": "TITAN primary report",
+                    "document_role": "primary",
+                    "source_kind": "rag_chunk",
+                    "source_path": "inputs/benchmark/TITAN.pdf",
+                    "source_section": "Methods",
+                    "page_numbers": [4],
+                },
+                "family": "randomization_allocation",
+                "family_fields": {
+                    "method": "central randomization",
+                    "allocation_concealment": "central office",
+                    "unit_of_randomization": "participant",
+                },
+            }
+        ],
+        "failed_claims": [],
+        "gaps": [
+            {
+                "artifact_id": "evidence-gap:d3:3.1:denominator",
+                "domain": "d3",
+                "sq_ids": ["3.1"],
+                "missing_evidence": "denominator_or_percentage",
+                "reason": "No denominator was found.",
+            }
+        ],
+    }
+
+    manifest = write_evidence_store_trial_workspace(
+        trial_id="trial-001",
+        workspace_dir=tmp_path / "workspace",
+        evidence_store=evidence_store,
+        upstream_artifact_paths={
+            "primary:parse-artifact": parse_path,
+            "primary:page-aware-artifacts": page_path,
+        },
+        model_metadata={"provider": "openai", "model": "gpt-4.1"},
+    )
+
+    jsonl_path = tmp_path / "workspace" / "evidence_store" / "facts.jsonl"
+    records = [
+        json.loads(line)
+        for line in jsonl_path.read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert [record["record_kind"] for record in records] == ["fact", "gap"]
+    assert records[0]["search_text"] == (
+        "Participants were assigned centrally.\n"
+        "Participants were assigned centrally.\n"
+        "central randomization central office participant"
+    )
+    assert records[0]["embedding_text"] == records[0]["search_text"]
+    artifact = next(
+        item
+        for item in manifest.artifacts
+        if item.artifact_id == "evidence-store:TITAN:overall-survival"
+    )
+    assert artifact.schema_version == "1.0"
+    assert artifact.producer == "evidence-family-mining"
+    assert artifact.producer_version == "gpt-4.1"
+    assert artifact.upstream_artifact_hashes == {
+        "primary:page-aware-artifacts": file_sha256(page_path),
+        "primary:parse-artifact": file_sha256(parse_path),
     }
 
 

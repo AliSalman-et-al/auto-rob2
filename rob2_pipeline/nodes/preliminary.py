@@ -154,6 +154,7 @@ def preliminary_info_node(state: RoB2State) -> RoB2State:
         format_design_for_prompt,
         format_flow_for_prompt,
         format_outcomes_for_prompt,
+        registry_source_document,
     )
 
     _nct_id = state.get("registration_number", "")
@@ -161,6 +162,15 @@ def preliminary_info_node(state: RoB2State) -> RoB2State:
     if _nct_id.startswith("NCT"):
         _reg_data = fetch_registration(_nct_id, use_cache=_use_cache)
         if _reg_data:
+            registry_document = registry_source_document(_nct_id, _reg_data)
+            state["ctgov_registry_document"] = registry_document
+            source_documents = list(state.get("source_documents") or [])
+            source_documents = [
+                source
+                for source in source_documents
+                if source.get("document_id") != registry_document["document_id"]
+            ]
+            state["source_documents"] = [*source_documents, registry_document]
             _outcomes = extract_outcomes(_reg_data)
             state["ctgov_outcomes"] = format_outcomes_for_prompt(_outcomes)
             state["ctgov_design"] = format_design_for_prompt(

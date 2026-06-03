@@ -101,23 +101,42 @@ def source_to_fact(
     contract: EvidenceContract, source: PacketSource, confidence: float
 ) -> EvidenceFact:
     quote = best_sentence(source.get("text", ""), source.get("matched_terms", []))
+    support_level = support_level_for_confidence(confidence, bool(quote))
+    provenance = {
+        "document_id": source.get("document_id", "primary"),
+        "document_name": source.get("document_name", "Primary paper"),
+        "document_role": source.get("document_role", "primary"),
+        "source_kind": source.get("source_kind", "rag_chunk"),
+        "source_path": source.get("source_path", ""),
+        "source_section": source.get("section", ""),
+        "page_numbers": source.get("page_numbers", []),
+        "retrieval_date": source.get("retrieval_date", ""),
+        "api_response_hash": source.get("api_response_hash", ""),
+    }
     return EvidenceFact(
+        artifact_id=f"evidence-fact:{contract.domain}:{contract.sq_id}:{slug(contract.required_evidence[0] if contract.required_evidence else 'evidence')}",
         fact_type=contract.required_evidence[0]
         if contract.required_evidence
         else "evidence",
         domain=contract.domain,
         sq_ids=[contract.sq_id],
+        claim_type=claim_type_for_contract(contract),
         claim=compact(quote, 240),
         quote=quote,
         source_section=source.get("section", ""),
         page_numbers=source.get("page_numbers", []),
         confidence=confidence,
+        support_level=support_level,
         support_status="supported" if quote else "missing",
+        uncertainty=support_level in {"weak", "unsupported"},
         document_id=source.get("document_id", ""),
         document_name=source.get("document_name", ""),
         document_role=source.get("document_role", ""),
         source_kind=source.get("source_kind", ""),
         source_path=source.get("source_path", ""),
+        retrieval_date=source.get("retrieval_date", ""),
+        api_response_hash=source.get("api_response_hash", ""),
+        provenance=provenance,
     )
 
 
@@ -134,3 +153,28 @@ def compact(text: str, max_chars: int) -> str:
     if len(compact) <= max_chars:
         return compact
     return compact[: max_chars - 3].rstrip() + "..."
+
+
+def support_level_for_confidence(confidence: float, has_quote: bool) -> str:
+    if not has_quote:
+        return "unsupported"
+    if confidence >= 0.75:
+        return "strong"
+    if confidence >= 0.45:
+        return "moderate"
+    return "weak"
+
+
+def claim_type_for_contract(contract: EvidenceContract) -> str:
+    if contract.domain in {"d1", "d2"}:
+        return "trial_method"
+    if contract.domain in {"d3", "d4"}:
+        return "outcome_measurement"
+    if contract.domain == "d5":
+        return "result_reporting"
+    return "other"
+
+
+def slug(text: str) -> str:
+    slugged = re.sub(r"[^a-z0-9]+", "-", text.casefold()).strip("-")
+    return slugged or "evidence"

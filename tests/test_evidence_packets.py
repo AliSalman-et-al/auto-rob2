@@ -1,4 +1,5 @@
 from rob2_pipeline.models import empty_paper_evidence
+from rob2_pipeline.evidence_store import EvidenceFactRecord
 from rob2_pipeline.nodes.evidence_packets import (
     build_evidence_packets,
     packet_block_for_domain,
@@ -52,6 +53,33 @@ def test_builds_sq_specific_packet_for_allocation_concealment():
     assert "conceal" not in packet["missing_evidence"]
     assert packet["sources"][0]["page_numbers"] == [3]
     assert packet["retrieval_confidence"] > 0
+
+
+def test_packet_candidate_facts_validate_against_base_evidence_fact_contract():
+    state = _state_with_chunks(
+        "d1",
+        [
+            {
+                "text": "Allocation was concealed through a central web randomization system before enrolment.",
+                "section": "Methods",
+                "page_numbers": [3],
+                "score": 0.1,
+                "document_id": "primary:TITAN",
+                "document_name": "TITAN primary report",
+                "document_role": "primary",
+                "source_kind": "rag_chunk",
+                "source_path": "inputs/benchmark/TITAN.pdf",
+            }
+        ],
+    )
+
+    result = build_evidence_packets(state)
+    fact = result["evidence_packets"]["1.2"]["candidate_facts"][0]
+
+    validated = EvidenceFactRecord.model_validate(fact)
+
+    assert validated.artifact_id.startswith("evidence-fact:d1:1.2:")
+    assert validated.provenance.document_id == "primary:TITAN"
 
 
 def test_d3_completeness_packet_flags_missing_denominator():
@@ -163,6 +191,45 @@ def test_d5_packet_includes_ctgov_source_without_page_numbers():
     assert (
         "missing_page_source" not in result["evidence_packets"]["5.1"]["negative_flags"]
     )
+
+
+def test_d5_packet_carries_registry_snapshot_provenance():
+    evidence = empty_paper_evidence("test")
+    state = {
+        "outcome": "Overall Survival",
+        "evidence": evidence,
+        "registration_number": "NCT00309985",
+        "ctgov_outcomes": "PRIMARY: Overall Survival",
+        "registered_endpoint": "Overall Survival",
+        "registered_secondary_endpoints": "",
+        "registered_analysis": "Cox proportional hazards model",
+        "ctgov_registry_document": {
+            "document_id": "registry:NCT00309985",
+            "document_name": "ClinicalTrials.gov NCT00309985",
+            "document_role": "registry",
+            "source_kind": "ctgov",
+            "path": "https://clinicaltrials.gov/study/NCT00309985",
+            "retrieval_date": "2026-06-03",
+            "api_response_hash": "a" * 64,
+        },
+        "rag_chunk_metadata": {"d1": [], "d2": [], "d3": [], "d4": [], "d5": []},
+        "retrieval_grades": {},
+    }
+
+    result = build_evidence_packets(state)
+
+    ctgov = [
+        source
+        for source in result["evidence_packets"]["5.1"]["sources"]
+        if source.get("source_kind") == "ctgov"
+    ][0]
+    assert ctgov["document_id"] == "registry:NCT00309985"
+    assert ctgov["source_path"] == "https://clinicaltrials.gov/study/NCT00309985"
+    assert ctgov["retrieval_date"] == "2026-06-03"
+    assert ctgov["api_response_hash"] == "a" * 64
+    fact = result["evidence_packets"]["5.1"]["candidate_facts"][0]
+    assert fact["provenance"]["retrieval_date"] == "2026-06-03"
+    assert fact["provenance"]["api_response_hash"] == "a" * 64
 
 
 def test_d5_packet_prefers_protocol_over_primary_result_when_terms_match():

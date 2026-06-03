@@ -14,6 +14,7 @@ from rob2_pipeline.ingestion.parse_artifacts import (
     SourceParseArtifact,
     build_page_aware_artifacts,
 )
+from rob2_pipeline.evidence_store import EvidenceStore
 from rob2_pipeline.types import SourceDocument
 
 
@@ -250,6 +251,64 @@ def write_parse_trial_workspace(
     return manifest
 
 
+def write_evidence_store_trial_workspace(
+    *,
+    trial_id: str,
+    workspace_dir: str | Path,
+    evidence_store: dict,
+    upstream_artifact_paths: dict[str, str | Path],
+    model_metadata: dict,
+) -> TrialWorkspaceManifest:
+    root = Path(workspace_dir)
+    store = EvidenceStore.model_validate(evidence_store)
+    jsonl_path = root / "evidence_store" / "facts.jsonl"
+    _write_jsonl(
+        jsonl_path,
+        _evidence_store_jsonl_records(store),
+    )
+
+    manifest_path = root / "trial-workspace-manifest.json"
+    if manifest_path.exists():
+        previous_manifest = read_trial_workspace_manifest(manifest_path)
+        sources = previous_manifest.sources
+        artifacts = [
+            artifact
+            for artifact in previous_manifest.artifacts
+            if artifact.artifact_id != store.artifact_id
+        ]
+    else:
+        sources = []
+        artifacts = []
+
+    upstream_hashes = {
+        artifact_id: file_sha256(path)
+        for artifact_id, path in sorted(upstream_artifact_paths.items())
+    }
+    model_name = str(model_metadata.get("model") or "unknown-model")
+    artifacts.append(
+        _file_artifact_identity(
+            artifact_id=store.artifact_id,
+            schema_version=store.schema_version,
+            producer="evidence-family-mining",
+            producer_version=model_name,
+            config={
+                "schema_version": store.schema_version,
+                "model_metadata": model_metadata,
+            },
+            upstream_artifact_hashes=upstream_hashes,
+            path=jsonl_path,
+        )
+    )
+
+    manifest = build_trial_workspace_manifest(
+        trial_id=trial_id,
+        sources=sources,
+        artifacts=artifacts,
+    )
+    write_trial_workspace_manifest(manifest, manifest_path)
+    return manifest
+
+
 def load_trial_workspace_artifacts(workspace_dir: str | Path) -> dict[str, dict]:
     root = Path(workspace_dir)
     return {
@@ -479,6 +538,60 @@ def _write_json(path: Path, payload: Any) -> None:
     )
 
 
+def _write_jsonl(path: Path, records: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        json.dumps(record, sort_keys=True, separators=(",", ":")) for record in records
+    ]
+    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+
+def _evidence_store_jsonl_records(store: EvidenceStore) -> list[dict]:
+    records = []
+    for fact in store.supported_facts:
+        payload = fact.model_dump(mode="json")
+        payload["record_kind"] = "fact"
+        payload["search_text"] = _fact_search_text(payload)
+        payload["embedding_text"] = payload["search_text"]
+        records.append(payload)
+    for fact in store.failed_claims:
+        payload = fact.model_dump(mode="json")
+        payload["record_kind"] = "failed_claim"
+        payload["search_text"] = _fact_search_text(payload)
+        payload["embedding_text"] = payload["search_text"]
+        records.append(payload)
+    for gap in store.gaps:
+        payload = gap.model_dump(mode="json")
+        payload["record_kind"] = "gap"
+        payload["search_text"] = _gap_search_text(payload)
+        payload["embedding_text"] = payload["search_text"]
+        records.append(payload)
+    return records
+
+
+def _fact_search_text(fact: dict) -> str:
+    fields = [
+        str(fact.get("claim", "")).strip(),
+        str(fact.get("quote", "")).strip(),
+        _family_fields_search_text(fact.get("family_fields")),
+    ]
+    return "\n".join(field for field in fields if field)
+
+
+def _family_fields_search_text(family_fields: dict | None) -> str:
+    if not family_fields:
+        return ""
+    return " ".join(str(value).strip() for value in family_fields.values() if value)
+
+
+def _gap_search_text(gap: dict) -> str:
+    fields = [
+        str(gap.get("missing_evidence", "")).strip(),
+        str(gap.get("reason", "")).strip(),
+    ]
+    return "\n".join(field for field in fields if field)
+
+
 def _load_artifact_directory(path: Path) -> dict[str, dict]:
     if not path.exists():
         return {}
@@ -516,6 +629,7 @@ __all__ = [
     "load_parse_trial_workspace",
     "load_trial_workspace_artifacts",
     "read_trial_workspace_manifest",
+    "write_evidence_store_trial_workspace",
     "write_parse_trial_workspace",
     "write_trial_workspace_manifest",
 ]

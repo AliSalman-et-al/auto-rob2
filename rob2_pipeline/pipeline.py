@@ -1,12 +1,17 @@
 import json
+import re
 from pathlib import Path
 
+from rob2_pipeline import config
 from rob2_pipeline.constants import DEFAULT_EFFECT_OF_INTEREST
 from rob2_pipeline.graph import build_rob2_graph
 from rob2_pipeline.state import RoB2State
 from rob2_pipeline.state_factory import create_initial_state
 from rob2_pipeline.trace import end_trace, start_trace
-from rob2_pipeline.trial_workspace import write_parse_trial_workspace
+from rob2_pipeline.trial_workspace import (
+    write_evidence_store_trial_workspace,
+    write_parse_trial_workspace,
+)
 
 
 JSON_OUTPUT_KEYS = (
@@ -35,6 +40,7 @@ JSON_OUTPUT_KEYS = (
     "evidence_packets",
     "packet_grades",
     "evidence_facts",
+    "evidence_store",
     "sources_consulted",
     "trial_facts",
     "sq_answers",
@@ -110,14 +116,53 @@ def run_assessment(
             encoding="utf-8",
         )
         if state.get("source_documents") and state.get("parse_artifacts"):
+            workspace_dir = output_path / f"{base}_trial_workspace"
             write_parse_trial_workspace(
                 trial_id=base,
-                workspace_dir=output_path / f"{base}_trial_workspace",
+                workspace_dir=workspace_dir,
                 source_documents=state["source_documents"],
                 parse_artifacts=state["parse_artifacts"],
             )
+            if state.get("evidence_store"):
+                write_evidence_store_trial_workspace(
+                    trial_id=base,
+                    workspace_dir=workspace_dir,
+                    evidence_store=state["evidence_store"],
+                    upstream_artifact_paths=_evidence_store_upstream_paths(
+                        workspace_dir,
+                        state["parse_artifacts"],
+                    ),
+                    model_metadata=_model_metadata_from_state(state),
+                )
         return state
     finally:
         trace = end_trace()
         if trace is not None:
             trace.write(output_dir)
+
+
+def _evidence_store_upstream_paths(
+    workspace_dir: Path,
+    parse_artifacts: list[dict],
+) -> dict[str, Path]:
+    paths = {}
+    for parse_artifact in parse_artifacts:
+        source_id = parse_artifact.get("source_identity", {}).get("document_id")
+        if not source_id:
+            continue
+        filename = f"{re.sub(r'[^A-Za-z0-9_.-]+', '_', source_id)}.json"
+        paths[f"{source_id}:parse-artifact"] = (
+            workspace_dir / "parse_artifacts" / filename
+        )
+        paths[f"{source_id}:page-aware-artifacts"] = (
+            workspace_dir / "page_artifacts" / filename
+        )
+    return paths
+
+
+def _model_metadata_from_state(state: RoB2State) -> dict:
+    for entry in reversed(state.get("llm_call_log", [])):
+        model = entry.get("model")
+        if model:
+            return {"model": model}
+    return {"model": config.LLM_MODEL}

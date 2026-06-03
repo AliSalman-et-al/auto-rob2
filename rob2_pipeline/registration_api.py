@@ -1,9 +1,13 @@
 """Fetch trial registration data from ClinicalTrials.gov API v2."""
 
+import hashlib
 import json
 import re
+from datetime import date
 from pathlib import Path
 from typing import Optional
+
+from rob2_pipeline.types import SourceDocument
 
 CTGOV_BASE = "https://clinicaltrials.gov/api/v2/studies"
 CACHE_DIR = Path(".rob2_cache/ctgov")
@@ -47,6 +51,27 @@ def fetch_registration(nct_id: str, use_cache: bool = True) -> Optional[dict]:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_file.write_text(json.dumps(data))
     return data
+
+
+def api_response_hash(registration_data: dict) -> str:
+    """Return a stable hash for the ClinicalTrials.gov response payload."""
+    payload = json.dumps(registration_data, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def registry_source_document(nct_id: str, registration_data: dict) -> SourceDocument:
+    nct_id = nct_id.upper().strip()
+    return SourceDocument(
+        document_id=f"registry:{nct_id}",
+        document_name=f"ClinicalTrials.gov {nct_id}",
+        document_role="registry",
+        source_kind="ctgov",
+        path=f"https://clinicaltrials.gov/study/{nct_id}",
+        is_primary=False,
+        status="parsed",
+        retrieval_date=date.today().isoformat(),
+        api_response_hash=api_response_hash(registration_data),
+    )
 
 
 def extract_outcomes(registration_data: dict) -> dict:

@@ -57,6 +57,8 @@ def candidate_sources(
                 document_name=str(raw.get("document_name", "")),
                 document_role=str(raw.get("document_role", "")),
                 source_path=str(raw.get("source_path", "")),
+                retrieval_date=str(raw.get("retrieval_date", "")),
+                api_response_hash=str(raw.get("api_response_hash", "")),
             )
         )
     return sources
@@ -88,6 +90,17 @@ def ctgov_sources(state: RoB2State, contract: EvidenceContract) -> list[dict]:
     )
     if not text:
         return []
+    registry_document = state.get("ctgov_registry_document") or {}
+    nct_id = str(state.get("registration_number", "")).upper().strip()
+    document_id = registry_document.get("document_id") or (
+        f"registry:{nct_id}" if nct_id.startswith("NCT") else "ctgov"
+    )
+    document_name = registry_document.get("document_name") or (
+        f"ClinicalTrials.gov {nct_id}" if nct_id.startswith("NCT") else "ClinicalTrials.gov"
+    )
+    source_path = registry_document.get("path") or (
+        f"https://clinicaltrials.gov/study/{nct_id}" if nct_id.startswith("NCT") else ""
+    )
     return [
         {
             "text": text,
@@ -95,10 +108,12 @@ def ctgov_sources(state: RoB2State, contract: EvidenceContract) -> list[dict]:
             "page_numbers": [],
             "score": 0.5,
             "source_kind": "ctgov",
-            "document_id": "ctgov",
-            "document_name": "ClinicalTrials.gov",
+            "document_id": document_id,
+            "document_name": document_name,
             "document_role": "registry",
-            "source_path": "",
+            "source_path": source_path,
+            "retrieval_date": registry_document.get("retrieval_date", ""),
+            "api_response_hash": registry_document.get("api_response_hash", ""),
         }
     ]
 
