@@ -8,7 +8,9 @@ from rob2_pipeline.types import (
     EvidencePacket,
     EvidenceValidationFlag,
     LLMCallLogEntry,
+    OutcomeNormalizationArtifact,
     OutcomeProperties,
+    PacketReadiness,
     ParseArtifact,
     PivotalityTest,
     RetrievalGrade,
@@ -48,8 +50,10 @@ class RoB2State(TypedDict, total=False):
     retrieval_grades: Annotated[dict[str, RetrievalGrade], merge_dicts]
     evidence_packets: Annotated[dict[str, EvidencePacket], merge_dicts]
     evidence_facts: Annotated[dict[str, list[EvidenceFact]], merge_dicts]
+    selected_evidence_facts: Annotated[dict, merge_dicts]
     evidence_store: Annotated[EvidenceStoreArtifact, take_latest]
     packet_grades: Annotated[dict[str, RetrievalGrade], merge_dicts]
+    packet_readiness: Annotated[dict[str, PacketReadiness], merge_dicts]
     verification_actions: Annotated[list[dict], take_latest]
 
     # === PRELIMINARY INFO ===
@@ -61,6 +65,9 @@ class RoB2State(TypedDict, total=False):
     outcome_type: Annotated[str, take_latest]
     outcome_properties: Annotated[OutcomeProperties, take_latest]
     outcome_classification_support: Annotated[dict, take_latest]
+    outcome_normalization_artifact: Annotated[
+        OutcomeNormalizationArtifact, take_latest
+    ]
     numerical_result: Annotated[str, take_latest]
     effect_of_interest: Annotated[str, take_latest]
     registration_number: Annotated[str, take_latest]

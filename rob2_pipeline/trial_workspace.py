@@ -19,6 +19,7 @@ from rob2_pipeline.types import SourceDocument
 
 
 TRIAL_WORKSPACE_MANIFEST_SCHEMA_VERSION = "trial-workspace-manifest-v1"
+OUTCOME_WORKSPACE_MANIFEST_SCHEMA_VERSION = "outcome-workspace-manifest-v1"
 
 ArtifactStatus = Literal["fresh", "reusable", "stale"]
 
@@ -77,6 +78,32 @@ class LoadedTrialWorkspace:
     stale_artifact_ids: list[str]
 
 
+@dataclass(frozen=True)
+class OutcomeArtifactIdentity:
+    artifact_id: str
+    schema_version: str
+    producer: str
+    producer_version: str
+    config_hash: str
+    upstream_trial_workspace_hashes: dict[str, str]
+    outcome_definition_hash: str
+    rob2_settings_hash: str
+    content_hash: str
+    status: ArtifactStatus = "fresh"
+
+
+@dataclass(frozen=True)
+class OutcomeWorkspaceManifest:
+    trial_id: str
+    outcome_id: str
+    trial_workspace_dir: str
+    upstream_trial_workspace_hashes: dict[str, str]
+    outcome_definition_hash: str
+    rob2_settings_hash: str
+    artifacts: list[OutcomeArtifactIdentity]
+    manifest_schema_version: str = OUTCOME_WORKSPACE_MANIFEST_SCHEMA_VERSION
+
+
 def file_sha256(path: str | Path) -> str:
     digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
@@ -93,6 +120,11 @@ def content_sha256(content: bytes | str) -> str:
 def config_sha256(config: dict) -> str:
     payload = json.dumps(config, sort_keys=True, separators=(",", ":"))
     return content_sha256(payload)
+
+
+def stable_payload_sha256(payload: Any) -> str:
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return content_sha256(raw)
 
 
 def artifact_identity(
@@ -128,6 +160,159 @@ def build_trial_workspace_manifest(
         trial_id=trial_id,
         sources=sources,
         artifacts=artifacts,
+    )
+
+
+def build_outcome_workspace_manifest(
+    *,
+    trial_id: str,
+    outcome_id: str,
+    trial_workspace_dir: str | Path,
+    upstream_trial_workspace_hashes: dict[str, str],
+    outcome_definition: dict,
+    rob2_settings: dict,
+    artifacts: list[OutcomeArtifactIdentity],
+) -> OutcomeWorkspaceManifest:
+    return OutcomeWorkspaceManifest(
+        trial_id=trial_id,
+        outcome_id=outcome_id,
+        trial_workspace_dir=str(trial_workspace_dir),
+        upstream_trial_workspace_hashes=dict(
+            sorted(upstream_trial_workspace_hashes.items())
+        ),
+        outcome_definition_hash=stable_payload_sha256(outcome_definition),
+        rob2_settings_hash=stable_payload_sha256(rob2_settings),
+        artifacts=artifacts,
+    )
+
+
+def build_outcome_artifact_identity(
+    *,
+    artifact_id: str,
+    schema_version: str,
+    producer: str,
+    producer_version: str,
+    content_hash: str,
+    upstream_trial_workspace_hashes: dict[str, str],
+    outcome_definition: dict,
+    rob2_settings: dict,
+    config: dict | None = None,
+    status: ArtifactStatus = "fresh",
+) -> OutcomeArtifactIdentity:
+    return OutcomeArtifactIdentity(
+        artifact_id=artifact_id,
+        schema_version=schema_version,
+        producer=producer,
+        producer_version=producer_version,
+        config_hash=config_sha256(config or {}),
+        upstream_trial_workspace_hashes=dict(
+            sorted(upstream_trial_workspace_hashes.items())
+        ),
+        outcome_definition_hash=stable_payload_sha256(outcome_definition),
+        rob2_settings_hash=stable_payload_sha256(rob2_settings),
+        content_hash=content_hash,
+        status=status,
+    )
+
+
+def evaluate_outcome_artifact_status(
+    manifest: OutcomeWorkspaceManifest,
+    current_identity: OutcomeArtifactIdentity,
+) -> ArtifactStatus:
+    previous = _find_outcome_artifact(manifest, current_identity.artifact_id)
+    if previous is None:
+        return "fresh"
+    if previous == current_identity or _is_same_outcome_reusable_identity(
+        previous, current_identity
+    ):
+        return "reusable"
+    return "stale"
+
+
+def outcome_workspace_dir(workspace_root: str | Path, outcome_id: str) -> Path:
+    return Path(workspace_root) / _artifact_filename(outcome_id).removesuffix(".json")
+
+
+def write_outcome_workspace_manifest(
+    *,
+    trial_id: str,
+    outcome_id: str,
+    workspace_root: str | Path,
+    trial_workspace_dir: str | Path,
+    upstream_artifact_paths: dict[str, str | Path],
+    outcome_definition: dict,
+    rob2_settings: dict,
+    artifacts: list[OutcomeArtifactIdentity] | None = None,
+) -> OutcomeWorkspaceManifest:
+    upstream_hashes = {
+        artifact_id: file_sha256(path)
+        for artifact_id, path in sorted(upstream_artifact_paths.items())
+    }
+    manifest = build_outcome_workspace_manifest(
+        trial_id=trial_id,
+        outcome_id=outcome_id,
+        trial_workspace_dir=trial_workspace_dir,
+        upstream_trial_workspace_hashes=upstream_hashes,
+        outcome_definition=outcome_definition,
+        rob2_settings=rob2_settings,
+        artifacts=artifacts or [],
+    )
+    manifest_path = (
+        outcome_workspace_dir(workspace_root, outcome_id)
+        / "outcome-workspace-manifest.json"
+    )
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(_manifest_to_dict(manifest), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def write_outcome_normalization_workspace(
+    *,
+    trial_id: str,
+    outcome_id: str,
+    workspace_root: str | Path,
+    trial_workspace_dir: str | Path,
+    upstream_artifact_paths: dict[str, str | Path],
+    outcome_definition: dict,
+    rob2_settings: dict,
+    outcome_normalization_artifact: dict,
+    model_metadata: dict,
+) -> OutcomeWorkspaceManifest:
+    root = outcome_workspace_dir(workspace_root, outcome_id)
+    artifact_path = root / "outcome-normalization.json"
+    _write_json(artifact_path, outcome_normalization_artifact)
+
+    upstream_hashes = {
+        artifact_id: file_sha256(path)
+        for artifact_id, path in sorted(upstream_artifact_paths.items())
+    }
+    model_name = str(model_metadata.get("model") or "unknown-model")
+    identity = build_outcome_artifact_identity(
+        artifact_id=outcome_normalization_artifact["artifact_id"],
+        schema_version=outcome_normalization_artifact["schema_version"],
+        producer="outcome-resolver",
+        producer_version=model_name,
+        content_hash=file_sha256(artifact_path),
+        upstream_trial_workspace_hashes=upstream_hashes,
+        outcome_definition=outcome_definition,
+        rob2_settings=rob2_settings,
+        config={
+            "schema_version": outcome_normalization_artifact["schema_version"],
+            "model_metadata": model_metadata,
+        },
+    )
+    return write_outcome_workspace_manifest(
+        trial_id=trial_id,
+        outcome_id=outcome_id,
+        workspace_root=workspace_root,
+        trial_workspace_dir=trial_workspace_dir,
+        upstream_artifact_paths=upstream_artifact_paths,
+        outcome_definition=outcome_definition,
+        rob2_settings=rob2_settings,
+        artifacts=[identity],
     )
 
 
@@ -330,7 +515,9 @@ def load_parse_trial_workspace(
     current_sources = [
         _source_identity_from_document(source) for source in source_documents
     ]
-    source_hashes = {source.document_id: source.content_hash for source in current_sources}
+    source_hashes = {
+        source.document_id: source.content_hash for source in current_sources
+    }
     artifact_statuses: dict[str, ArtifactStatus] = {}
 
     for source in current_sources:
@@ -351,7 +538,11 @@ def load_parse_trial_workspace(
 
         parse_hash = file_sha256(parse_path) if parse_path.exists() else ""
         for suffix, directory, schema_version in (
-            ("page-aware-artifacts", "page_artifacts", PAGE_AWARE_ARTIFACT_SCHEMA_VERSION),
+            (
+                "page-aware-artifacts",
+                "page_artifacts",
+                PAGE_AWARE_ARTIFACT_SCHEMA_VERSION,
+            ),
             ("parser-diagnostics", "diagnostics", "parser-diagnostics-v1"),
         ):
             artifact_id = f"{source_id}:{suffix}"
@@ -389,6 +580,16 @@ def _find_artifact(
     manifest: TrialWorkspaceManifest,
     artifact_id: str,
 ) -> ArtifactIdentity | None:
+    for artifact in manifest.artifacts:
+        if artifact.artifact_id == artifact_id:
+            return artifact
+    return None
+
+
+def _find_outcome_artifact(
+    manifest: OutcomeWorkspaceManifest,
+    artifact_id: str,
+) -> OutcomeArtifactIdentity | None:
     for artifact in manifest.artifacts:
         if artifact.artifact_id == artifact_id:
             return artifact
@@ -452,11 +653,31 @@ def _is_same_reusable_identity(
     )
 
 
-def _manifest_to_dict(manifest: TrialWorkspaceManifest) -> dict:
-    payload = asdict(manifest)
-    payload["sources"] = sorted(
-        payload["sources"], key=lambda item: item["document_id"]
+def _is_same_outcome_reusable_identity(
+    previous: OutcomeArtifactIdentity,
+    current: OutcomeArtifactIdentity,
+) -> bool:
+    return (
+        previous.schema_version == current.schema_version
+        and previous.producer == current.producer
+        and previous.producer_version == current.producer_version
+        and previous.config_hash == current.config_hash
+        and previous.upstream_trial_workspace_hashes
+        == current.upstream_trial_workspace_hashes
+        and previous.outcome_definition_hash == current.outcome_definition_hash
+        and previous.rob2_settings_hash == current.rob2_settings_hash
+        and previous.content_hash == current.content_hash
     )
+
+
+def _manifest_to_dict(
+    manifest: TrialWorkspaceManifest | OutcomeWorkspaceManifest,
+) -> dict:
+    payload = asdict(manifest)
+    if "sources" in payload:
+        payload["sources"] = sorted(
+            payload["sources"], key=lambda item: item["document_id"]
+        )
     payload["artifacts"] = sorted(
         payload["artifacts"], key=lambda item: item["artifact_id"]
     )
@@ -617,18 +838,28 @@ __all__ = [
     "ArtifactIdentity",
     "ArtifactStatus",
     "LoadedTrialWorkspace",
+    "OUTCOME_WORKSPACE_MANIFEST_SCHEMA_VERSION",
+    "OutcomeArtifactIdentity",
+    "OutcomeWorkspaceManifest",
     "SourceIdentity",
     "TRIAL_WORKSPACE_MANIFEST_SCHEMA_VERSION",
     "TrialWorkspaceManifest",
     "artifact_identity",
+    "build_outcome_artifact_identity",
+    "build_outcome_workspace_manifest",
     "build_trial_workspace_manifest",
     "config_sha256",
     "content_sha256",
+    "evaluate_outcome_artifact_status",
     "evaluate_artifact_status",
     "file_sha256",
     "load_parse_trial_workspace",
     "load_trial_workspace_artifacts",
+    "outcome_workspace_dir",
     "read_trial_workspace_manifest",
+    "stable_payload_sha256",
+    "write_outcome_workspace_manifest",
+    "write_outcome_normalization_workspace",
     "write_evidence_store_trial_workspace",
     "write_parse_trial_workspace",
     "write_trial_workspace_manifest",

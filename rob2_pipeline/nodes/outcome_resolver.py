@@ -52,8 +52,13 @@ Ignore trial-wide mentions of other endpoint families unless the text ties them 
 Return XML only:
 <outcome_resolution>
   <outcome_type>patient-reported|clinician-graded|biomarker|vital-status|clinician-composite</outcome_type>
+  <normalized_definition>concise assessed-outcome definition, including timepoint or measurement basis when available</normalized_definition>
+  <aliases>
+    <alias>abbreviation or synonym used for this assessed outcome</alias>
+  </aliases>
   <support_level>strong|moderate|weak|unsupported</support_level>
   <support_rationale>one sentence explaining outcome-bound support</support_rationale>
+  <uncertainty>true|false</uncertainty>
   <properties>
     <patient_reported>true|false</patient_reported>
     <safety_harm>true|false</safety_harm>
@@ -88,8 +93,15 @@ def _parse_resolution(raw: str) -> dict:
     if root.tag != "outcome_resolution":
         raise ValueError("Expected <outcome_resolution> root")
     outcome_type = (root.findtext("outcome_type") or "").strip()
+    normalized_definition = (root.findtext("normalized_definition") or "").strip()
     support_level = (root.findtext("support_level") or "").strip().lower()
     support_rationale = (root.findtext("support_rationale") or "").strip()
+    uncertainty_text = root.findtext("uncertainty")
+    uncertainty = (
+        _parse_bool(uncertainty_text, "uncertainty")
+        if uncertainty_text is not None
+        else True
+    )
     if outcome_type not in VALID_OUTCOME_TYPES:
         raise ValueError("Invalid outcome_type")
     if support_level not in VALID_SUPPORT_LEVELS:
@@ -127,6 +139,12 @@ def _parse_resolution(raw: str) -> dict:
         )
     return {
         "outcome_type": outcome_type,
+        "normalized_definition": normalized_definition,
+        "aliases": [
+            (alias_el.text or "").strip()
+            for alias_el in root.findall("./aliases/alias")
+            if (alias_el.text or "").strip()
+        ],
         "outcome_properties": props,
         "support": {
             "support_level": support_level,
@@ -134,6 +152,7 @@ def _parse_resolution(raw: str) -> dict:
             "quotes": quotes,
             "constraints": constraints,
         },
+        "uncertainty": uncertainty,
     }
 
 
@@ -150,6 +169,8 @@ def _unsupported(
 ) -> dict:
     return {
         "outcome_type": "clinician-composite",
+        "normalized_definition": "",
+        "aliases": [],
         "outcome_properties": dict(DEFAULT_OUTCOME_PROPERTIES),
         "outcome_classification_support": {
             "support_level": "unsupported",
@@ -162,6 +183,27 @@ def _unsupported(
                 }
             ],
         },
+        "uncertainty": True,
+    }
+
+
+def _normalization_artifact(state: RoB2State, resolution: dict) -> dict:
+    support = resolution["outcome_classification_support"]
+    return {
+        "artifact_id": f"outcome-normalization:{state.get('outcome', '')}",
+        "schema_version": "outcome-normalization-v1",
+        "outcome": state.get("outcome", ""),
+        "normalized_definition": resolution.get("normalized_definition", ""),
+        "aliases": resolution.get("aliases", []),
+        "outcome_type": resolution["outcome_type"],
+        "outcome_properties": resolution["outcome_properties"],
+        "binding_support": support,
+        "auto_accept_blocked": support.get("support_level") in {
+            "weak",
+            "unsupported",
+        },
+        "uncertainty": bool(resolution.get("uncertainty", False))
+        or support.get("support_level") in {"weak", "unsupported"},
     }
 
 
@@ -226,6 +268,7 @@ def outcome_resolver_node(state: RoB2State) -> RoB2State:
         "outcome_properties": resolution["outcome_properties"],
         "outcome_type": resolution["outcome_type"],
         "outcome_classification_support": resolution["outcome_classification_support"],
+        "outcome_normalization_artifact": _normalization_artifact(state, resolution),
         "support_constraints": support_constraints,
         "errors": errors,
         "llm_call_log": log,

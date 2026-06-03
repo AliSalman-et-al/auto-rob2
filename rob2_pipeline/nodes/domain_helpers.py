@@ -11,6 +11,13 @@ from rob2_pipeline.state import RoB2State
 from rob2_pipeline.xml_parser import parse_sq_response
 
 
+BLOCKING_PACKET_STATUSES = {
+    "needs_retrieval_repair",
+    "needs_contradiction_resolution",
+    "needs_quote_adjudication",
+}
+
+
 @dataclass(frozen=True)
 class DomainSqStage:
     node_name: str
@@ -29,6 +36,10 @@ def run_domain_sq_stage(
 ) -> RoB2State:
     if call_fn is None:
         call_fn = call_node_llm
+    blocked = _blocked_sq_answers(state, stage)
+    active_sq_ids = [sq_id for sq_id in stage.sq_ids if sq_id not in blocked]
+    if blocked and not active_sq_ids:
+        return {"sq_answers": merge_sq_answers(state, blocked), "llm_call_log": []}
     prompt = stage.build_prompt(state)
     _response, log, parsed = call_node_llm_with_sources(
         call_fn,
@@ -36,13 +47,43 @@ def run_domain_sq_stage(
         prompt,
         stage.node_name,
         stage.parse_fn,
-        list(stage.sq_ids),
+        active_sq_ids,
         chunk_sources=format_chunk_sources(state, stage.source_domain),
     )
-    sq_answers = merge_sq_answers(state, parsed or {})
+    sq_answers = merge_sq_answers(state, {**blocked, **(parsed or {})})
     if stage.postprocess is not None:
         sq_answers = stage.postprocess(state, sq_answers)
     return {"sq_answers": sq_answers, "llm_call_log": log}
+
+
+def _blocked_sq_answers(state: RoB2State, stage: DomainSqStage) -> dict[str, dict]:
+    blocked: dict[str, dict] = {}
+    readiness_by_sq = state.get("packet_readiness") or {}
+    if not readiness_by_sq:
+        readiness_by_sq = {
+            sq_id: packet.get("packet_readiness", {})
+            for sq_id, packet in (state.get("evidence_packets") or {}).items()
+        }
+    for sq_id in stage.sq_ids:
+        readiness = readiness_by_sq.get(sq_id) or {}
+        status = readiness.get("status", "")
+        if status not in BLOCKING_PACKET_STATUSES:
+            continue
+        blocked[sq_id] = {
+            "answer": "NI",
+            "quote": "",
+            "justification": (
+                "SQ classification was blocked because the evidence packet "
+                f"status is {status}."
+            ),
+            "uncertainty": True,
+            "support_level": "unsupported",
+            "support_rationale": readiness.get("blocking_reason", ""),
+            "classification_blocked": True,
+            "packet_status": status,
+            "packet_readiness": readiness,
+        }
+    return blocked
 
 
 def call_domain_sq_prompt(

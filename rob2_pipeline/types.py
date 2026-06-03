@@ -58,6 +58,19 @@ class OutcomeProperties(TypedDict):
     blinded_adjudication: bool
 
 
+class OutcomeNormalizationArtifact(TypedDict, total=False):
+    artifact_id: str
+    schema_version: str
+    outcome: str
+    normalized_definition: str
+    aliases: list[str]
+    outcome_type: str
+    outcome_properties: OutcomeProperties
+    binding_support: dict
+    auto_accept_blocked: bool
+    uncertainty: bool
+
+
 class TrialFacts(TypedDict, total=False):
     randomization: str
     allocation_concealment: str
@@ -73,6 +86,16 @@ class RetrievalGrade(TypedDict):
     coverage: float
     missing_evidence: list[str]
     retry_recommended: bool
+
+
+class PacketReadiness(TypedDict, total=False):
+    artifact_id: str
+    schema_version: str
+    sq_id: str
+    status: str
+    mechanical_completeness: dict
+    semantic_adequacy: dict
+    blocking_reason: str
 
 
 class PacketSource(TypedDict, total=False):
@@ -126,6 +149,25 @@ class EvidenceGap(TypedDict, total=False):
     reason: str
 
 
+class DecisionTableRow(TypedDict, total=False):
+    answer: str
+    rule: str
+    allowed_by_packet: bool
+    supporting_facts: list[dict]
+    evidence_gaps: list[dict]
+    insufficient_evidence_default: bool
+
+
+class DecisionTable(TypedDict, total=False):
+    artifact_id: str
+    schema_version: str
+    sq_id: str
+    allowed_answers: list[str]
+    rows: list[DecisionTableRow]
+    default_insufficient_evidence_answer: str
+    classifier_instruction: str
+
+
 class EvidenceStoreArtifact(TypedDict, total=False):
     artifact_id: str
     schema_version: str
@@ -135,16 +177,24 @@ class EvidenceStoreArtifact(TypedDict, total=False):
 
 
 class EvidencePacket(TypedDict, total=False):
+    artifact_id: str
+    schema_version: str
     sq_id: str
     domain: str
+    outcome: str
     required_evidence: list[str]
     sources: list[PacketSource]
     candidate_facts: list[EvidenceFact]
+    gaps: list[EvidenceGap]
+    failed_claims: list[EvidenceFact]
+    contradictions: list[dict]
+    decision_table: DecisionTable
     text: str
     retrieval_confidence: float
     missing_evidence: list[str]
     negative_flags: list[str]
     packet_grade: RetrievalGrade
+    packet_readiness: PacketReadiness
 
 
 class EvidenceValidationFlag(TypedDict):

@@ -62,3 +62,74 @@ def test_domain_sq_stage_runs_llm_and_postprocesses_answers():
         },
         "llm_call_log": [{"node": "domain9_sq", "cache_hit": False}],
     }
+
+
+def test_domain_sq_stage_blocks_classifier_when_packet_needs_repair():
+    calls = []
+
+    def fake_call_fn(
+        state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources=None
+    ):
+        calls.append(node_name)
+        return "", [], {"3.1": {"answer": "Y"}}
+
+    state = {
+        "outcome": "Overall Survival",
+        "sq_answers": {},
+        "rag_chunk_metadata": {"d3": []},
+        "packet_readiness": {
+            "3.1": {
+                "status": "needs_retrieval_repair",
+                "blocking_reason": "Missing denominator evidence.",
+            }
+        },
+    }
+    stage = DomainSqStage(
+        node_name="domain3_sq",
+        sq_ids=("3.1",),
+        source_domain="d3",
+        build_prompt=lambda _state: "classify SQ 3.1",
+    )
+
+    result = run_domain_sq_stage(state, stage, call_fn=fake_call_fn)
+
+    assert calls == []
+    assert result["llm_call_log"] == []
+    assert result["sq_answers"]["3.1"]["answer"] == "NI"
+    assert result["sq_answers"]["3.1"]["classification_blocked"] is True
+    assert result["sq_answers"]["3.1"]["packet_status"] == "needs_retrieval_repair"
+
+
+def test_domain_sq_stage_still_classifies_unblocked_sqs_in_mixed_stage():
+    calls = []
+
+    def fake_call_fn(
+        state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources=None
+    ):
+        calls.append(parse_sq_ids)
+        return "", [], {"4.4": {"answer": "PY"}}
+
+    state = {
+        "outcome": "Progression-Free Survival",
+        "sq_answers": {},
+        "rag_chunk_metadata": {"d4": []},
+        "packet_readiness": {
+            "4.1": {
+                "status": "needs_quote_adjudication",
+                "blocking_reason": "Missing page provenance.",
+            },
+            "4.4": {"status": "ready"},
+        },
+    }
+    stage = DomainSqStage(
+        node_name="domain4_sq",
+        sq_ids=("4.1", "4.4"),
+        source_domain="d4",
+        build_prompt=lambda _state: "classify domain 4",
+    )
+
+    result = run_domain_sq_stage(state, stage, call_fn=fake_call_fn)
+
+    assert calls == [["4.4"]]
+    assert result["sq_answers"]["4.1"]["classification_blocked"] is True
+    assert result["sq_answers"]["4.4"]["answer"] == "PY"

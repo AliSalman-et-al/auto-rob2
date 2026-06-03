@@ -1,9 +1,11 @@
 from rob2_pipeline.models import empty_paper_evidence
 from rob2_pipeline.evidence_store import EvidenceFactRecord
+from rob2_pipeline.evidence_store import EvidencePacketRecord
 from rob2_pipeline.nodes.evidence_packets import (
     build_evidence_packets,
     packet_block_for_domain,
 )
+from rob2_pipeline.nodes.evidence_packet_grading import packet_readiness
 
 
 def test_evidence_packets_module_keeps_stable_public_api():
@@ -55,6 +57,223 @@ def test_builds_sq_specific_packet_for_allocation_concealment():
     assert packet["retrieval_confidence"] > 0
 
 
+def test_packet_readiness_separates_mechanical_completeness_from_semantic_adequacy():
+    state = _state_with_chunks(
+        "d3",
+        [
+            {
+                "text": "The analysis used available participants and reported missing outcome data were uncommon.",
+                "section": "Results",
+                "page_numbers": [8],
+                "score": 0.2,
+            }
+        ],
+    )
+
+    result = build_evidence_packets(state)
+
+    packet = result["evidence_packets"]["3.1"]
+    readiness = packet["packet_readiness"]
+    assert readiness["mechanical_completeness"]["status"] == "incomplete"
+    assert "denominator_or_percentage" in readiness["mechanical_completeness"]["missing_evidence"]
+    assert readiness["semantic_adequacy"]["status"] in {"adequate", "limited"}
+    assert readiness["status"] == "needs_retrieval_repair"
+
+
+def test_packet_readiness_can_emit_all_review_statuses():
+    ready = packet_readiness(
+        sq_id="1.1",
+        missing=[],
+        flags=[],
+        contradictions=[],
+        facts=[{"support_level": "moderate"}],
+        confidence=0.6,
+    )
+    contradiction = packet_readiness(
+        sq_id="1.2",
+        missing=[],
+        flags=[],
+        contradictions=[{"label": "allocation_concealment"}],
+        facts=[{"support_level": "strong"}],
+        confidence=0.9,
+    )
+    quote = packet_readiness(
+        sq_id="1.1",
+        missing=[],
+        flags=["missing_page_source"],
+        contradictions=[],
+        facts=[{"support_level": "strong"}],
+        confidence=0.9,
+    )
+    audit_limited = packet_readiness(
+        sq_id="4.4",
+        missing=[],
+        flags=[],
+        contradictions=[],
+        facts=[{"support_level": "weak"}],
+        confidence=0.3,
+    )
+
+    assert ready["status"] == "ready"
+    assert contradiction["status"] == "needs_contradiction_resolution"
+    assert quote["status"] == "needs_quote_adjudication"
+    assert audit_limited["status"] == "audit_limited"
+
+
+def test_d1_packet_schema_validates_required_artifact_fields():
+    state = _state_with_chunks(
+        "d1",
+        [
+            {
+                "text": "Participants were randomized by a computer-generated sequence.",
+                "section": "Methods",
+                "page_numbers": [2],
+                "score": 0.1,
+                "document_id": "primary:TITAN",
+                "document_name": "TITAN primary report",
+                "document_role": "primary",
+                "source_kind": "rag_chunk",
+                "source_path": "inputs/benchmark/TITAN.pdf",
+            }
+        ],
+    )
+
+    result = build_evidence_packets(state)
+
+    packet = EvidencePacketRecord.model_validate(result["evidence_packets"]["1.1"])
+    assert packet.artifact_id == "evidence-packet:d1:1.1"
+    assert packet.schema_version == "1.0"
+    assert packet.outcome == "Progression-Free Survival"
+
+
+def test_packet_includes_decision_table_with_default_insufficient_evidence_row():
+    state = _state_with_chunks(
+        "d1",
+        [
+            {
+                "text": "Participants were randomized by a computer-generated sequence.",
+                "section": "Methods",
+                "page_numbers": [2],
+                "score": 0.1,
+                "document_id": "primary:TITAN",
+                "document_name": "TITAN primary report",
+                "document_role": "primary",
+                "source_kind": "rag_chunk",
+                "source_path": "inputs/benchmark/TITAN.pdf",
+            }
+        ],
+    )
+
+    result = build_evidence_packets(state)
+
+    packet = result["evidence_packets"]["1.1"]
+    table = packet["decision_table"]
+    assert table["sq_id"] == "1.1"
+    assert table["default_insufficient_evidence_answer"] == "NI"
+    assert "selected packet evidence" in table["classifier_instruction"]
+    assert {row["answer"] for row in table["rows"]} >= {"Y", "PY", "NI"}
+    y_row = next(row for row in table["rows"] if row["answer"] == "Y")
+    assert y_row["supporting_facts"]
+    assert y_row["evidence_gaps"] == []
+    ni_row = next(row for row in table["rows"] if row["answer"] == "NI")
+    assert ni_row["insufficient_evidence_default"] is True
+
+
+def test_packet_block_renders_decision_table_classifier_constraint():
+    state = _state_with_chunks(
+        "d3",
+        [
+            {
+                "text": "The analysis used available participants and reported missing outcome data were uncommon.",
+                "section": "Results",
+                "page_numbers": [8],
+                "score": 0.2,
+            }
+        ],
+    )
+
+    result = build_evidence_packets(state)
+
+    block = packet_block_for_domain(result["evidence_packets"], "d3")
+
+    assert "Mini decision table:" in block
+    assert "- Y:" in block
+    assert "- NI: Default when selected packet evidence is insufficient" in block
+    assert "Choose only from selected packet evidence" in block
+
+
+def test_unsupported_d1_claims_appear_as_gaps_and_failed_claims():
+    state = _state_with_chunks(
+        "d1",
+        [
+            {
+                "text": "The study describes eligibility criteria and clinic visits.",
+                "section": "Methods",
+                "page_numbers": [2],
+                "score": 0.1,
+                "document_id": "primary:TITAN",
+                "document_name": "TITAN primary report",
+                "document_role": "primary",
+                "source_kind": "rag_chunk",
+                "source_path": "inputs/benchmark/TITAN.pdf",
+            }
+        ],
+    )
+
+    result = build_evidence_packets(state)
+
+    packet = result["evidence_packets"]["1.2"]
+    assert {gap["missing_evidence"] for gap in packet["gaps"]} == {
+        "allocation_concealment",
+        "enrolment_timing",
+    }
+    assert {claim["fact_type"] for claim in packet["failed_claims"]} == {
+        "allocation_concealment",
+        "enrolment_timing",
+    }
+    assert all(claim["support_status"] == "failed" for claim in packet["failed_claims"])
+
+
+def test_d1_contradictions_remain_visible_when_dominant_source_is_selected():
+    state = _state_with_chunks(
+        "d1",
+        [
+            {
+                "text": "Allocation was concealed through a central web randomization system before enrolment.",
+                "section": "Methods",
+                "page_numbers": [3],
+                "score": 0.1,
+                "document_id": "primary:TITAN",
+                "document_name": "TITAN primary report",
+                "document_role": "primary",
+                "source_kind": "rag_chunk",
+                "source_path": "inputs/benchmark/TITAN.pdf",
+            },
+            {
+                "text": "Allocation was not concealed before participants were assigned.",
+                "section": "Protocol",
+                "page_numbers": [12],
+                "score": 0.2,
+                "document_id": "supplement:protocol",
+                "document_name": "TITAN protocol",
+                "document_role": "protocol",
+                "source_kind": "rag_chunk",
+                "source_path": "inputs/benchmark/supplement/TITAN/protocol.pdf",
+            },
+        ],
+    )
+
+    result = build_evidence_packets(state)
+
+    packet = result["evidence_packets"]["1.2"]
+    assert packet["sources"][0]["document_role"] == "primary"
+    assert packet["contradictions"]
+    contradiction = packet["contradictions"][0]
+    assert contradiction["label"] == "allocation_concealment"
+    assert contradiction["dominant_source"]["document_role"] == "primary"
+    assert contradiction["conflicting_source"]["document_role"] == "protocol"
+
+
 def test_packet_candidate_facts_validate_against_base_evidence_fact_contract():
     state = _state_with_chunks(
         "d1",
@@ -100,6 +319,25 @@ def test_d3_completeness_packet_flags_missing_denominator():
     packet = result["evidence_packets"]["3.1"]
     assert "denominator_or_percentage" in packet["missing_evidence"]
     assert packet["packet_grade"]["retry_recommended"] is True
+
+
+def test_d3_completeness_packet_accepts_count_with_all_outcome_data():
+    state = _state_with_chunks(
+        "d3",
+        [
+            {
+                "text": "100 participants were randomized and all had outcome data.",
+                "section": "Results",
+                "page_numbers": [8],
+                "score": 0.2,
+            }
+        ],
+    )
+
+    result = build_evidence_packets(state)
+
+    packet = result["evidence_packets"]["3.1"]
+    assert "denominator_or_percentage" not in packet["missing_evidence"]
 
 
 def test_packet_builder_flags_wrong_outcome_context():
