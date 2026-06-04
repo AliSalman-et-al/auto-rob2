@@ -1,9 +1,10 @@
 from __future__ import annotations
+from typing import Literal
 
-import xml.etree.ElementTree as ET
+from pydantic import BaseModel, Field
 
+from rob2_pipeline.llm_contracts import call_json_contract_llm
 from rob2_pipeline.models import EVIDENCE_SECTION_FIELDS, format_evidence
-from rob2_pipeline.nodes.common import call_node_llm
 from rob2_pipeline.state import RoB2State
 from rob2_pipeline.state_factory import DEFAULT_OUTCOME_PROPERTIES
 
@@ -18,6 +19,44 @@ VALID_OUTCOME_TYPES = {
 VALID_SUPPORT_LEVELS = {"strong", "moderate", "weak", "unsupported"}
 PROPERTY_FIELDS = tuple(DEFAULT_OUTCOME_PROPERTIES)
 LLM_PROPERTY_FIELDS = PROPERTY_FIELDS + ("death_only_objective_event",)
+
+
+class OutcomeQuoteArtifact(BaseModel):
+    quote: str = Field(min_length=1)
+    source: str = ""
+
+
+class OutcomeConstraintArtifact(BaseModel):
+    constraint_type: Literal[
+        "missing_required_evidence",
+        "wrong_outcome_context",
+        "semantic_support_conflict",
+        "quote_untraceable",
+    ]
+    reason: str = Field(min_length=1)
+
+
+class OutcomeSupportArtifact(BaseModel):
+    support_level: Literal["strong", "moderate", "weak", "unsupported"]
+    support_rationale: str = Field(min_length=1)
+    quotes: list[OutcomeQuoteArtifact] = Field(default_factory=list)
+    constraints: list[OutcomeConstraintArtifact] = Field(default_factory=list)
+
+
+class OutcomeNormalizationArtifact(BaseModel):
+    schema_version: Literal["outcome-normalization-v1"]
+    outcome_type: Literal[
+        "patient-reported",
+        "clinician-graded",
+        "biomarker",
+        "vital-status",
+        "clinician-composite",
+    ]
+    normalized_definition: str = ""
+    aliases: list[str] = Field(default_factory=list)
+    outcome_properties: dict[str, bool]
+    support: OutcomeSupportArtifact
+    uncertainty: bool
 
 
 def _evidence_sections(state: RoB2State) -> dict[str, str]:
@@ -49,111 +88,9 @@ Evidence sections:
 {_evidence_text(state) or "No outcome-bound evidence was available."}
 
 Ignore trial-wide mentions of other endpoint families unless the text ties them to the assessed outcome.
-Return XML only:
-<outcome_resolution>
-  <outcome_type>patient-reported|clinician-graded|biomarker|vital-status|clinician-composite</outcome_type>
-  <normalized_definition>concise assessed-outcome definition, including timepoint or measurement basis when available</normalized_definition>
-  <aliases>
-    <alias>abbreviation or synonym used for this assessed outcome</alias>
-  </aliases>
-  <support_level>strong|moderate|weak|unsupported</support_level>
-  <support_rationale>one sentence explaining outcome-bound support</support_rationale>
-  <uncertainty>true|false</uncertainty>
-  <properties>
-    <patient_reported>true|false</patient_reported>
-    <safety_harm>true|false</safety_harm>
-    <time_to_event>true|false</time_to_event>
-    <death_only_objective_event>true|false</death_only_objective_event>
-    <composite>true|false</composite>
-    <lab_or_imaging_threshold>true|false</lab_or_imaging_threshold>
-    <blinded_adjudication>true|false</blinded_adjudication>
-    <objective_event>true|false</objective_event>
-    <clinician_judged>true|false</clinician_judged>
-  </properties>
-  <quotes>
-    <quote source="evidence_section_name">exact quote from the evidence</quote>
-  </quotes>
-  <constraints>
-    <constraint type="missing_required_evidence|wrong_outcome_context|semantic_support_conflict">reason</constraint>
-  </constraints>
-</outcome_resolution>"""
-
-
-def _parse_bool(value: str | None, field: str) -> bool:
-    normalized = (value or "").strip().lower()
-    if normalized == "true":
-        return True
-    if normalized == "false":
-        return False
-    raise ValueError(f"Invalid boolean for {field}")
-
-
-def _parse_resolution(raw: str) -> dict:
-    root = ET.fromstring(raw.strip())
-    if root.tag != "outcome_resolution":
-        raise ValueError("Expected <outcome_resolution> root")
-    outcome_type = (root.findtext("outcome_type") or "").strip()
-    normalized_definition = (root.findtext("normalized_definition") or "").strip()
-    support_level = (root.findtext("support_level") or "").strip().lower()
-    support_rationale = (root.findtext("support_rationale") or "").strip()
-    uncertainty_text = root.findtext("uncertainty")
-    uncertainty = (
-        _parse_bool(uncertainty_text, "uncertainty")
-        if uncertainty_text is not None
-        else True
-    )
-    if outcome_type not in VALID_OUTCOME_TYPES:
-        raise ValueError("Invalid outcome_type")
-    if support_level not in VALID_SUPPORT_LEVELS:
-        raise ValueError("Invalid support_level")
-    if not support_rationale:
-        raise ValueError("Missing support_rationale")
-
-    properties_el = root.find("properties")
-    if properties_el is None:
-        raise ValueError("Missing properties")
-    llm_props = {
-        field: _parse_bool(properties_el.findtext(field), field)
-        for field in LLM_PROPERTY_FIELDS
-    }
-    props = {field: llm_props[field] for field in PROPERTY_FIELDS}
-
-    quotes = []
-    for quote_el in root.findall("./quotes/quote"):
-        quote = (quote_el.text or "").strip()
-        if quote:
-            quotes.append({"quote": quote, "source": quote_el.attrib.get("source", "")})
-    if support_level != "unsupported" and not quotes:
-        raise ValueError("Missing quotes for supported outcome classification")
-
-    constraints = []
-    for constraint_el in root.findall("./constraints/constraint"):
-        constraints.append(
-            {
-                "constraint_type": constraint_el.attrib.get(
-                    "type", "semantic_support_conflict"
-                ),
-                "reason": (constraint_el.text or "").strip()
-                or "LLM reported a support constraint.",
-            }
-        )
-    return {
-        "outcome_type": outcome_type,
-        "normalized_definition": normalized_definition,
-        "aliases": [
-            (alias_el.text or "").strip()
-            for alias_el in root.findall("./aliases/alias")
-            if (alias_el.text or "").strip()
-        ],
-        "outcome_properties": props,
-        "support": {
-            "support_level": support_level,
-            "support_rationale": support_rationale,
-            "quotes": quotes,
-            "constraints": constraints,
-        },
-        "uncertainty": uncertainty,
-    }
+Return JSON matching OutcomeNormalizationArtifact. Include outcome_type,
+normalized_definition, aliases, outcome_properties, support, uncertainty, quotes,
+constraints, and uncertainty. Use only exact quotes from the evidence sections."""
 
 
 def _quote_is_traceable(quote: str, sections: dict[str, str]) -> bool:
@@ -231,13 +168,35 @@ def _validate_resolution(resolution: dict, sections: dict[str, str]) -> dict:
 
 def outcome_resolver_node(state: RoB2State) -> RoB2State:
     sections = _evidence_sections(state)
-    response, log, _parsed = call_node_llm(
+    result = call_json_contract_llm(
         state,
         _build_prompt(state),
         "outcome_resolver",
+        schema_model=OutcomeNormalizationArtifact,
+        schema_version="outcome-normalization-v1",
+        prompt_version="outcome-normalization-prompt-v1",
+        fallback_factory=lambda reason: {
+            "schema_version": "outcome-normalization-v1",
+            "outcome_type": "clinician-composite",
+            "normalized_definition": "",
+            "aliases": [],
+            "outcome_properties": dict(DEFAULT_OUTCOME_PROPERTIES),
+            "support": {
+                "support_level": "unsupported",
+                "support_rationale": f"Invalid outcome resolver output: {reason}",
+                "quotes": [],
+                "constraints": [
+                    {
+                        "constraint_type": "missing_required_evidence",
+                        "reason": f"Invalid outcome resolver output: {reason}",
+                    }
+                ],
+            },
+            "uncertainty": True,
+        },
     )
     try:
-        resolution = _validate_resolution(_parse_resolution(response), sections)
+        resolution = _validate_resolution(result.artifact, sections)
     except Exception as exc:  # noqa: BLE001
         resolution = _unsupported(f"Invalid outcome resolver output: {exc}")
 
@@ -271,5 +230,5 @@ def outcome_resolver_node(state: RoB2State) -> RoB2State:
         "outcome_normalization_artifact": _normalization_artifact(state, resolution),
         "support_constraints": support_constraints,
         "errors": errors,
-        "llm_call_log": log,
+        "llm_call_log": result.log,
     }

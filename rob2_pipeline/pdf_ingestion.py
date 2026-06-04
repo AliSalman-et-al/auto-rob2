@@ -25,9 +25,7 @@ from rob2_pipeline.ingestion.evidence import (
     _detect_heading,
     _extract_keyword_context,
     _normalize_heading,
-    _parse_paper_evidence_response,
     _parse_sections_from_docling_document,
-    _tables_from_xml,
     cap_section,
     extract_censoring_context,
     extract_structural_paper_evidence,
@@ -94,9 +92,7 @@ __all__ = [
     "_normalize_extracted_text",
     "_normalize_heading",
     "_page_no",
-    "_parse_paper_evidence_response",
     "_parse_sections_from_docling_document",
-    "_tables_from_xml",
     "allow_remote_evidence_extraction",
     "appears_rct_candidate",
     "build_document_repr",
@@ -159,9 +155,4 @@ def _build_docling_chunks(conv_result) -> list[Document]:
 def extract_paper_evidence(
     doc_repr: DocumentRepr,
 ) -> tuple[PaperEvidence, list[LLMCallLogEntry]]:
-    original_build_provider = _evidence.build_provider
-    _evidence.build_provider = build_provider
-    try:
-        return _evidence.extract_paper_evidence(doc_repr)
-    finally:
-        _evidence.build_provider = original_build_provider
+    return _evidence.extract_paper_evidence(doc_repr)

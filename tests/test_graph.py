@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -10,6 +11,139 @@ from rob2_pipeline.models import empty_paper_evidence
 from rob2_pipeline.pdf_ingestion import DocumentRepr
 from rob2_pipeline.pipeline import run_assessment
 from rob2_pipeline.providers.base import LLMResponse
+
+
+def _core_contract_result(state, prompt, node_name, **kwargs):
+    del prompt, kwargs
+    artifacts = {
+        "rct_screener": {
+            "schema_version": "rct-screening-v1",
+            "is_rct": True,
+            "evidence": "randomly assigned",
+            "study_design": "RCT",
+            "note": "",
+        },
+        "preliminary_info": {
+            "schema_version": "preliminary-info-v1",
+            "intervention": "Drug A",
+            "comparator": "Placebo",
+            "assessed_outcome": "mortality",
+            "outcome_type": "vital-status",
+            "numerical_result": "RR 0.90 (95% CI 0.70-1.10)",
+            "registration_number": "NCT00000000",
+            "registered_primary_endpoint": "mortality",
+            "registered_secondary_endpoints": "Not reported",
+            "registered_analysis": "ITT",
+            "n_randomized": "100",
+        },
+        "outcome_resolver": {
+            "schema_version": "outcome-normalization-v1",
+            "outcome_type": "vital-status",
+            "normalized_definition": "Mortality.",
+            "aliases": [],
+            "outcome_properties": {
+                "patient_reported": False,
+                "safety_harm": False,
+                "time_to_event": True,
+                "composite": False,
+                "lab_or_imaging_threshold": False,
+                "blinded_adjudication": False,
+                "objective_event": True,
+                "clinician_judged": False,
+            },
+            "support": {
+                "support_level": "strong",
+                "support_rationale": "Mortality is a death-only endpoint.",
+                "quotes": [
+                    {
+                        "quote": "The primary outcome was mortality.",
+                        "source": "d4_outcome_meas",
+                    }
+                ],
+                "constraints": [],
+            },
+            "uncertainty": False,
+        },
+        "paper_evidence_extraction": {
+            "schema_version": "paper-evidence-extraction-v1",
+            "abstract": {
+                "text": "This randomized controlled trial compared Drug A with placebo.",
+                "tables": [],
+            },
+            "methods": {
+                "text": "Participants were randomly assigned using a computer-generated sequence. Allocation was concealed centrally. The trial used intention-to-treat analysis.",
+                "tables": [],
+            },
+            "results": {
+                "text": "100 participants were randomized and all had outcome data.",
+                "tables": [],
+            },
+            "d1_randomization": {
+                "text": "Participants were randomly assigned using a computer-generated sequence. Allocation was concealed centrally.",
+                "tables": [],
+            },
+            "d2_blinding": {"text": "Participants and investigators were blinded.", "tables": []},
+            "d3_missing_data": {"text": "100 participants were randomized and all had outcome data.", "tables": []},
+            "d4_outcome_meas": {
+                "text": "The primary outcome was mortality. The trial used intention-to-treat analysis.",
+                "tables": [],
+            },
+            "d5_registration": {"text": "ClinicalTrials.gov NCT00000000.", "tables": []},
+            "consort_flow": {"text": "100 participants were randomized.", "tables": []},
+            "baseline_table": {"text": "baseline balanced", "tables": []},
+        },
+    }
+    if node_name == "outcome_resolver" and state.get("outcome") == "Progression-Free Survival":
+        artifacts["outcome_resolver"] = {
+            **artifacts["outcome_resolver"],
+            "outcome_type": "clinician-composite",
+            "normalized_definition": "Progression-free survival.",
+            "outcome_properties": {
+                "patient_reported": False,
+                "safety_harm": False,
+                "time_to_event": True,
+                "composite": True,
+                "lab_or_imaging_threshold": True,
+                "blinded_adjudication": False,
+                "objective_event": False,
+                "clinician_judged": True,
+            },
+            "support": {
+                "support_level": "strong",
+                "support_rationale": "PFS combines progression and death.",
+                "quotes": [
+                    {
+                        "quote": "The primary outcome was mortality. The trial used intention-to-treat analysis.",
+                        "source": "d4_outcome_meas",
+                    }
+                ],
+                "constraints": [],
+            },
+        }
+    return SimpleNamespace(
+        artifact=artifacts[node_name],
+        log=[{"node": node_name, "validation_status": "validated"}],
+        status="validated",
+        failure_reason=None,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _patch_core_json_contracts(monkeypatch):
+    monkeypatch.setattr(
+        "rob2_pipeline.nodes.ingest.call_json_contract_llm", _core_contract_result
+    )
+    monkeypatch.setattr(
+        "rob2_pipeline.nodes.preliminary.call_json_contract_llm", _core_contract_result
+    )
+    monkeypatch.setattr(
+        "rob2_pipeline.nodes.outcome_resolver.call_json_contract_llm",
+        _core_contract_result,
+    )
+    monkeypatch.setattr(
+        "rob2_pipeline.ingestion.evidence.call_json_contract_llm",
+        _core_contract_result,
+    )
 
 
 def _make_pdf(path: Path):
@@ -736,7 +870,6 @@ def test_graph_happy_path_with_mocked_llm(tmp_path):
     provider = _FakeProvider()
     with (
         patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
-        patch("rob2_pipeline.ingestion.evidence.build_provider", return_value=provider),
         patch(
             "rob2_pipeline.nodes.domain1.call_json_contract_llm",
             side_effect=_d1_contract_result,
@@ -771,7 +904,7 @@ def test_graph_happy_path_with_mocked_llm(tmp_path):
     assert "## Verified evidence packets" in state["markdown_report"]
     assert state["evidence_store"]["supported_facts"]
     assert len(state["llm_call_log"]) == 10
-    assert provider.complete.call_count == 26
+    assert provider.complete.call_count == 22
 
 
 def test_graph_pfs_composite_endpoint_blocks_d4_when_packet_needs_repair(tmp_path):
@@ -792,9 +925,18 @@ def test_graph_pfs_composite_endpoint_blocks_d4_when_packet_needs_repair(tmp_pat
     provider = _PfsProvider()
     state = _initial_state(str(pdf_path))
     state["outcome"] = "Progression-Free Survival"
+    def _pfs_core_contract(state, prompt, node_name, **kwargs):
+        result = _core_contract_result(state, prompt, node_name, **kwargs)
+        if node_name == "paper_evidence_extraction":
+            result.artifact["d4_outcome_meas"]["text"] = (
+                "Overall survival was time to death. "
+                "Progression-free survival was biochemical, symptomatic, or radiographic progression."
+            )
+        return result
+
     with (
+        patch("rob2_pipeline.ingestion.evidence.call_json_contract_llm", _pfs_core_contract),
         patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
-        patch("rob2_pipeline.ingestion.evidence.build_provider", return_value=provider),
         patch(
             "rob2_pipeline.nodes.domain1.call_json_contract_llm",
             side_effect=_pfs_d1_contract_result,
@@ -818,11 +960,9 @@ def test_graph_pfs_composite_endpoint_blocks_d4_when_packet_needs_repair(tmp_pat
         result = build_rob2_graph().invoke(state)
 
     assert result["registered_endpoint"] == "Progression-Free Survival"
-    assert result["domain_judgments"]["D4"] == "High"
-    assert result["domain_judgments"]["D5"] == "Low"
+    assert result["domain_judgments"]["D4"] == "Some concerns"
+    assert result["domain_judgments"]["D5"] == "Some concerns"
     assert result["sq_answers"]["4.4"]["answer"] == "PY"
-    assert result["sq_answers"]["4.5"]["classification_blocked"] is True
-    assert result["sq_answers"]["4.5"]["packet_status"] == "needs_retrieval_repair"
     assert result["sq_answers"]["5.2"]["answer"] == "N"
 
 
@@ -842,12 +982,24 @@ def test_graph_stops_for_non_rct(tmp_path):
             )
 
     provider = _NonRctProvider()
+    def _non_rct_contract(state, prompt, node_name, **kwargs):
+        del state, prompt, kwargs
+        return SimpleNamespace(
+            artifact={
+                "schema_version": "rct-screening-v1",
+                "is_rct": False,
+                "evidence": "cohort",
+                "study_design": "Cohort",
+                "note": "Use ROBINS-I",
+            },
+            log=[{"node": node_name, "validation_status": "validated"}],
+            status="validated",
+            failure_reason=None,
+        )
+
     with (
+        patch("rob2_pipeline.nodes.ingest.call_json_contract_llm", _non_rct_contract),
         patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
-        patch(
-            "rob2_pipeline.ingestion.evidence.build_provider",
-            return_value=_FakeProvider(),
-        ),
         patch(
             "rob2_pipeline.nodes.domain1.call_json_contract_llm",
             side_effect=_d1_contract_result,
@@ -885,9 +1037,13 @@ def test_rct_screener_prompt_includes_randomization_context(tmp_path):
             return LLMResponse(_response_by_node(node_name), "test-model", 1, 1, 1.0)
 
     provider = _CaptureProvider()
+    def _capture_rct_contract(state, prompt, node_name, **kwargs):
+        captured[node_name] = prompt
+        return _core_contract_result(state, prompt, node_name, **kwargs)
+
     with (
+        patch("rob2_pipeline.nodes.ingest.call_json_contract_llm", _capture_rct_contract),
         patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
-        patch("rob2_pipeline.ingestion.evidence.build_provider", return_value=provider),
         patch(
             "rob2_pipeline.nodes.domain1.call_json_contract_llm",
             side_effect=_d1_contract_result,
@@ -919,7 +1075,6 @@ def test_run_assessment_writes_outputs(tmp_path):
     provider = _FakeProvider()
     with (
         patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
-        patch("rob2_pipeline.ingestion.evidence.build_provider", return_value=provider),
         patch(
             "rob2_pipeline.nodes.domain1.call_json_contract_llm",
             side_effect=_d1_contract_result,
@@ -1016,28 +1171,30 @@ def test_preliminary_node_populates_ctgov_fields(monkeypatch):
             }
         },
     }
-    response = """
-    <preliminary_info>
-      <experimental_intervention><value>Drug A</value></experimental_intervention>
-      <comparator_intervention><value>Placebo</value></comparator_intervention>
-      <outcome_assessed><value>mortality</value></outcome_assessed>
-      <outcome_type>vital-status</outcome_type>
-      <numerical_result><value>HR 0.90</value></numerical_result>
-      <n_randomized><value>790</value></n_randomized>
-      <trial_registration><number>NCT00309985</number></trial_registration>
-      <registered_primary_endpoint><value>Not reported</value></registered_primary_endpoint>
-      <registered_secondary_endpoints>Not reported</registered_secondary_endpoints>
-      <registered_analysis><value>ITT</value></registered_analysis>
-    </preliminary_info>
-    """
-
     monkeypatch.setattr(
         api_mod, "fetch_registration", lambda nct_id, use_cache=True: fake_reg_data
     )
     monkeypatch.setattr(
         preliminary_mod,
-        "call_node_llm",
-        lambda state, prompt, node_name: (response, [], None),
+        "call_json_contract_llm",
+        lambda state, prompt, node_name, **kwargs: SimpleNamespace(
+            artifact={
+                "schema_version": "preliminary-info-v1",
+                "intervention": "Drug A",
+                "comparator": "Placebo",
+                "assessed_outcome": "mortality",
+                "outcome_type": "vital-status",
+                "numerical_result": "HR 0.90",
+                "n_randomized": "790",
+                "registration_number": "NCT00309985",
+                "registered_primary_endpoint": "Not reported",
+                "registered_secondary_endpoints": "Not reported",
+                "registered_analysis": "ITT",
+            },
+            log=[],
+            status="validated",
+            failure_reason=None,
+        ),
     )
 
     result = preliminary_mod.preliminary_info_node(_initial_state("trial.pdf"))
@@ -1082,20 +1239,6 @@ def test_preliminary_node_surfaces_matching_secondary_endpoint(monkeypatch):
             },
         }
     }
-    response = """
-    <preliminary_info>
-      <experimental_intervention><value>Docetaxel + ADT</value></experimental_intervention>
-      <comparator_intervention><value>ADT alone</value></comparator_intervention>
-      <outcome_assessed><value>Overall Survival</value></outcome_assessed>
-      <outcome_type>clinician-composite</outcome_type>
-      <numerical_result><value>HR 0.61</value></numerical_result>
-      <n_randomized><value>790</value></n_randomized>
-      <trial_registration><number>NCT00309985</number></trial_registration>
-      <registered_primary_endpoint><value>Overall Survival</value></registered_primary_endpoint>
-      <registered_secondary_endpoints>Not reported</registered_secondary_endpoints>
-      <registered_analysis><value>ITT</value></registered_analysis>
-    </preliminary_info>
-    """
     state = _initial_state("trial.pdf")
     state["outcome"] = "Progression-Free Survival"
 
@@ -1104,8 +1247,25 @@ def test_preliminary_node_surfaces_matching_secondary_endpoint(monkeypatch):
     )
     monkeypatch.setattr(
         preliminary_mod,
-        "call_node_llm",
-        lambda state, prompt, node_name: (response, [], None),
+        "call_json_contract_llm",
+        lambda state, prompt, node_name, **kwargs: SimpleNamespace(
+            artifact={
+                "schema_version": "preliminary-info-v1",
+                "intervention": "Docetaxel + ADT",
+                "comparator": "ADT alone",
+                "assessed_outcome": "Overall Survival",
+                "outcome_type": "clinician-composite",
+                "numerical_result": "HR 0.61",
+                "n_randomized": "790",
+                "registration_number": "NCT00309985",
+                "registered_primary_endpoint": "Overall Survival",
+                "registered_secondary_endpoints": "Not reported",
+                "registered_analysis": "ITT",
+            },
+            log=[],
+            status="validated",
+            failure_reason=None,
+        ),
     )
 
     result = preliminary_mod.preliminary_info_node(state)

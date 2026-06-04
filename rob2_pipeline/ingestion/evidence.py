@@ -1,11 +1,10 @@
 import logging
 import re
-import time
 from typing import cast
 
-from lxml import etree  # type: ignore[import-untyped]
+from pydantic import BaseModel, Field
 
-from rob2_pipeline.config import build_provider
+from rob2_pipeline.llm_contracts import call_json_contract_llm
 from rob2_pipeline.ingestion.document_repr import DocumentRepr
 from rob2_pipeline.ingestion.settings import (
     CENSORING_PATTERNS,
@@ -16,11 +15,10 @@ from rob2_pipeline.ingestion.settings import (
 from rob2_pipeline.models import (
     EVIDENCE_SECTION_FIELDS,
     PaperEvidence,
+    SectionEvidence,
     empty_paper_evidence,
 )
-from rob2_pipeline.trace import append_llm_call
 from rob2_pipeline.types import LLMCallLogEntry
-from rob2_pipeline.xml_parser import sanitize_stray_lt
 
 
 PROMPT_PAPER_EXTRACTION = """
@@ -32,57 +30,51 @@ If content is not present, return empty strings - do not invent content.
 {paper}
 </paper>
 
-Return only XML in this shape:
-<evidence>
-  <abstract><text></text><tables></tables></abstract>
-  <methods><text></text><tables></tables></methods>
-  <results><text></text><tables></tables></results>
-  <d1_randomization><text>allocation sequence, concealment, baseline balance</text><tables></tables></d1_randomization>
-  <d2_blinding><text>masking, open-label status, protocol deviations</text><tables></tables></d2_blinding>
-  <d3_missing_data><text>dropout, ITT, missing outcome data</text><tables></tables></d3_missing_data>
-  <d4_outcome_meas><text>outcome definitions, measurement, analysis plan</text><tables></tables></d4_outcome_meas>
-  <d5_registration><text>registration, protocol, pre-specified endpoints</text><tables></tables></d5_registration>
-  <consort_flow><text></text><tables></tables></consort_flow>
-  <baseline_table><text></text><tables></tables></baseline_table>
-</evidence>
+Return only JSON matching PaperEvidenceExtractionArtifact. Each section has
+text and tables. Use empty strings/lists for absent content.
 """.strip()
 
 PAPER_EXTRACTION_SYSTEM_MESSAGE = (
     "You are an expert systematic reviewer extracting clinical trial evidence. "
-    "Respond only in the XML format specified in the prompt."
+    "Respond only with JSON matching the requested schema."
 )
 
 
-def _tables_from_xml(parent) -> list[str]:
-    tables_el = parent.find("tables")
-    if tables_el is None:
-        return []
-    child_tables = [
-        "".join(table.itertext()).strip() for table in tables_el.findall(".//table")
-    ]
-    child_tables = [table for table in child_tables if table]
-    if child_tables:
-        return child_tables
-    text = "".join(tables_el.itertext()).strip()
-    return [text] if text else []
+class PaperSectionArtifact(BaseModel):
+    text: str = ""
+    tables: list[str] = Field(default_factory=list)
 
 
-def _parse_paper_evidence_response(response: str) -> PaperEvidence:
-    cleaned = re.sub(r"```xml\s*|\s*```", "", response).strip()
-    cleaned = sanitize_stray_lt(cleaned)
-    parser = etree.XMLParser(recover=True)
-    root = etree.fromstring(f"<root>{cleaned}</root>".encode(), parser=parser)
-    evidence = empty_paper_evidence("docling_llm")
+class PaperEvidenceExtractionArtifact(BaseModel):
+    schema_version: str = Field(pattern=r"^paper-evidence-extraction-v1$")
+    abstract: PaperSectionArtifact
+    methods: PaperSectionArtifact
+    results: PaperSectionArtifact
+    d1_randomization: PaperSectionArtifact
+    d2_blinding: PaperSectionArtifact
+    d3_missing_data: PaperSectionArtifact
+    d4_outcome_meas: PaperSectionArtifact
+    d5_registration: PaperSectionArtifact
+    consort_flow: PaperSectionArtifact
+    baseline_table: PaperSectionArtifact
+
+
+def _paper_evidence_from_artifact(artifact: dict, extraction_method: str) -> PaperEvidence:
+    evidence = empty_paper_evidence(extraction_method)
     for field in EVIDENCE_SECTION_FIELDS:
-        field_el = root.find(f".//{field}")
-        if field_el is None:
-            continue
-        text = (field_el.findtext("text") or "").strip()
-        cast(dict[str, object], evidence)[field] = {
-            "text": text,
-            "tables": _tables_from_xml(field_el),
-            "source": "llm_extract",
-        }
+        section = artifact.get(field, {})
+        cast(dict[str, object], evidence)[field] = cast(
+            SectionEvidence,
+            {
+                "text": str(section.get("text", "")).strip(),
+                "tables": [
+                    str(table).strip()
+                    for table in section.get("tables", [])
+                    if str(table).strip()
+                ],
+                "source": "llm_extract",
+            },
+        )
     return evidence
 
 
@@ -90,41 +82,30 @@ def extract_paper_evidence(
     doc_repr: DocumentRepr,
 ) -> tuple[PaperEvidence, list[LLMCallLogEntry]]:
     prompt = PROMPT_PAPER_EXTRACTION.format(paper=doc_repr.to_prompt_repr())
-    provider = build_provider()
-    start = time.perf_counter()
-    response_obj = provider.complete(
-        system=PAPER_EXTRACTION_SYSTEM_MESSAGE, user=prompt
+    result = call_json_contract_llm(
+        {},
+        prompt,
+        "paper_evidence_extraction",
+        schema_model=PaperEvidenceExtractionArtifact,
+        schema_version="paper-evidence-extraction-v1",
+        prompt_version="paper-evidence-extraction-prompt-v1",
+        fallback_factory=lambda reason: {
+            "schema_version": "paper-evidence-extraction-v1",
+            **{
+                field: {"text": "", "tables": []}
+                for field in EVIDENCE_SECTION_FIELDS
+            },
+            "fallback_reason": reason,
+        },
     )
-    response = response_obj.content
-    evidence = _parse_paper_evidence_response(response)
-    latency_ms = int((time.perf_counter() - start) * 1000)
-    log: list[LLMCallLogEntry] = [
-        {
-            "node": "paper_evidence_extraction",
-            "prompt_length_chars": len(prompt),
-            "response_length_chars": len(response),
-            "latency_ms": latency_ms,
-            "cache_hit": False,
-            "model": response_obj.model,
-            "input_tokens": response_obj.input_tokens,
-            "output_tokens": response_obj.output_tokens,
-            "cached": response_obj.cached,
-        }
-    ]
-    append_llm_call(
-        node="paper_evidence_extraction",
-        system_prompt=PAPER_EXTRACTION_SYSTEM_MESSAGE,
-        user_prompt=prompt,
-        response=response,
-        model=response_obj.model,
-        input_tokens=response_obj.input_tokens,
-        output_tokens=response_obj.output_tokens,
-        cached=response_obj.cached,
-        latency_ms=latency_ms,
-        cache_hit=False,
-        reasoning_content=response_obj.reasoning_content,
-    )
-    return evidence, log
+    evidence = _paper_evidence_from_artifact(result.artifact, "docling_llm")
+    if result.status == "fallback":
+        evidence = extract_structural_paper_evidence(doc_repr)
+        evidence["warnings"] = [
+            *evidence.get("warnings", []),
+            f"LLM JSON evidence extraction failed validation: {result.failure_reason}",
+        ]
+    return evidence, result.log
 
 
 def paper_evidence_from_sections(

@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import rob2_pipeline.pdf_ingestion as pdf_ingestion
 from langchain_core.documents import Document
 from rob2_pipeline.models import empty_paper_evidence, format_evidence
@@ -15,7 +17,6 @@ from rob2_pipeline.pdf_ingestion import (
     extract_structural_paper_evidence,
     parse_sections,
 )
-from rob2_pipeline.providers.base import LLMResponse
 
 
 def test_pdf_ingestion_facade_reexports_core_ingestion_api():
@@ -421,32 +422,29 @@ def test_build_document_repr_groups_text_and_tables_by_heading():
     assert "[TABLE]" in doc_repr.to_prompt_repr()
 
 
-def test_extract_paper_evidence_parses_llm_xml(monkeypatch):
-    class FakeProvider:
-        def complete(self, system, user):
-            assert "<paper>" in user
-            return LLMResponse(
-                """
-                <evidence>
-                  <abstract><text>Trial abstract.</text><tables></tables></abstract>
-                  <methods><text>Randomized methods.</text><tables></tables></methods>
-                  <results><text>Result text.</text><tables>| result |</tables></results>
-                  <d1_randomization><text>Central sequence.</text><tables></tables></d1_randomization>
-                  <d2_blinding><text>Double blind.</text><tables></tables></d2_blinding>
-                  <d3_missing_data><text>Complete follow-up.</text><tables></tables></d3_missing_data>
-                  <d4_outcome_meas><text>Mortality outcome.</text><tables></tables></d4_outcome_meas>
-                  <d5_registration><text>NCT00000000.</text><tables></tables></d5_registration>
-                  <consort_flow><text>100 randomized.</text><tables></tables></consort_flow>
-                  <baseline_table><text></text><tables>| baseline | age |</tables></baseline_table>
-                </evidence>
-                """,
-                "test-model",
-                10,
-                20,
-                1.0,
-            )
+def test_extract_paper_evidence_accepts_validated_json_contract(monkeypatch):
+    def fake_contract(state, prompt, node_name, **kwargs):
+        assert "<paper>" in prompt
+        return SimpleNamespace(
+            artifact={
+                "schema_version": "paper-evidence-extraction-v1",
+                "abstract": {"text": "Trial abstract.", "tables": []},
+                "methods": {"text": "Randomized methods.", "tables": []},
+                "results": {"text": "Result text.", "tables": ["| result |"]},
+                "d1_randomization": {"text": "Central sequence.", "tables": []},
+                "d2_blinding": {"text": "Double blind.", "tables": []},
+                "d3_missing_data": {"text": "Complete follow-up.", "tables": []},
+                "d4_outcome_meas": {"text": "Mortality outcome.", "tables": []},
+                "d5_registration": {"text": "NCT00000000.", "tables": []},
+                "consort_flow": {"text": "100 randomized.", "tables": []},
+                "baseline_table": {"text": "", "tables": ["| baseline | age |"]},
+            },
+            log=[{"node": node_name, "validation_status": "validated"}],
+            status="validated",
+            failure_reason=None,
+        )
 
-    monkeypatch.setattr(pdf_ingestion, "build_provider", lambda: FakeProvider())
+    monkeypatch.setattr(pdf_ingestion._evidence, "call_json_contract_llm", fake_contract)
     doc_repr = pdf_ingestion.DocumentRepr(
         blocks=[],
         full_text="Methods\nPatients were randomized.",

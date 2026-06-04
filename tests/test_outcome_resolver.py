@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from rob2_pipeline.models import empty_paper_evidence
 from rob2_pipeline.nodes import outcome_resolver
 
@@ -19,21 +21,22 @@ def _state(outcome: str, measurement_text: str = ""):
     }
 
 
-def _mock_llm(response: str, calls: list[dict]):
-    def fake_call(state, prompt, node_name):
+def _mock_llm(response: dict, calls: list[dict]):
+    def fake_call(state, prompt, node_name, **_kwargs):
         calls.append({"state": state, "prompt": prompt, "node_name": node_name})
-        return (
-            response,
-            [
+        artifact = response
+        return SimpleNamespace(
+            artifact=artifact,
+            log=[
                 {
                     "node": node_name,
                     "prompt_length_chars": len(prompt),
-                    "response_length_chars": len(response),
+                    "response_length_chars": len(str(response)),
                     "latency_ms": 0,
                     "cache_hit": False,
                 }
             ],
-            None,
+            status="validated",
         )
 
     return fake_call
@@ -50,72 +53,44 @@ def _response(
     aliases: list[str] | None = None,
     uncertainty: bool = False,
 ):
-    def flag(name: str) -> str:
-        return str(props.get(name, False)).lower()
-
-    return f"""
-<outcome_resolution>
-  <outcome_type>{outcome_type}</outcome_type>
-  <normalized_definition>{definition or "Assessed outcome definition."}</normalized_definition>
-  <aliases>
-    {"".join(f"<alias>{alias}</alias>" for alias in (aliases or []))}
-  </aliases>
-  <support_level>{support_level}</support_level>
-  <support_rationale>{rationale}</support_rationale>
-  <uncertainty>{str(uncertainty).lower()}</uncertainty>
-  <properties>
-    <patient_reported>{flag("patient_reported")}</patient_reported>
-    <safety_harm>{flag("safety_harm")}</safety_harm>
-    <time_to_event>{flag("time_to_event")}</time_to_event>
-    <death_only_objective_event>{flag("death_only_objective_event")}</death_only_objective_event>
-    <composite>{flag("composite")}</composite>
-    <lab_or_imaging_threshold>{flag("lab_or_imaging_threshold")}</lab_or_imaging_threshold>
-    <blinded_adjudication>{flag("blinded_adjudication")}</blinded_adjudication>
-    <objective_event>{flag("objective_event")}</objective_event>
-    <clinician_judged>{flag("clinician_judged")}</clinician_judged>
-  </properties>
-  <quotes>
-    <quote source="d4_outcome_meas">{quote}</quote>
-  </quotes>
-  <constraints></constraints>
-</outcome_resolution>
-"""
+    outcome_properties = {
+        field: props.get(field, False)
+        for field in outcome_resolver.PROPERTY_FIELDS
+    }
+    return {
+        "schema_version": "outcome-normalization-v1",
+        "outcome_type": outcome_type,
+        "normalized_definition": definition or "Assessed outcome definition.",
+        "aliases": aliases or [],
+        "outcome_properties": outcome_properties,
+        "support": {
+            "support_level": support_level,
+            "support_rationale": rationale,
+            "quotes": [{"quote": quote, "source": "d4_outcome_meas"}] if quote else [],
+            "constraints": [],
+        },
+        "uncertainty": uncertainty,
+    }
 
 
 def test_resolver_uses_assessed_outcome_bound_llm_evidence(monkeypatch):
     calls = []
     monkeypatch.setattr(
         outcome_resolver,
-        "call_node_llm",
+        "call_json_contract_llm",
         _mock_llm(
-            """
-<outcome_resolution>
-  <outcome_type>vital-status</outcome_type>
-  <normalized_definition>Time from randomization to death from any cause.</normalized_definition>
-  <aliases>
-    <alias>OS</alias>
-    <alias>overall survival</alias>
-  </aliases>
-  <support_level>strong</support_level>
-  <support_rationale>The assessed outcome is OS and the measurement quote defines it as death from any cause.</support_rationale>
-  <uncertainty>false</uncertainty>
-  <properties>
-    <patient_reported>false</patient_reported>
-    <safety_harm>false</safety_harm>
-    <time_to_event>true</time_to_event>
-    <death_only_objective_event>true</death_only_objective_event>
-    <composite>false</composite>
-    <lab_or_imaging_threshold>false</lab_or_imaging_threshold>
-    <blinded_adjudication>false</blinded_adjudication>
-    <objective_event>true</objective_event>
-    <clinician_judged>false</clinician_judged>
-  </properties>
-  <quotes>
-    <quote source="d4_outcome_meas">Overall survival was defined as time from randomization to death from any cause.</quote>
-  </quotes>
-  <constraints></constraints>
-</outcome_resolution>
-""",
+            _response(
+                "vital-status",
+                "strong",
+                "The assessed outcome is OS and the measurement quote defines it as death from any cause.",
+                {
+                    "time_to_event": True,
+                    "objective_event": True,
+                },
+                "Overall survival was defined as time from randomization to death from any cause.",
+                definition="Time from randomization to death from any cause.",
+                aliases=["OS", "overall survival"],
+            ),
             calls,
         ),
     )
@@ -150,9 +125,9 @@ def test_resolver_uses_assessed_outcome_bound_llm_evidence(monkeypatch):
         "uncertainty": False,
     }
     assert "Progression-free survival" in calls[0]["prompt"]
-    assert "<normalized_definition>" in calls[0]["prompt"]
-    assert "<aliases>" in calls[0]["prompt"]
-    assert "<uncertainty>" in calls[0]["prompt"]
+    assert "normalized_definition" in calls[0]["prompt"]
+    assert "aliases" in calls[0]["prompt"]
+    assert "uncertainty" in calls[0]["prompt"]
     assert calls[0]["node_name"] == "outcome_resolver"
 
 
@@ -161,9 +136,9 @@ def test_invalid_llm_output_falls_back_to_unsupported_without_regex_semantics(
 ):
     monkeypatch.setattr(
         outcome_resolver,
-        "call_node_llm",
+        "call_json_contract_llm",
         _mock_llm(
-            "<outcome_resolution><outcome_type>vital-status</outcome_type></outcome_resolution>",
+            {"outcome_type": "vital-status"},
             [],
         ),
     )
@@ -192,30 +167,15 @@ def test_untraceable_quote_creates_constraint_and_unsupported_classification(
 ):
     monkeypatch.setattr(
         outcome_resolver,
-        "call_node_llm",
+        "call_json_contract_llm",
         _mock_llm(
-            """
-<outcome_resolution>
-  <outcome_type>patient-reported</outcome_type>
-  <support_level>strong</support_level>
-  <support_rationale>Quote says participants reported symptoms.</support_rationale>
-  <properties>
-    <patient_reported>true</patient_reported>
-    <safety_harm>false</safety_harm>
-    <time_to_event>false</time_to_event>
-    <death_only_objective_event>false</death_only_objective_event>
-    <composite>false</composite>
-    <lab_or_imaging_threshold>false</lab_or_imaging_threshold>
-    <blinded_adjudication>false</blinded_adjudication>
-    <objective_event>false</objective_event>
-    <clinician_judged>false</clinician_judged>
-  </properties>
-  <quotes>
-    <quote source="d4_outcome_meas">Participants self-reported symptom severity daily.</quote>
-  </quotes>
-  <constraints></constraints>
-</outcome_resolution>
-""",
+            _response(
+                "patient-reported",
+                "strong",
+                "Quote says participants reported symptoms.",
+                {"patient_reported": True},
+                "Participants self-reported symptom severity daily.",
+            ),
             [],
         ),
     )
@@ -234,7 +194,7 @@ def test_clinician_composite_progression_outcome(monkeypatch):
     quote = "Progression-free survival was time from randomization to radiographic progression or death."
     monkeypatch.setattr(
         outcome_resolver,
-        "call_node_llm",
+        "call_json_contract_llm",
         _mock_llm(
             _response(
                 "clinician-composite",
@@ -267,7 +227,7 @@ def test_safety_outcome_resolves_to_clinician_graded(monkeypatch):
     )
     monkeypatch.setattr(
         outcome_resolver,
-        "call_node_llm",
+        "call_json_contract_llm",
         _mock_llm(
             _response(
                 "clinician-graded",
@@ -292,7 +252,7 @@ def test_patient_reported_outcome_resolves_to_patient_reported(monkeypatch):
     quote = "Participants completed a quality-of-life questionnaire at each visit."
     monkeypatch.setattr(
         outcome_resolver,
-        "call_node_llm",
+        "call_json_contract_llm",
         _mock_llm(
             _response(
                 "patient-reported",
