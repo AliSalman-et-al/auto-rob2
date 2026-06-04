@@ -21,6 +21,11 @@ from rob2_pipeline.ingestion.evidence import (
     parse_sections,
 )
 from rob2_pipeline.ingestion.parse_artifacts import parse_sources
+from rob2_pipeline.ingestion.parse_artifacts import (
+    build_page_aware_artifacts,
+    documents_from_page_aware_artifacts,
+    full_text_from_parse_artifact,
+)
 from rob2_pipeline.ingestion.settings import (
     MIN_EXTRACTED_CHARS,
     allow_remote_evidence_extraction,
@@ -30,6 +35,7 @@ from rob2_pipeline.ingestion.source_catalog import (
     apply_source_metadata,
     primary_source_document,
     skipped_source_documents,
+    supplement_source_document,
 )
 from rob2_pipeline.ingestion.supplements import (
     ingest_supplements,
@@ -70,6 +76,16 @@ def ingest_assessment_documents(
     # Full-text extraction is strict. If it fails, the Assessment cannot proceed.
     supplementary_paths = list(supplementary_paths or [])
     primary_source = primary_source_document(Path(pdf_path))
+    parser_sources = [
+        primary_source,
+        *[
+            supplement_source_document(Path(path), index)
+            for index, path in enumerate(supplementary_paths, start=1)
+        ],
+    ]
+    parsed_result = _ingest_from_parse_artifacts(parser_sources)
+    if parsed_result is not None:
+        return parsed_result
 
     try:
         full_text, conv_result, doc_repr = _convert_primary_pdf(pdf_path)
@@ -174,6 +190,112 @@ def ingest_assessment_documents(
             parse_artifacts=parse_artifacts,
             supplement_warnings=supplement_warnings,
         )
+
+
+def _ingest_from_parse_artifacts(
+    sources: list[SourceDocument],
+) -> AssessmentIngestionResult | None:
+    artifacts = parse_sources(sources)
+    if not artifacts:
+        return None
+
+    primary_artifact = artifacts[0]
+    if not all(
+        hasattr(artifact, "pages") and hasattr(artifact, "source_identity")
+        for artifact in artifacts
+    ):
+        return None
+    primary_text = full_text_from_parse_artifact(primary_artifact)
+    if (
+        primary_artifact.source_identity.get("status") != "parsed"
+        or len(primary_text.strip()) < MIN_EXTRACTED_CHARS
+    ):
+        return None
+
+    source_documents = [artifact.source_identity for artifact in artifacts]
+    page_artifacts = [build_page_aware_artifacts(artifact) for artifact in artifacts]
+    docling_chunks = [
+        chunk
+        for artifact, source in zip(page_artifacts, source_documents, strict=True)
+        for chunk in documents_from_page_aware_artifacts(artifact, source)
+    ]
+    supplement_warnings = [
+        source.get("error", "")
+        for source in source_documents[1:]
+        if source.get("status") in {"failed", "missing", "partial"}
+        and source.get("error")
+    ]
+    sections = parse_sections(primary_text)
+    evidence = paper_evidence_from_sections(
+        sections,
+        extraction_method="parse_artifact",
+        source="parser_neutral_pages",
+        warnings=[],
+    )
+    parse_artifacts = [artifact.to_dict() for artifact in artifacts]
+
+    if not allow_remote_evidence_extraction():
+        evidence["warnings"].append(
+            "Remote evidence extraction disabled by ROB2_REMOTE_EVIDENCE_EXTRACTION."
+        )
+        return AssessmentIngestionResult(
+            full_text=primary_text,
+            evidence=evidence,
+            docling_doc=None,
+            docling_chunks=docling_chunks,
+            source_documents=source_documents,
+            parse_artifacts=parse_artifacts,
+            supplement_warnings=supplement_warnings,
+        )
+
+    if not appears_rct_candidate(primary_text):
+        evidence["warnings"].append(
+            "Remote evidence extraction skipped for apparent non-RCT document."
+        )
+        return AssessmentIngestionResult(
+            full_text=primary_text,
+            evidence=evidence,
+            docling_doc=None,
+            docling_chunks=docling_chunks,
+            source_documents=source_documents,
+            parse_artifacts=parse_artifacts,
+            supplement_warnings=supplement_warnings,
+        )
+
+    doc_repr = _ParseArtifactDocumentRepr(primary_text)
+    try:
+        evidence, log = extract_paper_evidence(doc_repr)
+        return AssessmentIngestionResult(
+            full_text=primary_text,
+            evidence=evidence,
+            docling_doc=None,
+            docling_chunks=docling_chunks,
+            source_documents=source_documents,
+            parse_artifacts=parse_artifacts,
+            supplement_warnings=supplement_warnings,
+            llm_call_log=log,
+        )
+    except Exception as error:  # noqa: BLE001
+        evidence["warnings"].append(f"LLM evidence extraction failed: {error}")
+
+    return AssessmentIngestionResult(
+        full_text=primary_text,
+        evidence=evidence,
+        docling_doc=None,
+        docling_chunks=docling_chunks,
+        source_documents=source_documents,
+        parse_artifacts=parse_artifacts,
+        supplement_warnings=supplement_warnings,
+    )
+
+
+class _ParseArtifactDocumentRepr:
+    def __init__(self, full_text: str):
+        self.full_text = full_text
+        self.blocks = []
+
+    def to_prompt_repr(self) -> str:
+        return self.full_text
 
 
 def _convert_primary_pdf(pdf_path: str) -> tuple[str, Any, Any]:

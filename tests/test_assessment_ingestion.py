@@ -1,5 +1,9 @@
 from langchain_core.documents import Document
 
+from rob2_pipeline.ingestion.parse_artifacts import (
+    ParserProvenance,
+    SourceParseArtifact,
+)
 from rob2_pipeline.ingestion.assessment import AssessmentIngestionResult
 from rob2_pipeline.models import empty_paper_evidence
 
@@ -161,6 +165,198 @@ def test_ingest_assessment_documents_returns_primary_structural_result_when_remo
     assert result.llm_call_log == []
     assert result.parse_artifacts[0]["source_identity"]["document_id"] == "primary"
     assert result.parse_artifacts[0]["pages"][0]["text"] == "primary parse text"
+
+
+def test_ingest_assessment_documents_prefers_parser_neutral_artifacts(
+    monkeypatch,
+    tmp_path,
+):
+    import rob2_pipeline.ingestion.assessment as assessment
+
+    primary = tmp_path / "trial.pdf"
+    protocol = tmp_path / "trial_protocol.pdf"
+    primary.write_bytes(b"%PDF-1.4")
+    protocol.write_bytes(b"%PDF-1.4")
+
+    def parse_sources(sources):
+        artifacts = []
+        for source in sources:
+            if source["document_id"] == "primary":
+                pages = [
+                    {
+                        "page_number": 1,
+                        "text": "Methods\nParticipants were randomly assigned.",
+                    },
+                    {
+                        "page_number": 2,
+                        "text": "Results\nThe primary outcome was reported.",
+                    },
+                ]
+            else:
+                pages = [
+                    {
+                        "page_number": 3,
+                        "text": "Protocol\nAllocation was concealed centrally.",
+                    }
+                ]
+            artifacts.append(
+                SourceParseArtifact(
+                    source_identity={**source, "status": "parsed"},
+                    pages=pages,
+                    diagnostics=[],
+                    provenance=ParserProvenance(
+                        parser_name="fake-liteparse",
+                        parser_version="1.0.0",
+                        adapter_name="fake",
+                        artifact_schema_version="parse-artifact-v1",
+                        config={},
+                    ),
+                )
+            )
+        return artifacts
+
+    monkeypatch.setattr(assessment, "parse_sources", parse_sources)
+    monkeypatch.setattr(assessment, "allow_remote_evidence_extraction", lambda: False)
+
+    def fail_if_docling_runs(*args, **kwargs):
+        raise AssertionError("Docling should not run for usable parse artifacts")
+
+    monkeypatch.setattr(assessment, "_convert_primary_pdf", fail_if_docling_runs)
+    monkeypatch.setattr(assessment, "extract_full_text", fail_if_docling_runs)
+
+    result = assessment.ingest_assessment_documents(str(primary), [str(protocol)])
+
+    assert "Participants were randomly assigned" in result.full_text
+    assert result.evidence["extraction_method"] == "parse_artifact"
+    assert [source["document_id"] for source in result.source_documents] == [
+        "primary",
+        "supplement:001",
+    ]
+    assert [source["status"] for source in result.source_documents] == [
+        "parsed",
+        "parsed",
+    ]
+    assert result.supplement_warnings == []
+    assert [chunk.metadata["document_id"] for chunk in result.docling_chunks] == [
+        "primary",
+        "primary",
+        "supplement:001",
+    ]
+    assert result.docling_chunks[0].metadata["section"] == "Methods"
+    assert result.docling_chunks[0].metadata["page_numbers"] == [1]
+    assert result.docling_chunks[2].metadata["document_role"] == "protocol"
+    assert result.parse_artifacts[0]["pages"][0]["text"].startswith("Methods")
+
+
+def test_ingest_assessment_documents_keeps_failed_supplements_best_effort(
+    monkeypatch,
+    tmp_path,
+):
+    import rob2_pipeline.ingestion.assessment as assessment
+
+    primary = tmp_path / "trial.pdf"
+    missing = tmp_path / "missing_protocol.pdf"
+    primary.write_bytes(b"%PDF-1.4")
+
+    def parse_sources(sources):
+        primary_source, supplement_source = sources
+        return [
+            SourceParseArtifact(
+                source_identity={**primary_source, "status": "parsed"},
+                pages=[
+                    {
+                        "page_number": 1,
+                        "text": "Methods\nParticipants were randomly allocated centrally.",
+                    }
+                ],
+                diagnostics=[],
+                provenance=ParserProvenance(
+                    parser_name="fake-liteparse",
+                    parser_version="1.0.0",
+                    adapter_name="fake",
+                    artifact_schema_version="parse-artifact-v1",
+                    config={},
+                ),
+            ),
+            SourceParseArtifact(
+                source_identity={
+                    **supplement_source,
+                    "status": "failed",
+                    "error": f"Supplement parse failed: {missing}: bad pdf",
+                },
+                pages=[],
+                diagnostics=[],
+                provenance=ParserProvenance(
+                    parser_name="fake-liteparse",
+                    parser_version="1.0.0",
+                    adapter_name="fake",
+                    artifact_schema_version="parse-artifact-v1",
+                    config={},
+                ),
+            ),
+        ]
+
+    monkeypatch.setattr(assessment, "parse_sources", parse_sources)
+    monkeypatch.setattr(assessment, "allow_remote_evidence_extraction", lambda: False)
+
+    result = assessment.ingest_assessment_documents(str(primary), [str(missing)])
+
+    assert result.source_documents[1]["document_id"] == "supplement:001"
+    assert result.source_documents[1]["status"] == "failed"
+    assert result.supplement_warnings == [
+        f"Supplement parse failed: {missing}: bad pdf"
+    ]
+    assert [chunk.metadata["document_id"] for chunk in result.docling_chunks] == [
+        "primary"
+    ]
+    assert result.parse_artifacts[1]["source_identity"]["status"] == "failed"
+
+
+def test_ingest_assessment_documents_extracts_remote_evidence_from_parse_artifact(
+    monkeypatch,
+    tmp_path,
+):
+    import rob2_pipeline.ingestion.assessment as assessment
+
+    primary = tmp_path / "trial.pdf"
+    primary.write_bytes(b"%PDF-1.4")
+    remote = empty_paper_evidence("parse_artifact_llm")
+
+    def parse_sources(sources):
+        source = sources[0]
+        return [
+            SourceParseArtifact(
+                source_identity={**source, "status": "parsed"},
+                pages=[
+                    {
+                        "page_number": 1,
+                        "text": "Methods\nThis randomized trial concealed allocation.",
+                    }
+                ],
+                diagnostics=[],
+                provenance=ParserProvenance(
+                    parser_name="fake-liteparse",
+                    parser_version="1.0.0",
+                    adapter_name="fake",
+                    artifact_schema_version="parse-artifact-v1",
+                    config={},
+                ),
+            )
+        ]
+
+    monkeypatch.setattr(assessment, "parse_sources", parse_sources)
+    monkeypatch.setattr(assessment, "allow_remote_evidence_extraction", lambda: True)
+    monkeypatch.setattr(assessment, "appears_rct_candidate", lambda text: True)
+    monkeypatch.setattr(
+        assessment,
+        "extract_paper_evidence",
+        lambda doc_repr: (remote, [LLM_LOG]),
+    )
+
+    result = assessment.ingest_assessment_documents(str(primary), [])
+
+    assert result.evidence is remote
+    assert result.llm_call_log == [LLM_LOG]
 
 
 def test_ingest_assessment_documents_preserves_primary_when_supplement_ingestion_escapes(

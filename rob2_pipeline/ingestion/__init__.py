@@ -3,8 +3,6 @@ from rob2_pipeline.ingestion.assessment import (
     ingest_assessment_documents,
 )
 from rob2_pipeline.ingestion.docling_extract import (
-    HuggingFaceTokenizer,
-    HybridChunker,
     _build_docling_chunker,
     _build_docling_chunks,
     _chunk_page_numbers,
@@ -60,8 +58,6 @@ __all__ = [
     "EMBED_MAX_TOKENS",
     "EMBED_MODEL_ID",
     "AssessmentIngestionResult",
-    "HuggingFaceTokenizer",
-    "HybridChunker",
     "MAX_SECTION_CHARS",
     "MIN_EXTRACTED_CHARS",
     "PAPER_EXTRACTION_SYSTEM_MESSAGE",

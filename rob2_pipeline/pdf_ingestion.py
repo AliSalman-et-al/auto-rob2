@@ -3,8 +3,6 @@ from langchain_core.documents import Document
 from rob2_pipeline.config import build_provider
 from rob2_pipeline.ingestion import evidence as _evidence
 from rob2_pipeline.ingestion.docling_extract import (
-    HuggingFaceTokenizer,
-    HybridChunker,
     _DOCLING_CONVERTERS,
     _chunk_page_numbers,
     _configure_docling_runtime,
@@ -56,6 +54,8 @@ _EMBED_MODEL_ID = EMBED_MODEL_ID
 _EMBED_MAX_TOKENS = EMBED_MAX_TOKENS
 _TOKENIZER_COUNTING_MAX_LENGTH = TOKENIZER_COUNTING_MAX_LENGTH
 _CENSORING_PATTERNS = CENSORING_PATTERNS
+HuggingFaceTokenizer = None
+HybridChunker = None
 
 __all__ = [
     "CENSORING_PATTERNS",
@@ -115,7 +115,21 @@ def extract_full_text(pdf_path: str) -> str:
     return _normalize_extracted_text(_extract_with_docling(pdf_path))
 
 
-def _build_docling_chunker() -> HybridChunker:
+def _build_docling_chunker():
+    global HuggingFaceTokenizer, HybridChunker
+    if HybridChunker is not None and HuggingFaceTokenizer is None:
+        tokenizer = None
+        return HybridChunker(tokenizer=tokenizer)
+    if HuggingFaceTokenizer is None:
+        from docling_core.transforms.chunker.tokenizer.huggingface import (
+            HuggingFaceTokenizer as _HuggingFaceTokenizer,
+        )
+
+        HuggingFaceTokenizer = _HuggingFaceTokenizer
+    if HybridChunker is None:
+        from docling.chunking import HybridChunker as _HybridChunker
+
+        HybridChunker = _HybridChunker
     tokenizer = HuggingFaceTokenizer.from_pretrained(
         EMBED_MODEL_ID,
         max_tokens=EMBED_MAX_TOKENS,

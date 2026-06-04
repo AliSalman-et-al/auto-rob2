@@ -2,8 +2,6 @@ import logging
 import os
 import re
 
-from docling.chunking import HybridChunker
-from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
 from langchain_core.documents import Document
 
 from rob2_pipeline.ingestion.settings import (
@@ -88,7 +86,12 @@ def _normalize_extracted_text(text: str) -> str:
     return text.strip()
 
 
-def _build_docling_chunker() -> HybridChunker:
+def _build_docling_chunker():
+    from docling.chunking import HybridChunker
+    from docling_core.transforms.chunker.tokenizer.huggingface import (
+        HuggingFaceTokenizer,
+    )
+
     tokenizer = HuggingFaceTokenizer.from_pretrained(
         EMBED_MODEL_ID,
         max_tokens=EMBED_MAX_TOKENS,
