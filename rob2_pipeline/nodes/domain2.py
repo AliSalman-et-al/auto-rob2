@@ -1,7 +1,6 @@
 from rob2_pipeline.judges.domain2 import judge_domain2, judge_domain2_artifact
 from rob2_pipeline.nodes.common import (
     add_domain_judgment_with_pivotality_tests,
-    call_node_llm,
 )
 from rob2_pipeline.nodes.domain_context import (
     build_domain2_analysis_context,
@@ -64,7 +63,7 @@ def domain2_sq12_node(state: RoB2State) -> RoB2State:
             },
             postprocess=apply_domain2_sq12_control,
         )
-    return run_domain_sq_stage(state, DOMAIN2_SQ12_STAGE, call_fn=call_node_llm)
+    return run_domain_sq_stage(state, DOMAIN2_SQ12_STAGE)
 
 
 d2_needs_conditional = next_domain2_stage

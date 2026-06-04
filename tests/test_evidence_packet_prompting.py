@@ -1,9 +1,8 @@
 from rob2_pipeline.models import empty_paper_evidence
-from rob2_pipeline.nodes.domain1 import domain1_sq_node
+from rob2_pipeline.nodes.domain1 import build_domain1_prompt
 
 
-def test_domain_prompt_includes_verified_evidence_packet(monkeypatch):
-    captured = {}
+def test_domain_prompt_includes_verified_evidence_packet():
     evidence = empty_paper_evidence("test")
     evidence["d1_randomization"]["text"] = "Participants were randomized centrally."
     state = {
@@ -35,37 +34,7 @@ def test_domain_prompt_includes_verified_evidence_packet(monkeypatch):
         },
     }
 
-    def fake_call(
-        call_fn, state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources
-    ):
-        captured["prompt"] = prompt
-        return (
-            "",
-            [],
-            {
-                "1.1": {
-                    "answer": "Y",
-                    "quote": "Computer-generated",
-                    "justification": "Random sequence.",
-                },
-                "1.2": {
-                    "answer": "NI",
-                    "quote": "No relevant text found",
-                    "justification": "Missing.",
-                },
-                "1.3": {
-                    "answer": "NI",
-                    "quote": "No relevant text found",
-                    "justification": "Missing.",
-                },
-            },
-        )
+    prompt = build_domain1_prompt(state)
 
-    monkeypatch.setattr(
-        "rob2_pipeline.nodes.domain_helpers.call_node_llm_with_sources", fake_call
-    )
-
-    domain1_sq_node(state)
-
-    assert "SQ 1.1 verified evidence packet" in captured["prompt"]
-    assert "Computer-generated random allocation sequence" in captured["prompt"]
+    assert "SQ 1.1 verified evidence packet" in prompt
+    assert "Computer-generated random allocation sequence" in prompt

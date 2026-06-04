@@ -1,5 +1,5 @@
 from rob2_pipeline.models import PaperEvidence, format_evidence
-from rob2_pipeline.pdf_ingestion import extract_censoring_context
+from rob2_pipeline.ingestion.evidence import extract_censoring_context
 from rob2_pipeline.rag import (
     DOMAIN_SECTION_FILTERS,
     build_filtered_index,

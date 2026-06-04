@@ -304,7 +304,6 @@ def test_call_node_llm_traces_both_responses_on_parse_retry(monkeypatch):
 
 def test_call_node_llm_returns_ni_fallback_when_repair_still_invalid(monkeypatch):
     from rob2_pipeline.nodes import common as common_module
-    from rob2_pipeline.xml_parser import parse_sq_response
 
     monkeypatch.setattr(common_module, "read_cache", lambda node, prompt: None)
     monkeypatch.setattr(
@@ -334,12 +333,15 @@ def test_call_node_llm_returns_ni_fallback_when_repair_still_invalid(monkeypatch
 
     monkeypatch.setattr(common_module, "build_provider", lambda: FakeProvider())
 
+    def parse_failure(_text, sq_ids):
+        raise ValueError(f"Missing signaling question: {sq_ids[0]}")
+
     start_trace(trial="T", outcome="AE")
     response, log, parsed = common_module.call_node_llm(
         state={},
         prompt="domain2 analysis prompt",
         node_name="domain2_analysis",
-        parse_fn=parse_sq_response,
+        parse_fn=parse_failure,
         parse_sq_ids=["2.6", "2.7"],
     )
 

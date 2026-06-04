@@ -525,7 +525,6 @@ def test_run_benchmark_reuses_trial_artifacts_across_outcomes(tmp_path, monkeypa
         return {
             "full_text": "Trial text",
             "evidence": {"warnings": []},
-            "docling_doc": object(),
             "docling_chunks": [],
             "source_documents": [],
             "supplement_warnings": [],
@@ -2237,7 +2236,7 @@ def test_required_supplement_failures_accepts_partial_with_window_warnings():
                 "path": "inputs/benchmark/supplement/TITAN/protocol.pdf",
                 "is_primary": False,
                 "status": "partial",
-                "error": "Supplement page window skipped: std::bad_alloc",
+                "error": "Supplement parser diagnostics recorded a partial parse",
             }
         ],
     )

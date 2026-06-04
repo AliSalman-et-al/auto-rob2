@@ -8,7 +8,7 @@ import pytest
 from rob2_pipeline.graph import build_rob2_graph, timed_node
 from rob2_pipeline.trace import get_current_trace, start_trace, end_trace
 from rob2_pipeline.models import empty_paper_evidence
-from rob2_pipeline.pdf_ingestion import DocumentRepr
+from rob2_pipeline.ingestion.parse_artifacts import ParserProvenance, SourceParseArtifact
 from rob2_pipeline.pipeline import run_assessment
 from rob2_pipeline.providers.base import LLMResponse
 
@@ -788,25 +788,25 @@ class _PfsProvider:
         return LLMResponse(_pfs_response_by_node(node_name), "test-model", 1, 1, 1.0)
 
 
-class _FakeConverter:
-    def convert(self, _pdf_path):
-        return type("ConversionResult", (), {"document": object()})()
-
-
 def _patch_ingest_dependencies():
-    return (
-        patch(
-            "rob2_pipeline.ingestion.assessment._get_docling_converter",
-            return_value=_FakeConverter(),
-        ),
-        patch(
-            "rob2_pipeline.ingestion.assessment.build_document_repr",
-            return_value=DocumentRepr(blocks=[], full_text=_pdf_text()),
-        ),
-        patch(
-            "rob2_pipeline.ingestion.assessment._build_docling_chunks", return_value=[]
-        ),
-    )
+    def parse_sources(sources):
+        return [
+            SourceParseArtifact(
+                source_identity={**source, "status": "parsed"},
+                pages=[{"page_number": 1, "text": _pdf_text()}],
+                diagnostics=[],
+                provenance=ParserProvenance(
+                    parser_name="fake-liteparse",
+                    parser_version="1.0.0",
+                    adapter_name="fake",
+                    artifact_schema_version="parse-artifact-v1",
+                    config={},
+                ),
+            )
+            for source in sources
+        ]
+
+    return (patch("rob2_pipeline.ingestion.assessment.parse_sources", parse_sources),)
 
 
 def test_timed_node_records_ok_span_and_returns_result():
@@ -879,13 +879,7 @@ def test_graph_happy_path_with_mocked_llm(tmp_path):
             side_effect=_domain_contract_result,
         ),
         patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
-        patch(
-            "rob2_pipeline.ingestion.assessment.extract_full_text",
-            return_value=_pdf_text(),
-        ),
         _patch_ingest_dependencies()[0],
-        _patch_ingest_dependencies()[1],
-        _patch_ingest_dependencies()[2],
     ):
         state = build_rob2_graph().invoke(_initial_state(str(pdf_path)))
 
@@ -904,7 +898,7 @@ def test_graph_happy_path_with_mocked_llm(tmp_path):
     assert "## Verified evidence packets" in state["markdown_report"]
     assert state["evidence_store"]["supported_facts"]
     assert len(state["llm_call_log"]) == 10
-    assert provider.complete.call_count == 22
+    assert provider.complete.call_count == 21
 
 
 def test_graph_pfs_composite_endpoint_blocks_d4_when_packet_needs_repair(tmp_path):
@@ -975,13 +969,7 @@ def test_graph_pfs_composite_endpoint_blocks_d4_when_packet_needs_repair(tmp_pat
             "rob2_pipeline.registration_api.fetch_registration",
             return_value=fake_reg_data,
         ),
-        patch(
-            "rob2_pipeline.ingestion.assessment.extract_full_text",
-            return_value=_pdf_text(),
-        ),
         _patch_ingest_dependencies()[0],
-        _patch_ingest_dependencies()[1],
-        _patch_ingest_dependencies()[2],
     ):
         result = build_rob2_graph().invoke(state)
 
@@ -1035,13 +1023,7 @@ def test_graph_stops_for_non_rct(tmp_path):
             side_effect=_domain_contract_result,
         ),
         patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
-        patch(
-            "rob2_pipeline.ingestion.assessment.extract_full_text",
-            return_value=_pdf_text(),
-        ),
         _patch_ingest_dependencies()[0],
-        _patch_ingest_dependencies()[1],
-        _patch_ingest_dependencies()[2],
     ):
         state = build_rob2_graph().invoke(_initial_state(str(pdf_path)))
 
@@ -1079,13 +1061,7 @@ def test_rct_screener_prompt_includes_randomization_context(tmp_path):
             side_effect=_domain_contract_result,
         ),
         patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
-        patch(
-            "rob2_pipeline.ingestion.assessment.extract_full_text",
-            return_value=_pdf_text(),
-        ),
         _patch_ingest_dependencies()[0],
-        _patch_ingest_dependencies()[1],
-        _patch_ingest_dependencies()[2],
     ):
         build_rob2_graph().invoke(_initial_state(str(pdf_path)))
 
@@ -1110,13 +1086,7 @@ def test_run_assessment_writes_outputs(tmp_path):
             side_effect=_domain_contract_result,
         ),
         patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
-        patch(
-            "rob2_pipeline.ingestion.assessment.extract_full_text",
-            return_value=_pdf_text(),
-        ),
         _patch_ingest_dependencies()[0],
-        _patch_ingest_dependencies()[1],
-        _patch_ingest_dependencies()[2],
     ):
         state = run_assessment(str(pdf_path), output_dir=str(output_dir))
 
@@ -1135,7 +1105,7 @@ def test_run_assessment_writes_outputs(tmp_path):
     assert evidence_jsonl.exists()
     assert "search_text" in evidence_jsonl.read_text(encoding="utf-8")
     data = json.loads((output_dir / "trial_rob2_data.json").read_text(encoding="utf-8"))
-    assert data["evidence"]["extraction_method"] == "docling_llm"
+    assert data["evidence"]["extraction_method"] == "json_contract"
     assert "computer-generated sequence" in data["evidence"]["d1_randomization"]["text"]
     assert "rag_sources" in data
     assert "outcome_properties" in data

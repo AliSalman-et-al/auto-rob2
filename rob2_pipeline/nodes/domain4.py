@@ -1,7 +1,6 @@
 from rob2_pipeline.judges.domain4 import judge_domain4, judge_domain4_artifact
 from rob2_pipeline.nodes.common import (
     add_domain_judgment_with_pivotality_tests,
-    call_node_llm,
 )
 from rob2_pipeline.nodes.domain_context import build_domain4_context
 from rob2_pipeline.nodes.domain_classifier import has_ready_packets, run_json_sq_classifier
@@ -57,7 +56,7 @@ def domain4_sq_node(state: RoB2State) -> RoB2State:
             ],
             postprocess=apply_domain4_control,
         )
-    return run_domain_sq_stage(state, DOMAIN4_STAGE, call_fn=call_node_llm)
+    return run_domain_sq_stage(state, DOMAIN4_STAGE)
 
 
 def domain4_judge_node(state: RoB2State) -> RoB2State:

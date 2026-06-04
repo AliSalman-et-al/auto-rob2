@@ -110,7 +110,6 @@ def _state_ingestion_artifact(state: dict) -> AssessmentIngestionResult:
     return AssessmentIngestionResult(
         full_text=state.get("full_text", ""),
         evidence=state.get("evidence"),
-        docling_doc=state.get("docling_doc"),
         docling_chunks=list(state.get("docling_chunks") or []),
         source_documents=list(state.get("source_documents") or []),
         supplement_warnings=list(state.get("supplement_warnings") or []),

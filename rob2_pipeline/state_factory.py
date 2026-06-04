@@ -25,7 +25,6 @@ def create_initial_state(
         "pdf_path": pdf_path,
         "full_text": "",
         "evidence": empty_paper_evidence(),
-        "docling_doc": None,
         "docling_chunks": [],
         "precomputed_ingestion": kwargs.get("precomputed_ingestion"),
         "trial_retrieval_indexes": kwargs.get("trial_retrieval_indexes") or {},

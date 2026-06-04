@@ -1,5 +1,6 @@
 import pytest
 
+from rob2_pipeline.llm_contracts import JsonContractResult
 from rob2_pipeline.judges import (
     judge_domain1,
     judge_domain1_artifact,
@@ -826,8 +827,27 @@ def _complete_low_domain_judgments():
     return {"D1": "Low", "D2": "Low", "D3": "Low", "D4": "Low", "D5": "Low"}
 
 
+def _domain_stage_result(parsed: dict[str, dict]) -> JsonContractResult:
+    return JsonContractResult(
+        artifact={
+            "answers": [
+                {
+                    "sq_id": sq_id,
+                    "support_level": "moderate",
+                    "support_rationale": "Test fixture support.",
+                    **answer,
+                }
+                for sq_id, answer in parsed.items()
+            ]
+        },
+        log=[],
+        status="validated",
+        failure_reason=None,
+    )
+
+
 def test_domain4_autosets_clinician_assessor_awareness_in_open_label_trial(monkeypatch):
-    def fake_call_node_llm(state, prompt, node_name, parse_fn, parse_sq_ids):
+    def fake_call_json_contract_llm(state, prompt, node_name, **kwargs):
         parsed = {
             "4.1": {
                 "answer": "N",
@@ -860,9 +880,12 @@ def test_domain4_autosets_clinician_assessor_awareness_in_open_label_trial(monke
                 "uncertainty_flag": "HIGH",
             },
         }
-        return "", [], parsed
+        return _domain_stage_result(parsed)
 
-    monkeypatch.setattr("rob2_pipeline.nodes.domain4.call_node_llm", fake_call_node_llm)
+    monkeypatch.setattr(
+        "rob2_pipeline.nodes.domain_helpers.call_json_contract_llm",
+        fake_call_json_contract_llm,
+    )
     state = {
         "intervention": "Drug A",
         "comparator": "Placebo",
@@ -888,7 +911,7 @@ def test_domain4_autosets_clinician_assessor_awareness_in_open_label_trial(monke
 def test_domain4_autosets_objective_outcome_uninfluenced_when_awareness_unknown(
     monkeypatch,
 ):
-    def fake_call_node_llm(state, prompt, node_name, parse_fn, parse_sq_ids):
+    def fake_call_json_contract_llm(state, prompt, node_name, **kwargs):
         parsed = {
             "4.1": {
                 "answer": "N",
@@ -921,9 +944,12 @@ def test_domain4_autosets_objective_outcome_uninfluenced_when_awareness_unknown(
                 "uncertainty_flag": "NORMAL",
             },
         }
-        return "", [], parsed
+        return _domain_stage_result(parsed)
 
-    monkeypatch.setattr("rob2_pipeline.nodes.domain4.call_node_llm", fake_call_node_llm)
+    monkeypatch.setattr(
+        "rob2_pipeline.nodes.domain_helpers.call_json_contract_llm",
+        fake_call_json_contract_llm,
+    )
     state = {
         "intervention": "Drug A",
         "comparator": "Placebo",
@@ -945,7 +971,7 @@ def test_domain4_autosets_objective_outcome_uninfluenced_when_awareness_unknown(
 
 
 def test_domain4_normalizes_invalid_assessor_na_for_objective_outcome(monkeypatch):
-    def fake_call_node_llm(state, prompt, node_name, parse_fn, parse_sq_ids):
+    def fake_call_json_contract_llm(state, prompt, node_name, **kwargs):
         parsed = {
             "4.1": {
                 "answer": "N",
@@ -978,9 +1004,12 @@ def test_domain4_normalizes_invalid_assessor_na_for_objective_outcome(monkeypatc
                 "uncertainty_flag": "NORMAL",
             },
         }
-        return "", [], parsed
+        return _domain_stage_result(parsed)
 
-    monkeypatch.setattr("rob2_pipeline.nodes.domain4.call_node_llm", fake_call_node_llm)
+    monkeypatch.setattr(
+        "rob2_pipeline.nodes.domain_helpers.call_json_contract_llm",
+        fake_call_json_contract_llm,
+    )
     state = {
         "intervention": "Drug A",
         "comparator": "Placebo",

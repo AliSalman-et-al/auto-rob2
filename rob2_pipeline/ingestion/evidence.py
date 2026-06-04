@@ -1,11 +1,10 @@
 import logging
 import re
-from typing import cast
+from typing import Protocol, cast
 
 from pydantic import BaseModel, Field
 
 from rob2_pipeline.llm_contracts import call_json_contract_llm
-from rob2_pipeline.ingestion.document_repr import DocumentRepr
 from rob2_pipeline.ingestion.settings import (
     CENSORING_PATTERNS,
     MAX_SECTION_CHARS,
@@ -19,6 +18,14 @@ from rob2_pipeline.models import (
     empty_paper_evidence,
 )
 from rob2_pipeline.types import LLMCallLogEntry
+
+
+class DocumentRepr(Protocol):
+    full_text: str
+    blocks: list
+
+    def to_prompt_repr(self) -> str:
+        ...
 
 
 PROMPT_PAPER_EXTRACTION = """
@@ -98,7 +105,7 @@ def extract_paper_evidence(
             "fallback_reason": reason,
         },
     )
-    evidence = _paper_evidence_from_artifact(result.artifact, "docling_llm")
+    evidence = _paper_evidence_from_artifact(result.artifact, "json_contract")
     if result.status == "fallback":
         evidence = extract_structural_paper_evidence(doc_repr)
         evidence["warnings"] = [
@@ -143,10 +150,10 @@ def paper_evidence_from_sections(
 def extract_structural_paper_evidence(doc_repr: DocumentRepr) -> PaperEvidence:
     evidence = paper_evidence_from_sections(
         parse_sections(doc_repr.to_prompt_repr() or doc_repr.full_text),
-        extraction_method="docling_struct",
-        source="docling_struct",
+        extraction_method="structural_keywords",
+        source="parser_neutral_sections",
         warnings=[
-            "LLM evidence extraction failed; used Docling structural keyword mapping."
+            "LLM evidence extraction failed; used structural keyword mapping."
         ],
     )
     table_mapping = {
@@ -156,7 +163,7 @@ def extract_structural_paper_evidence(doc_repr: DocumentRepr) -> PaperEvidence:
         "d4_outcome_meas": SECTION_PATTERNS["outcomes"] + SECTION_PATTERNS["analysis"],
         "d5_registration": SECTION_PATTERNS["registration"],
     }
-    for block in doc_repr.blocks:
+    for block in getattr(doc_repr, "blocks", []):
         searchable = "\n".join([block.heading or "", block.text, *block.tables]).lower()
         for field, keywords in table_mapping.items():
             if block.tables and any(keyword in searchable for keyword in keywords):
@@ -296,100 +303,6 @@ def _augment_consort_from_results(sections: dict) -> dict:
         if extra:
             sections["consort"] = consort + "".join(extra)
     return sections
-
-
-def _parse_sections_from_docling_document(doc) -> dict[str, str] | None:
-    try:
-        buffers: dict[str, list[str]] = {name: [] for name in SECTION_ORDER}
-        sections = {name: "" for name in SECTION_ORDER}
-        current_section: str | None = None
-
-        # Docling 2.x exposes items through iterate_items(); this is more stable across versions
-        # than depending directly on doc.texts/doc.body child layouts.
-        iterator = doc.iterate_items() if hasattr(doc, "iterate_items") else []
-
-        for item, _ in iterator:
-            label = getattr(item, "label", None)
-            label_name = (
-                getattr(label, "name", str(label)).upper() if label is not None else ""
-            )
-            item_text = (getattr(item, "text", "") or "").strip()
-
-            if label_name == "SECTION_HEADER":
-                detected = _detect_heading(item_text)
-                if detected is not None:
-                    current_section = detected
-                    if item_text:
-                        buffers[current_section].append(item_text)
-                continue
-
-            if label_name == "TABLE":
-                table_text = ""
-                if hasattr(item, "export_to_markdown"):
-                    try:
-                        table_text = item.export_to_markdown(doc=doc)
-                    except TypeError:
-                        table_text = item.export_to_markdown()
-                if table_text and current_section is not None:
-                    buffers[current_section].append(table_text)
-                lowered_table = table_text.lower()
-                if table_text and any(
-                    keyword in lowered_table for keyword in SECTION_PATTERNS["baseline"]
-                ):
-                    buffers["baseline"].append(table_text)
-                if table_text and any(
-                    keyword in lowered_table for keyword in SECTION_PATTERNS["results"]
-                ):
-                    buffers["results"].append(table_text)
-                continue
-
-            if label_name in {
-                "TEXT",
-                "PARAGRAPH",
-                "LIST_ITEM",
-                "TITLE",
-                "CAPTION",
-                "FOOTNOTE",
-            }:
-                if current_section is not None and item_text:
-                    buffers[current_section].append(item_text)
-
-        for name, lines in buffers.items():
-            sections[name] = cap_section("\n".join(lines).strip()) if lines else ""
-
-        if sections["methods"]:
-            if not sections["randomization"]:
-                sections["randomization"] = sections["methods"]
-            if not sections["blinding"]:
-                sections["blinding"] = sections["methods"]
-
-        full_text = ""
-        if hasattr(doc, "export_to_text"):
-            full_text = (doc.export_to_text() or "").strip()
-        if not full_text:
-            full_text = "\n".join(part for part in sections.values() if part)
-
-        for name in (
-            "randomization",
-            "blinding",
-            "outcomes",
-            "analysis",
-            "missing_data",
-            "registration",
-            "baseline",
-            "consort",
-            "supplementary",
-        ):
-            if not sections[name]:
-                sections[name] = _extract_keyword_context(full_text, name)
-
-        return _augment_consort_from_results(sections)
-    except Exception as error:
-        logging.warning(
-            "Docling structured section parse failed; falling back to text parser: %s",
-            error,
-        )
-        return None
 
 
 def extract_censoring_context(full_text: str, outcome: str) -> str:

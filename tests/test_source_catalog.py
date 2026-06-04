@@ -79,7 +79,7 @@ def test_status_markers_preserve_source_identity_and_set_error_shape():
 def test_skipped_source_documents_records_failed_supplements_and_warnings():
     documents, warnings = skipped_source_documents(
         ["inputs/benchmark/supplement/TITAN/protocol.pdf"],
-        "primary Docling structural extraction failed",
+        "primary parser artifact extraction failed",
     )
 
     assert documents[0]["document_id"] == "supplement:001"

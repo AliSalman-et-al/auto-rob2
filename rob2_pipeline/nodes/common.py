@@ -1,5 +1,4 @@
 import time
-from inspect import signature
 from typing import Callable, Literal, Optional
 
 from rob2_pipeline.cache import read_cache, write_cache
@@ -9,14 +8,13 @@ from rob2_pipeline.methodology import METHODOLOGIES
 from rob2_pipeline.methodology.render import render_methodology
 from rob2_pipeline.trace import append_llm_call
 from rob2_pipeline.types import LLMCallLogEntry
-from rob2_pipeline.xml_parser import validate_sq_answers
 from pydantic import BaseModel, ConfigDict, Field
 
 
 SYSTEM_MESSAGE = (
     "You are an expert systematic reviewer applying the Cochrane Risk of Bias 2 "
-    "(RoB 2) tool. Respond only in the XML format specified in the prompt. "
-    "Do not add preamble, explanation, or markdown code fences around your XML."
+    "(RoB 2) tool. Respond only in the format specified in the prompt. "
+    "Do not add preamble, explanation, or markdown code fences."
 )
 VALID_SQ_ANSWERS = ("Y", "PY", "PN", "N", "NI", "NA")
 WEAK_SUPPORT_LEVELS = {"weak", "unsupported"}
@@ -83,7 +81,6 @@ def call_node_llm(
         if not (parse_fn and parse_sq_ids):
             return None
         parsed_local = parse_fn(raw, parse_sq_ids)
-        validate_sq_answers(parsed_local, parse_sq_ids)
         return parsed_local
 
     cached = read_cache(node_name, prompt)
@@ -152,7 +149,7 @@ def call_node_llm(
             )
             repair_prompt = (
                 f"Your previous response for {node_name} was invalid: {exc}. "
-                "Return only well-formed XML in exactly the requested schema.\n\n"
+                "Return only the requested structured response.\n\n"
                 f"Original prompt:\n{prompt}"
             )
             repair_start = time.perf_counter()
@@ -247,27 +244,6 @@ def format_chunk_sources(state: dict, domain: str, limit: int = 5) -> list[str]:
         section = meta.get("section") or "Unknown"
         sources.append(f"[page {page}, {section}]")
     return sources
-
-
-def call_node_llm_with_sources(
-    call_fn: Callable,
-    state: dict,
-    prompt: str,
-    node_name: str,
-    parse_fn: Callable[[str, list[str]], dict[str, dict]],
-    parse_sq_ids: list[str],
-    chunk_sources: list[str],
-) -> tuple[str, list[LLMCallLogEntry], Optional[dict[str, dict]]]:
-    if "chunk_sources" in signature(call_fn).parameters:
-        return call_fn(
-            state,
-            prompt,
-            node_name,
-            parse_fn,
-            parse_sq_ids,
-            chunk_sources=chunk_sources,
-        )
-    return call_fn(state, prompt, node_name, parse_fn, parse_sq_ids)
 
 
 def add_domain_judgment(

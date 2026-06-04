@@ -5,17 +5,14 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "docling>=2.93.0",
     "faiss-cpu>=1.8",
     "langchain-anthropic>=0.3.20",
     "langchain-community>=0.3.0",
-    "langchain-docling>=2.0.0",
     "langchain-huggingface>=0.1.0",
     "langchain-openai>=0.3.16",
     "langchain-openrouter>=0.2.3",
     "langgraph>=1.1.10",
     "liteparse>=2.0.4",
-    "lxml>=6.1.0",
     "pydantic>=2.13.3",
     "python-dotenv>=1.2.2",
     "sentence-transformers>=3.0",
