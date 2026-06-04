@@ -74,7 +74,7 @@ the main article. Supplement ingestion is best-effort unless benchmark
 | --- | --- |
 | `rob2_pipeline/nodes/ingest.py` | Graph adapter for ingestion plus RCT screening node |
 | `rob2_pipeline/ingestion/assessment.py` | Primary plus supplement Assessment ingestion from parser-neutral artifacts |
-| `rob2_pipeline/ingestion/parse_artifacts.py` | LiteParse adaptation, parser-neutral page artifacts, retrieval chunk creation |
+| `rob2_pipeline/ingestion/parse_artifacts.py` | LiteParse adaptation, page-aware parser artifacts, retrieval chunk creation |
 | `rob2_pipeline/ingestion/evidence.py` | Primary-paper structured evidence extraction |
 | `rob2_pipeline/ingestion/settings.py` | Ingestion constants and environment controls |
 
@@ -142,6 +142,8 @@ signaling-question-specific inputs.
 | `rob2_pipeline/nodes/evidence_source_selection.py` | Candidate source creation and ranking |
 | `rob2_pipeline/nodes/evidence_packet_grading.py` | Missing-evidence and quality flags |
 | `rob2_pipeline/nodes/evidence_packets.py` | Packet construction and prompt rendering |
+| `rob2_pipeline/evidence_store.py` | Typed quote-grounded evidence facts, failed claims, and gaps |
+| `rob2_pipeline/trial_workspace.py` | Trial Workspace and Outcome Workspace artifact manifests |
 
 Contracts define what each signaling question needs: required labels, matching
 terms, fallback sections, denominator requirements, outcome-binding
@@ -150,6 +152,22 @@ requirements, and prespecification requirements.
 Source ranking is domain-aware. For example, D5 prefers protocol, SAP, and
 registry sources; D3 gives weight to appendix and SAP missing-data evidence;
 D4 values outcome-definition and adjudication sources.
+
+### EvidenceStore And Workspaces
+
+`rob2_pipeline/evidence_store.py` defines the typed EvidenceStore used for
+quote-grounded evidence facts, failed claims, and evidence gaps. It validates
+support status, provenance, family-specific fields, and outcome binding before
+facts are selected for signaling-question packets or persisted as audit
+artifacts.
+
+`rob2_pipeline/trial_workspace.py` separates reusable Trial Workspace artifacts
+from Outcome Workspace artifacts. The Trial Workspace records source identities,
+LiteParse-derived parser-neutral `ParseArtifact` records, page-aware artifacts,
+parser diagnostics, and EvidenceStore outputs with content/config/upstream
+hashes. Outcome Workspaces record outcome normalization, JSON-contract SQ
+answers, deterministic domain judgments, and support-escalation diagnostics
+that depend on the assessed outcome, RoB 2 settings, and contract versions.
 
 ### Domain Prompt Context
 
@@ -178,8 +196,8 @@ post-processing in one place while leaving prompt assembly in
 
 All graph LLM calls go through `call_node_llm()` in
 `rob2_pipeline/nodes/common.py`. That layer handles provider selection, prompt
-caching, XML parsing and repair, trace logging, and error normalization.
-Signaling-question responses are parsed into answer code, quote,
+caching, JSON contract validation and repair, trace logging, and error
+normalization. Signaling-question responses are parsed into answer code, quote,
 justification, uncertainty flag, support level, and support rationale.
 
 | File | Responsibility |
@@ -246,7 +264,7 @@ Important state groups:
 | Group | Representative keys |
 | --- | --- |
 | Inputs | `pdf_path`, `supplementary_paths`, `precomputed_ingestion` |
-| Primary ingestion | `full_text`, `evidence`, `docling_chunks`, `parse_artifacts` |
+| Primary ingestion | `full_text`, `evidence`, page-aware parser artifacts, `parse_artifacts` |
 | Source inventory | `source_documents`, `supplement_warnings` |
 | Trial metadata | `intervention`, `comparator`, `outcome`, `registration_number` |
 | Outcome resolution | `outcome_type`, `outcome_properties`, `outcome_classification_support` |
@@ -470,8 +488,8 @@ deliberately redesigned.
 ### Add A New LLM Node
 
 Use `call_node_llm()` from `nodes/common.py`. This keeps provider calls,
-caching, XML parsing, trace logging, and error handling consistent across the
-graph.
+caching, JSON contract validation, trace logging, and error handling
+consistent across the graph.
 
 ## Production Notes
 

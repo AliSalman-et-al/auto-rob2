@@ -312,6 +312,8 @@ Key files:
 | `rob2_pipeline/nodes/domain_context.py`   | Prompt-ready D1-D5 evidence context              |
 | `rob2_pipeline/nodes/domain_helpers.py`   | Shared `DomainSqStage` SQ-stage runner           |
 | `rob2_pipeline/nodes/evidence_packets.py` | SQ-specific evidence packets                     |
+| `rob2_pipeline/evidence_store.py`         | Typed quote-grounded evidence facts and gaps     |
+| `rob2_pipeline/trial_workspace.py`        | Trial and outcome artifact workspace manifests   |
 | `rob2_pipeline/nodes/verification.py`     | Quote, packet, and support-constraint checks     |
 | `rob2_pipeline/judges/`                   | Deterministic RoB 2 judgment logic               |
 | `rob2_pipeline/providers/`                | LLM provider adapters                            |

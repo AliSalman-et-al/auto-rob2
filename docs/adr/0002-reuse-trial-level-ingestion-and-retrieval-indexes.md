@@ -9,9 +9,9 @@ Accepted
 ## Context
 
 Benchmark runs often assess multiple outcomes for the same trial. Each
-outcome-specific `Assessment` currently repeats primary PDF Docling conversion,
-supplement Docling conversion, primary-paper evidence extraction, chunk
-creation, embedding, and FAISS index construction.
+outcome-specific `Assessment` can otherwise repeat primary PDF parsing,
+supplement parsing, primary-paper evidence extraction, chunk creation,
+embedding, and FAISS index construction.
 
 The timing traces show `pdf_ingest` dominating benchmark wall time. Repeating
 the same trial-level parsing work for each outcome is wasteful because the
@@ -27,15 +27,10 @@ Reuse trial-level ingestion artifacts and trial-level retrieval indexes across
 multiple outcome-specific Assessments for the same primary paper and selected
 supplements.
 
-Primary PDF ingestion should avoid duplicate Docling conversion. One primary
-Docling conversion should supply strict full text, primary-paper structural
-representation, and primary chunks. OCR fallback can remain available when the
-non-OCR conversion produces too little usable text.
-
-Primary Docling table structure remains enabled by default. A fast-mode switch
-may disable table structure for measurement or throughput-sensitive runs, but
-that mode must be explicit because baseline, CONSORT, and results tables can
-support RoB 2 evidence.
+Primary PDF ingestion should avoid duplicate parsing. One primary parser
+artifact should supply strict full text, primary-paper evidence, page-aware
+retrieval chunks, and parser diagnostics. OCR or alternate parser fallback can
+remain available when the default parser produces too little usable text.
 
 Supplement role classification is provenance, not a parsing gate. Supplement
 ingestion should stay inclusive because useful RoB 2 evidence can appear in
@@ -49,8 +44,8 @@ Reusable trial-level artifacts may include:
 
 - primary-paper `full_text`
 - primary-paper `PaperEvidence`
-- primary Docling conversion output needed by downstream code
-- primary and supplement Docling chunks
+- parser-neutral `ParseArtifact` records
+- primary and supplement page-aware retrieval chunks
 - source-document inventory
 - supplement warnings
 - the vector index built from those chunks
@@ -73,8 +68,16 @@ must move out of the trial-level artifact.
 
 ## Consequences
 
-Benchmark runs avoid repeating the slowest Docling and embedding work for every
+Benchmark runs avoid repeating the slowest parser and embedding work for every
 outcome of the same trial.
+
+## Superseded implementation note
+
+This ADR was accepted before the LiteParse cleanup. The current implementation
+fulfills the reuse decision through LiteParse-derived, parser-neutral
+`ParseArtifact` records and page-aware retrieval chunks. Downstream code should
+depend on those artifacts and JSON contracts rather than parser-native objects
+or legacy cache and parser-specific APIs.
 
 The public single-assessment behavior can remain unchanged while benchmark
 orchestration passes precomputed trial-level artifacts into the internal

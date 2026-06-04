@@ -92,6 +92,22 @@ The ingestion representation produced from page-aware parser output. It carries
 source identity, page text, diagnostics, provenance, and retrieval chunks without
 exposing parser-native document objects.
 
+### Trial Workspace
+
+The trial-level artifact workspace for source identities, parser-neutral
+`ParseArtifact` records, page-aware artifacts, parser diagnostics, and
+EvidenceStore outputs. Trial Workspace artifacts are reusable only when source,
+parser, configuration, and upstream artifact hashes still match.
+
+### Outcome Workspace
+
+The outcome-specific artifact workspace for outcome normalization,
+JSON-contract SQ answers, deterministic domain judgments, support-escalation
+diagnostics, and other artifacts that depend on the assessed outcome or RoB 2
+settings. Outcome Workspace artifacts are invalidated by
+changed outcome definitions, settings, trial-workspace inputs, or contract
+versions.
+
 ### Trial Metadata
 
 The trial-level labels extracted before domain assessment: intervention,
@@ -200,6 +216,13 @@ Canonical levels are `strong`, `moderate`, `weak`, and `unsupported`. Support
 level primarily shapes the SQ answer itself; domain judging uses it as an audit
 brake when a weak or unsupported SQ answer is pivotal to the final judgment.
 
+### EvidenceStore
+
+The typed store of quote-grounded Evidence Facts, failed claims, and evidence
+gaps. It validates support status, provenance, family-specific fields, and
+outcome binding before facts are selected for SQ packets or workspace
+artifacts.
+
 ### D3 Completeness Evidence
 
 Evidence supporting Domain 3 SQ 3.1 that outcome data were available for nearly
@@ -267,11 +290,11 @@ stage-local post-processing for answer corrections or NA control flow.
 
 ### Signaling Question Answer
 
-The parsed XML answer for one RoB 2 signaling question. It contains an answer
-code (`Y`, `PY`, `PN`, `N`, `NI`, or `NA`), quote, justification, and
-uncertainty flag. Each answer should also carry an Evidence Support Level so
-reviewers can see how strongly the full evidence set supports that SQ answer,
-not just whether one cited fact exists.
+The parsed JSON-contract answer for one RoB 2 signaling question. It contains
+an answer code (`Y`, `PY`, `PN`, `N`, `NI`, or `NA`), quote, justification,
+uncertainty flag, Evidence Support Level, and support rationale so reviewers
+can see how strongly the full evidence set supports that SQ answer, not just
+whether one cited fact exists.
 
 ### Domain Judgment
 
@@ -405,12 +428,12 @@ Some-concerns domains.
   missing-intervention review priority, and D5 judge.
 - `rob2_pipeline/judges/` owns deterministic D1-D5 and overall decision tables.
 
-### LLM Calls, XML, Providers, Cache, And Trace
+### LLM Calls, JSON Contracts, Providers, Cache, And Trace
 
 - `rob2_pipeline/nodes/common.py` is the shared LLM call module for graph nodes.
-  It handles prompt cache lookup/write, provider invocation, trace logging, SQ
-  answer merging, `NA` setting, source labels, and domain
-  judgment insertion.
+  It handles prompt cache lookup/write, provider invocation, JSON-contract
+  parsing and repair, trace logging, SQ answer merging, `NA` setting, source
+  labels, and domain judgment insertion.
 - `rob2_pipeline/llm_contracts.py` validates JSON LLM artifacts against local
   Pydantic schemas and records contract trace metadata.
 - `rob2_pipeline/prompts.py` owns prompt templates and rendered methodology
@@ -424,6 +447,11 @@ Some-concerns domains.
 - `rob2_pipeline/cache.py` owns optional prompt cache behavior.
 - `rob2_pipeline/trace.py` records LLM calls and graph-node spans for audit and
   timing analysis.
+- `rob2_pipeline/evidence_store.py` defines EvidenceStore schemas and
+  family-typed fact selection for quote-grounded evidence.
+- `rob2_pipeline/trial_workspace.py` writes Trial Workspace and Outcome
+  Workspace manifests and artifacts with source, config, contract, and upstream
+  hash identity.
 
 ### Verification, Output, And Benchmarking
 
