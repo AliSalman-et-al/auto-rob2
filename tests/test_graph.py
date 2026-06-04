@@ -934,8 +934,34 @@ def test_graph_pfs_composite_endpoint_blocks_d4_when_packet_needs_repair(tmp_pat
             )
         return result
 
+    def _pfs_adjudication_contract(state, prompt, node_name, **kwargs):
+        del state, prompt, kwargs
+        sq_id = node_name.rsplit("_", 2)[-2] + "." + node_name.rsplit("_", 1)[-1]
+        answer_by_sq = {"4.4": "PY", "4.5": "N", "5.1": "Y", "5.2": "N", "5.3": "N"}
+        answer = answer_by_sq.get(sq_id, "NI")
+        return SimpleNamespace(
+            artifact={
+                "sq_id": sq_id,
+                "answer": answer,
+                "quote": "biochemical, symptomatic, or radiographic progression",
+                "justification": "Progression includes judgmental components.",
+                "uncertainty_flag": "NORMAL",
+                "support_level": "weak",
+                "support_rationale": "Packet support remains constrained by outcome binding.",
+                "residual_uncertainty": "Repair is still needed for accepted support.",
+                "quote_traceability_status": "traceability_not_assessed",
+            },
+            log=[{"node": node_name, "cache_hit": False}],
+            status="validated",
+            failure_reason=None,
+        )
+
     with (
         patch("rob2_pipeline.ingestion.evidence.call_json_contract_llm", _pfs_core_contract),
+        patch(
+            "rob2_pipeline.nodes.common.call_json_contract_llm",
+            _pfs_adjudication_contract,
+        ),
         patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
         patch(
             "rob2_pipeline.nodes.domain1.call_json_contract_llm",

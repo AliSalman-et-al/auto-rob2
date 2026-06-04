@@ -3,6 +3,7 @@ import pytest
 from rob2_pipeline.nodes.domain1 import domain1_judge_node
 from rob2_pipeline.nodes.domain3 import domain3_judge_node
 from rob2_pipeline.nodes.domain4 import domain4_judge_node
+from rob2_pipeline.llm_contracts import JsonContractResult
 from rob2_pipeline.pipeline import _assessment_json
 
 
@@ -17,37 +18,145 @@ def _answer(answer: str, support_level: str = "weak") -> dict:
     }
 
 
-def test_pivotal_weak_answer_triggers_targeted_adjudication(monkeypatch):
-    calls = []
+def _json_contract_result(
+    answer: dict, sq_id: str = "1.3", node_name: str = "sq_support_adjudication_D1_1_3"
+) -> JsonContractResult:
+    return JsonContractResult(
+        artifact={
+            "sq_id": sq_id,
+            "answer": answer["answer"],
+            "quote": answer["quote"],
+            "justification": answer["justification"],
+            "uncertainty_flag": answer["uncertainty_flag"],
+            "support_level": answer["support_level"],
+            "support_rationale": answer["support_rationale"],
+            "residual_uncertainty": answer.get(
+                "residual_uncertainty", "No residual uncertainty reported."
+            ),
+            "quote_traceability_status": answer.get(
+                "quote_traceability_status", "traceability_not_assessed"
+            ),
+        },
+        log=[{"node": node_name, "cache_hit": False}],
+        status="validated",
+    )
 
-    def fake_call_fn(
-        state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources=None
+
+def _stub_adjudication_contract(monkeypatch, calls: list, answers: dict[str, dict]):
+    def fake_call_json_contract_llm(
+        state,
+        prompt,
+        node_name,
+        *,
+        schema_model,
+        schema_version,
+        prompt_version,
+        fallback_factory,
+        max_attempts=2,
     ):
+        sq_id = node_name.rsplit("_", 2)[-2] + "." + node_name.rsplit("_", 1)[-1]
+        chunk_sources = []
+        for meta in (state.get("rag_chunk_metadata", {}).get("d1", []) or [])[:5]:
+            pages = meta.get("page_numbers") or []
+            chunk_sources.append(
+                f"[page {pages[0] if pages else '?'}, {meta.get('section') or 'Unknown'}]"
+            )
         calls.append(
             {
                 "node_name": node_name,
-                "parse_sq_ids": parse_sq_ids,
+                "parse_sq_ids": [sq_id],
                 "prompt": prompt,
                 "chunk_sources": chunk_sources,
             }
         )
-        return (
-            "",
-            [{"node": node_name, "cache_hit": False}],
+        return _json_contract_result(answers[sq_id], sq_id=sq_id, node_name=node_name)
+
+    monkeypatch.setattr(
+        "rob2_pipeline.nodes.common.call_json_contract_llm",
+        fake_call_json_contract_llm,
+    )
+
+
+def test_adjudication_prompt_requests_json_contract(monkeypatch):
+    calls = []
+
+    def fake_call_json_contract_llm(
+        state,
+        prompt,
+        node_name,
+        *,
+        schema_model,
+        schema_version,
+        prompt_version,
+        fallback_factory,
+        max_attempts=2,
+    ):
+        calls.append(
             {
-                "1.3": {
-                    "answer": "N",
-                    "quote": "Baseline characteristics were well balanced.",
-                    "justification": "Baseline data do not suggest a randomization problem.",
-                    "uncertainty_flag": "NORMAL",
-                    "support_level": "strong",
-                    "support_rationale": "Direct baseline evidence supports no concern.",
-                    "residual_uncertainty": "No important residual uncertainty.",
-                }
-            },
+                "prompt": prompt,
+                "node_name": node_name,
+                "schema_model": schema_model,
+                "schema_version": schema_version,
+                "prompt_version": prompt_version,
+                "max_attempts": max_attempts,
+            }
+        )
+        return _json_contract_result(
+            {
+                "answer": "N",
+                "quote": "Baseline characteristics were well balanced.",
+                "justification": "Baseline data do not suggest a randomization problem.",
+                "uncertainty_flag": "NORMAL",
+                "support_level": "strong",
+                "support_rationale": "Direct baseline evidence supports no concern.",
+                "residual_uncertainty": "No important residual uncertainty.",
+            }
         )
 
-    monkeypatch.setattr("rob2_pipeline.nodes.common.call_node_llm", fake_call_fn)
+    monkeypatch.setattr(
+        "rob2_pipeline.nodes.common.call_json_contract_llm",
+        fake_call_json_contract_llm,
+    )
+
+    domain1_judge_node(
+        {
+            "outcome": "overall survival",
+            "sq_answers": {
+                "1.1": _answer("Y", "strong"),
+                "1.2": _answer("Y", "strong"),
+                "1.3": _answer("Y", "weak"),
+            },
+            "domain_judgments": {},
+            "domain_rationales": {},
+            "evidence_packets": {"1.3": {"sources": []}},
+        }
+    )
+
+    assert calls[0]["node_name"] == "sq_support_adjudication_D1_1_3"
+    assert calls[0]["schema_version"]
+    assert calls[0]["prompt_version"]
+    assert "Return only JSON" in calls[0]["prompt"]
+    assert "XML" not in calls[0]["prompt"]
+    assert "<sq_1_3>" not in calls[0]["prompt"]
+
+
+def test_pivotal_weak_answer_triggers_targeted_adjudication(monkeypatch):
+    calls = []
+    _stub_adjudication_contract(
+        monkeypatch,
+        calls,
+        {
+            "1.3": {
+                "answer": "N",
+                "quote": "Baseline characteristics were well balanced.",
+                "justification": "Baseline data do not suggest a randomization problem.",
+                "uncertainty_flag": "NORMAL",
+                "support_level": "strong",
+                "support_rationale": "Direct baseline evidence supports no concern.",
+                "residual_uncertainty": "No important residual uncertainty.",
+            }
+        },
+    )
 
     result = domain1_judge_node(
         {
@@ -126,26 +235,21 @@ def test_non_pivotal_weak_answer_does_not_trigger_adjudication(monkeypatch):
 
 
 def test_unresolved_pivotal_weak_answer_is_audit_limited(monkeypatch):
-    def fake_call_fn(
-        state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources=None
-    ):
-        return (
-            "",
-            [{"node": node_name, "cache_hit": False}],
-            {
-                "1.3": {
-                    "answer": "Y",
-                    "quote": "No direct baseline table was available.",
-                    "justification": "The concern remains weakly supported.",
-                    "uncertainty_flag": "HIGH",
-                    "support_level": "weak",
-                    "support_rationale": "Evidence remains indirect.",
-                    "residual_uncertainty": "The pivotal concern is unresolved.",
-                }
-            },
-        )
-
-    monkeypatch.setattr("rob2_pipeline.nodes.common.call_node_llm", fake_call_fn)
+    _stub_adjudication_contract(
+        monkeypatch,
+        [],
+        {
+            "1.3": {
+                "answer": "Y",
+                "quote": "No direct baseline table was available.",
+                "justification": "The concern remains weakly supported.",
+                "uncertainty_flag": "HIGH",
+                "support_level": "weak",
+                "support_rationale": "Evidence remains indirect.",
+                "residual_uncertainty": "The pivotal concern is unresolved.",
+            }
+        },
+    )
 
     result = domain1_judge_node(
         {
@@ -179,26 +283,28 @@ def test_unresolved_pivotal_weak_answer_is_audit_limited(monkeypatch):
 def test_malformed_adjudication_output_does_not_update_assessment_artifacts(
     monkeypatch,
 ):
-    def fake_call_fn(
-        state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources=None
-    ):
-        return (
-            "",
-            [{"node": node_name, "cache_hit": False}],
-            {
-                "1.3": {
-                    "answer": "LOW",
-                    "quote": "Baseline characteristics were well balanced.",
-                    "justification": "Attempts to write an invalid answer.",
-                    "uncertainty_flag": "NORMAL",
-                    "support_level": "strong",
-                    "support_rationale": "Invalid schema should be rejected.",
-                    "domain_judgments": {"D1": "Low"},
-                }
+    def fake_call_json_contract_llm(*args, **kwargs):
+        return JsonContractResult(
+            artifact={
+                "sq_id": "1.3",
+                "answer": "LOW",
+                "quote": "Baseline characteristics were well balanced.",
+                "justification": "Attempts to write an invalid answer.",
+                "uncertainty_flag": "NORMAL",
+                "support_level": "strong",
+                "support_rationale": "Invalid schema should be rejected.",
+                "residual_uncertainty": "Invalid output was rejected.",
+                "domain_judgments": {"D1": "Low"},
             },
+            log=[{"node": "sq_support_adjudication_D1_1_3", "cache_hit": False}],
+            status="fallback",
+            failure_reason="Schema validation failed: answer; domain_judgments",
         )
 
-    monkeypatch.setattr("rob2_pipeline.nodes.common.call_node_llm", fake_call_fn)
+    monkeypatch.setattr(
+        "rob2_pipeline.nodes.common.call_json_contract_llm",
+        fake_call_json_contract_llm,
+    )
 
     result = domain1_judge_node(
         {
@@ -258,16 +364,7 @@ def test_adjudication_records_answer_and_support_change_flags(
     adjudicated_answer = dict(adjudicated_answer)
     adjudicated_answer["support_rationale"] = "adjudicated support"
 
-    def fake_call_fn(
-        state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources=None
-    ):
-        return (
-            "",
-            [{"node": node_name, "cache_hit": False}],
-            {"1.3": adjudicated_answer},
-        )
-
-    monkeypatch.setattr("rob2_pipeline.nodes.common.call_node_llm", fake_call_fn)
+    _stub_adjudication_contract(monkeypatch, [], {"1.3": adjudicated_answer})
 
     result = domain1_judge_node(
         {
@@ -298,26 +395,21 @@ def test_adjudication_records_answer_and_support_change_flags(
 def test_adjudication_records_semantic_support_without_overwriting_traceability(
     monkeypatch,
 ):
-    def fake_call_fn(
-        state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources=None
-    ):
-        return (
-            "",
-            [{"node": node_name, "cache_hit": False}],
-            {
-                "1.3": {
-                    "answer": "N",
-                    "quote": "Baseline characteristics were well balanced.",
-                    "justification": "The selected quote does not support a baseline imbalance concern.",
-                    "uncertainty_flag": "NORMAL",
-                    "support_level": "strong",
-                    "support_rationale": "The quote semantically supports no concern.",
-                    "residual_uncertainty": "No important residual uncertainty.",
-                }
-            },
-        )
-
-    monkeypatch.setattr("rob2_pipeline.nodes.common.call_node_llm", fake_call_fn)
+    _stub_adjudication_contract(
+        monkeypatch,
+        [],
+        {
+            "1.3": {
+                "answer": "N",
+                "quote": "Baseline characteristics were well balanced.",
+                "justification": "The selected quote does not support a baseline imbalance concern.",
+                "uncertainty_flag": "NORMAL",
+                "support_level": "strong",
+                "support_rationale": "The quote semantically supports no concern.",
+                "residual_uncertainty": "No important residual uncertainty.",
+            }
+        },
+    )
 
     result = domain1_judge_node(
         {
@@ -371,18 +463,7 @@ def test_adjudication_records_semantic_support_without_overwriting_traceability(
 
 def test_pivotal_support_constraint_is_included_in_adjudication_prompt(monkeypatch):
     calls = []
-
-    def fake_call_fn(
-        state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources=None
-    ):
-        calls.append(prompt)
-        return (
-            "",
-            [{"node": node_name, "cache_hit": False}],
-            {"1.3": _answer("N", "strong")},
-        )
-
-    monkeypatch.setattr("rob2_pipeline.nodes.common.call_node_llm", fake_call_fn)
+    _stub_adjudication_contract(monkeypatch, calls, {"1.3": _answer("N", "strong")})
 
     result = domain1_judge_node(
         {
@@ -416,11 +497,11 @@ def test_pivotal_support_constraint_is_included_in_adjudication_prompt(monkeypat
             "provenance": {"node": "quote_verifier"},
         }
     ]
-    assert "Support constraints:" in calls[0]
-    assert "quote_untraceable" in calls[0]
-    assert "The cited quote was not found in source text." in calls[0]
-    assert "Original domain judgment" not in calls[0]
-    assert "Alternative-answer domain judgment" not in calls[0]
+    assert "Support constraints:" in calls[0]["prompt"]
+    assert "quote_untraceable" in calls[0]["prompt"]
+    assert "The cited quote was not found in source text." in calls[0]["prompt"]
+    assert "Original domain judgment" not in calls[0]["prompt"]
+    assert "Alternative-answer domain judgment" not in calls[0]["prompt"]
 
 
 def test_assessment_json_includes_adjudication_audit_and_final_sq_state():
@@ -536,18 +617,9 @@ def test_benchmark_failure_modes_use_adjudicated_pivotal_answer(
     expected_judgment,
 ):
     calls = []
-
-    def fake_call_fn(
-        state, prompt, node_name, parse_fn, parse_sq_ids, chunk_sources=None
-    ):
-        calls.append((node_name, parse_sq_ids, prompt))
-        return (
-            "",
-            [{"node": node_name, "cache_hit": False}],
-            {weak_sq_id: adjudicated_answer},
-        )
-
-    monkeypatch.setattr("rob2_pipeline.nodes.common.call_node_llm", fake_call_fn)
+    _stub_adjudication_contract(
+        monkeypatch, calls, {weak_sq_id: adjudicated_answer}
+    )
 
     result = judge_node(
         {
@@ -570,9 +642,9 @@ def test_benchmark_failure_modes_use_adjudicated_pivotal_answer(
     )
 
     assert (
-        calls[0][0]
+        calls[0]["node_name"]
         == f"sq_support_adjudication_{domain}_{weak_sq_id.replace('.', '_')}"
     )
-    assert calls[0][1] == [weak_sq_id]
+    assert calls[0]["parse_sq_ids"] == [weak_sq_id]
     assert result["sq_answers"][weak_sq_id]["answer"] == adjudicated_answer["answer"]
     assert result["domain_judgments"][domain] == expected_judgment
