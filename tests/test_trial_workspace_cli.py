@@ -76,10 +76,13 @@ def test_build_workspace_from_primary_and_supplement_persists_manifest(tmp_path)
 def test_inspect_workspace_reports_manifest_and_artifact_status(tmp_path):
     primary = tmp_path / "trial.pdf"
     primary.write_bytes(b"primary pdf")
+    protocol = tmp_path / "trial_protocol.pdf"
+    protocol.write_bytes(b"protocol pdf")
     workspace_dir = tmp_path / "workspace"
     build_workspace(
         primary_pdf=primary,
         workspace_dir=workspace_dir,
+        supplement_pdfs=[protocol],
         trial_id="trial-001",
         parser=FakeParser(),
     )
@@ -94,7 +97,13 @@ def test_inspect_workspace_reports_manifest_and_artifact_status(tmp_path):
             "document_name": "trial.pdf",
             "document_role": "primary",
             "status": "parsed",
-        }
+        },
+        {
+            "document_id": "supplement:001",
+            "document_name": "trial_protocol.pdf",
+            "document_role": "protocol",
+            "status": "parsed",
+        },
     ]
     assert status["artifacts"] == [
         {
@@ -109,6 +118,21 @@ def test_inspect_workspace_reports_manifest_and_artifact_status(tmp_path):
         },
         {
             "artifact_id": "primary:parser-diagnostics",
+            "status": "fresh",
+            "exists": True,
+        },
+        {
+            "artifact_id": "supplement:001:page-aware-artifacts",
+            "status": "fresh",
+            "exists": True,
+        },
+        {
+            "artifact_id": "supplement:001:parse-artifact",
+            "status": "fresh",
+            "exists": True,
+        },
+        {
+            "artifact_id": "supplement:001:parser-diagnostics",
             "status": "fresh",
             "exists": True,
         },

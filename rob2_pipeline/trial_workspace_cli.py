@@ -156,7 +156,7 @@ def _read_source_statuses(root: Path) -> dict[str, str]:
 def _artifact_path(root: Path, artifact_id: str) -> Path:
     if artifact_id.startswith("evidence-store:"):
         return root / "evidence_store" / "facts.jsonl"
-    source_id, artifact_kind = artifact_id.split(":", 1)
+    source_id, artifact_kind = artifact_id.rsplit(":", 1)
     filename = f"{source_id.replace(':', '_')}.json"
     directory_by_kind = {
         "parse-artifact": "parse_artifacts",
