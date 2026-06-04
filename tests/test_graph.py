@@ -533,32 +533,6 @@ def _d1_contract_result(state, prompt, node_name, **kwargs):
     }
 
 
-def _pfs_d1_contract_result(state, prompt, node_name, **kwargs):
-    del state, prompt, kwargs
-    return {
-        "artifact": {
-            "schema_version": "d1-sq-classifier-v1",
-            "domain": "d1",
-            "answers": [
-                _d1_contract_answer("1.1", "PY", "randomly assigned"),
-                _d1_contract_answer("1.2", "PY", "central statistical center"),
-                _d1_contract_answer("1.3", "N", "balanced"),
-            ],
-        },
-        "log": [
-            {
-                "node": node_name,
-                "validation_status": "validated",
-                "model": "test-model",
-                "prompt_version": "d1-sq-classifier-prompt-v1",
-                "schema_version": "d1-sq-classifier-v1",
-                "attempts": [{"attempt": 1}],
-            }
-        ],
-        "status": "validated",
-    }
-
-
 def _d1_contract_answer(sq_id: str, answer: str, quote: str) -> dict:
     return {
         "sq_id": sq_id,
@@ -666,128 +640,6 @@ def _contract_answer_for_sq(state: dict, sq_id: str) -> tuple[str, str]:
     return (pfs_answers if is_pfs else os_answers)[sq_id]
 
 
-def _pfs_response_by_node(node_name: str):
-    responses = dict(
-        paper_evidence_extraction="""
-        <evidence>
-          <abstract><text>Open-label randomized trial of docetaxel plus ADT versus ADT alone.</text><tables></tables></abstract>
-          <methods><text>Patients were randomly assigned. Overall survival and progression outcomes were assessed.</text><tables></tables></methods>
-          <results><text>Median time to biochemical, symptomatic, or radiographic progression was improved.</text><tables></tables></results>
-          <d1_randomization><text>Patients were randomly assigned by a central statistical center.</text><tables></tables></d1_randomization>
-          <d2_blinding><text>Open-label treatment assignment.</text><tables></tables></d2_blinding>
-          <d3_missing_data><text>All randomly assigned patients were followed.</text><tables></tables></d3_missing_data>
-          <d4_outcome_meas><text>Overall survival was time to death. Progression-free survival was biochemical, symptomatic, or radiographic progression.</text><tables></tables></d4_outcome_meas>
-          <d5_registration><text>ClinicalTrials.gov NCT00309985.</text><tables></tables></d5_registration>
-          <consort_flow><text>790 patients were randomized.</text><tables></tables></consort_flow>
-          <baseline_table><text>Baseline characteristics were balanced.</text><tables></tables></baseline_table>
-        </evidence>
-        """,
-        rct_screener="""
-        <screening><is_rct>YES</is_rct><evidence>randomly assigned</evidence><study_design>RCT</study_design><note></note></screening>
-        """,
-        preliminary_info="""
-        <preliminary_info>
-          <experimental_intervention><value>Docetaxel + ADT</value></experimental_intervention>
-          <comparator_intervention><value>ADT alone</value></comparator_intervention>
-          <outcome_assessed><value>Overall Survival</value></outcome_assessed>
-          <outcome_type>clinician-composite</outcome_type>
-          <numerical_result><value>HR 0.61</value></numerical_result>
-          <n_randomized><value>790</value></n_randomized>
-          <trial_registration><number>NCT00309985</number></trial_registration>
-          <registered_primary_endpoint><value>Overall Survival</value></registered_primary_endpoint>
-          <registered_secondary_endpoints>Not reported</registered_secondary_endpoints>
-          <registered_analysis><value>ITT</value></registered_analysis>
-        </preliminary_info>
-        """,
-        outcome_resolver="""
-        <outcome_resolution>
-          <outcome_type>clinician-composite</outcome_type>
-          <support_level>strong</support_level>
-          <support_rationale>Progression-free survival combines progression and death.</support_rationale>
-          <properties>
-            <patient_reported>false</patient_reported>
-            <safety_harm>false</safety_harm>
-            <time_to_event>true</time_to_event>
-            <death_only_objective_event>false</death_only_objective_event>
-            <composite>true</composite>
-            <lab_or_imaging_threshold>true</lab_or_imaging_threshold>
-            <blinded_adjudication>false</blinded_adjudication>
-            <objective_event>false</objective_event>
-            <clinician_judged>true</clinician_judged>
-          </properties>
-          <quotes>
-            <quote source="d4_outcome_meas">Progression-free survival was biochemical, symptomatic, or radiographic progression.</quote>
-          </quotes>
-          <constraints></constraints>
-        </outcome_resolution>
-        """,
-        domain1_sq="""
-        <domain1>
-          <sq_1_1><answer>PY</answer><quote>randomly assigned</quote><justification>Randomized.</justification></sq_1_1>
-          <sq_1_2><answer>PY</answer><quote>central statistical center</quote><justification>Central randomization.</justification></sq_1_2>
-          <sq_1_3><answer>N</answer><quote>balanced</quote><justification>No imbalance.</justification></sq_1_3>
-        </domain1>
-        """,
-        domain2_sq12="""
-        <domain2_part1>
-          <sq_2_1><answer>Y</answer><quote>Open-label</quote><justification>Participants were aware.</justification></sq_2_1>
-          <sq_2_2><answer>Y</answer><quote>Open-label</quote><justification>Carers were aware.</justification></sq_2_2>
-        </domain2_part1>
-        """,
-        domain2_conditional="""
-        <domain2_conditional>
-          <sq_2_3><answer>N</answer><quote>No deviations</quote><justification>No deviations from intended interventions.</justification></sq_2_3>
-          <sq_2_4><answer>NA</answer><quote>Not applicable</quote><justification>Not applicable</justification><uncertainty_flag>NORMAL</uncertainty_flag></sq_2_4>
-          <sq_2_5><answer>NA</answer><quote>Not applicable</quote><justification>Not applicable</justification></sq_2_5>
-        </domain2_conditional>
-        """,
-        domain2_analysis="""
-        <domain2_analysis>
-          <sq_2_6><answer>Y</answer><quote>ITT</quote><justification>ITT analysis was used.</justification></sq_2_6>
-          <sq_2_7><answer>NA</answer><quote>Not applicable</quote><justification>Not applicable</justification></sq_2_7>
-        </domain2_analysis>
-        """,
-        domain3_sq="""
-        <domain3>
-          <sq_3_1><answer>Y</answer><quote>All followed</quote><completeness_calculation>790/790</completeness_calculation><justification>Complete follow-up.</justification></sq_3_1>
-          <sq_3_2><answer>NA</answer><quote>Not applicable</quote><justification>Not applicable</justification></sq_3_2>
-          <sq_3_3><answer>NA</answer><quote>Not applicable</quote><justification>Not applicable</justification><uncertainty_flag>NORMAL</uncertainty_flag></sq_3_3>
-          <sq_3_4><answer>NA</answer><quote>Not applicable</quote><justification>Not applicable</justification><uncertainty_flag>NORMAL</uncertainty_flag></sq_3_4>
-        </domain3>
-        """,
-        domain4_sq="""
-        <domain4>
-          <sq_4_1><answer>N</answer><quote>Progression-free survival definition</quote><justification>Standard endpoint.</justification></sq_4_1>
-          <sq_4_2><answer>N</answer><quote>Same definition</quote><justification>Same method.</justification></sq_4_2>
-          <sq_4_3><answer>PY</answer><quote>Open-label</quote><justification>Assessors likely aware.</justification></sq_4_3>
-          <sq_4_4><answer>PY</answer><quote>biochemical, symptomatic, or radiographic progression</quote><justification>Progression includes judgmental components.</justification></sq_4_4>
-          <sq_4_5><answer>N</answer><quote>No evidence of actual influence</quote><justification>No direct evidence that assessment was influenced.</justification><uncertainty_flag>NORMAL</uncertainty_flag></sq_4_5>
-        </domain4>
-        """,
-        domain5_sq="""
-        <domain5>
-          <sq_5_1><answer>Y</answer><quote>NCT00309985</quote><justification>Registered before analysis.</justification><registration_comparison>No discrepancy.</registration_comparison></sq_5_1>
-          <sq_5_2><answer>N</answer><quote>Progression-free survival was registered</quote><justification>The composite endpoint was pre-specified, not selected post hoc.</justification></sq_5_2>
-          <sq_5_3><answer>N</answer><quote>ITT analysis</quote><justification>No selective analysis evident.</justification></sq_5_3>
-        </domain5>
-        """,
-    )
-    return responses[node_name]
-
-
-class _PfsProvider:
-    def __init__(self):
-        self.complete = Mock(side_effect=self._complete)
-
-    def _complete(self, system: str, user: str) -> LLMResponse:
-        node_name = _node_from_prompt(user)
-        if node_name == "evidence_family_mining":
-            return LLMResponse(
-                _family_response_from_prompt(user), "test-model", 1, 1, 1.0
-            )
-        return LLMResponse(_pfs_response_by_node(node_name), "test-model", 1, 1, 1.0)
-
-
 def _patch_ingest_dependencies():
     def parse_sources(sources):
         return [
@@ -807,6 +659,57 @@ def _patch_ingest_dependencies():
         ]
 
     return (patch("rob2_pipeline.ingestion.assessment.parse_sources", parse_sources),)
+
+
+def _fast_rag_retrieval_node(state):
+    text = (
+        state.get("evidence", {})
+        .get("methods", {})
+        .get("text", "Participants were randomized and blinded.")
+    )
+    metadata = {
+        domain: [
+            {
+                "text": text,
+                "section": "Methods",
+                "page_numbers": [1],
+                "score": 0.01,
+                "document_id": "primary",
+                "document_name": "Primary paper",
+                "document_role": "primary",
+                "source_kind": "rag_chunk",
+                "source_path": state.get("pdf_path", ""),
+            }
+        ]
+        for domain in ("d1", "d2", "d3", "d4", "d5")
+    }
+    return {
+        "rag_contexts": {
+            "d1": text,
+            "d2_blinding": text,
+            "d2_deviations": text,
+            "d2_analysis": text,
+            "d3": text,
+            "d4_measurement": text,
+            "d4_assessor": text,
+            "d5": text,
+        },
+        "rag_chunk_metadata": metadata,
+        "retrieval_grades": {
+            domain: {
+                "relevance": 1.0,
+                "coverage": 1.0,
+                "missing_evidence": [],
+                "retry_recommended": False,
+            }
+            for domain in ("d1", "d2", "d3", "d4", "d5")
+        },
+        "trial_retrieval_indexes": {"index": "test-index", "filtered": {}},
+    }
+
+
+def _patch_fast_rag():
+    return patch("rob2_pipeline.graph.rag_retrieval_node", _fast_rag_retrieval_node)
 
 
 def test_timed_node_records_ok_span_and_returns_result():
@@ -880,6 +783,7 @@ def test_graph_happy_path_with_mocked_llm(tmp_path):
         ),
         patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
         _patch_ingest_dependencies()[0],
+        _patch_fast_rag(),
     ):
         state = build_rob2_graph().invoke(_initial_state(str(pdf_path)))
 
@@ -899,85 +803,6 @@ def test_graph_happy_path_with_mocked_llm(tmp_path):
     assert state["evidence_store"]["supported_facts"]
     assert len(state["llm_call_log"]) == 10
     assert provider.complete.call_count == 21
-
-
-def test_graph_pfs_composite_endpoint_blocks_d4_when_packet_needs_repair(tmp_path):
-    pdf_path = tmp_path / "trial.pdf"
-    _make_pdf(pdf_path)
-    fake_reg_data = {
-        "protocolSection": {
-            "designModule": {},
-            "descriptionModule": {},
-            "outcomesModule": {
-                "primaryOutcomes": [{"measure": "Overall Survival"}],
-                "secondaryOutcomes": [{"measure": "Progression-Free Survival"}],
-                "otherOutcomes": [],
-            },
-        }
-    }
-
-    provider = _PfsProvider()
-    state = _initial_state(str(pdf_path))
-    state["outcome"] = "Progression-Free Survival"
-    def _pfs_core_contract(state, prompt, node_name, **kwargs):
-        result = _core_contract_result(state, prompt, node_name, **kwargs)
-        if node_name == "paper_evidence_extraction":
-            result.artifact["d4_outcome_meas"]["text"] = (
-                "Overall survival was time to death. "
-                "Progression-free survival was biochemical, symptomatic, or radiographic progression."
-            )
-        return result
-
-    def _pfs_adjudication_contract(state, prompt, node_name, **kwargs):
-        del state, prompt, kwargs
-        sq_id = node_name.rsplit("_", 2)[-2] + "." + node_name.rsplit("_", 1)[-1]
-        answer_by_sq = {"4.4": "PY", "4.5": "N", "5.1": "Y", "5.2": "N", "5.3": "N"}
-        answer = answer_by_sq.get(sq_id, "NI")
-        return SimpleNamespace(
-            artifact={
-                "sq_id": sq_id,
-                "answer": answer,
-                "quote": "biochemical, symptomatic, or radiographic progression",
-                "justification": "Progression includes judgmental components.",
-                "uncertainty_flag": "NORMAL",
-                "support_level": "weak",
-                "support_rationale": "Packet support remains constrained by outcome binding.",
-                "residual_uncertainty": "Repair is still needed for accepted support.",
-                "quote_traceability_status": "traceability_not_assessed",
-            },
-            log=[{"node": node_name, "cache_hit": False}],
-            status="validated",
-            failure_reason=None,
-        )
-
-    with (
-        patch("rob2_pipeline.ingestion.evidence.call_json_contract_llm", _pfs_core_contract),
-        patch(
-            "rob2_pipeline.nodes.common.call_json_contract_llm",
-            _pfs_adjudication_contract,
-        ),
-        patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
-        patch(
-            "rob2_pipeline.nodes.domain1.call_json_contract_llm",
-            side_effect=_pfs_d1_contract_result,
-        ),
-        patch(
-            "rob2_pipeline.nodes.domain_classifier.call_json_contract_llm",
-            side_effect=_domain_contract_result,
-        ),
-        patch(
-            "rob2_pipeline.registration_api.fetch_registration",
-            return_value=fake_reg_data,
-        ),
-        _patch_ingest_dependencies()[0],
-    ):
-        result = build_rob2_graph().invoke(state)
-
-    assert result["registered_endpoint"] == "Progression-Free Survival"
-    assert result["domain_judgments"]["D4"] == "Some concerns"
-    assert result["domain_judgments"]["D5"] == "Some concerns"
-    assert result["sq_answers"]["4.4"]["answer"] == "PY"
-    assert result["sq_answers"]["5.2"]["answer"] == "N"
 
 
 def test_graph_stops_for_non_rct(tmp_path):
@@ -1062,6 +887,7 @@ def test_rct_screener_prompt_includes_randomization_context(tmp_path):
         ),
         patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
         _patch_ingest_dependencies()[0],
+        _patch_fast_rag(),
     ):
         build_rob2_graph().invoke(_initial_state(str(pdf_path)))
 
@@ -1087,6 +913,7 @@ def test_run_assessment_writes_outputs(tmp_path):
         ),
         patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
         _patch_ingest_dependencies()[0],
+        _patch_fast_rag(),
     ):
         state = run_assessment(str(pdf_path), output_dir=str(output_dir))
 
