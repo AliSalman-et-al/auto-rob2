@@ -802,7 +802,50 @@ def test_graph_happy_path_with_mocked_llm(tmp_path):
     assert "## Verified evidence packets" in state["markdown_report"]
     assert state["evidence_store"]["supported_facts"]
     assert len(state["llm_call_log"]) == 10
-    assert provider.complete.call_count == 21
+    assert provider.complete.call_count == 15
+
+
+def test_graph_finalization_waits_for_all_domain_judges(tmp_path):
+    pdf_path = tmp_path / "trial.pdf"
+    _make_pdf(pdf_path)
+
+    provider = _FakeProvider()
+    try:
+        start_trace(trial="trial", outcome="mortality")
+        with (
+            patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
+            patch(
+                "rob2_pipeline.nodes.domain1.call_json_contract_llm",
+                side_effect=_d1_contract_result,
+            ),
+            patch(
+                "rob2_pipeline.nodes.domain_classifier.call_json_contract_llm",
+                side_effect=_domain_contract_result,
+            ),
+            patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
+            _patch_ingest_dependencies()[0],
+            _patch_fast_rag(),
+        ):
+            state = build_rob2_graph().invoke(_initial_state(str(pdf_path)))
+
+        trace = get_current_trace()
+        assert state["overall_judgment"] == "Low"
+        assert trace is not None
+        span_names = [span.node for span in trace.node_spans]
+        assert span_names.count("quote_verifier") == 1
+        assert span_names.count("overall_judge") == 1
+        assert span_names.count("report_formatter") == 1
+        quote_index = span_names.index("quote_verifier")
+        for judge_name in (
+            "domain1_judge",
+            "domain2_judge",
+            "domain3_judge",
+            "domain4_judge",
+            "domain5_judge",
+        ):
+            assert span_names.index(judge_name) < quote_index
+    finally:
+        end_trace()
 
 
 def test_graph_stops_for_non_rct(tmp_path):
@@ -1045,6 +1088,57 @@ def test_preliminary_node_populates_ctgov_fields(monkeypatch):
     ]
     assert registry_sources[0]["retrieval_date"]
     assert len(registry_sources[0]["api_response_hash"]) == 64
+
+
+def test_preliminary_node_normalizes_embedded_nct_id(monkeypatch):
+    import rob2_pipeline.registration_api as api_mod
+    import rob2_pipeline.nodes.preliminary as preliminary_mod
+
+    state = _initial_state("trial.pdf")
+    state["evidence"] = empty_paper_evidence()
+    state["evidence"]["d5_registration"]["text"] = (
+        "ClinicalTrials.gov number, NCT00309985."
+    )
+
+    monkeypatch.setattr(
+        api_mod,
+        "fetch_registration",
+        lambda nct_id, use_cache=True: {
+            "protocolSection": {
+                "outcomesModule": {"primaryOutcomes": [{"measure": "Overall Survival"}]},
+                "designModule": {},
+                "descriptionModule": {},
+            }
+        },
+    )
+    monkeypatch.setattr(
+        preliminary_mod,
+        "call_json_contract_llm",
+        lambda state, prompt, node_name, **kwargs: SimpleNamespace(
+            artifact={
+                "schema_version": "preliminary-info-v1",
+                "intervention": "Drug A",
+                "comparator": "Placebo",
+                "assessed_outcome": "Overall Survival",
+                "outcome_type": "vital-status",
+                "numerical_result": "HR 0.90",
+                "n_randomized": "790",
+                "registration_number": "ClinicalTrials.gov number, NCT00309985.",
+                "registered_primary_endpoint": "Not reported",
+                "registered_secondary_endpoints": "Not reported",
+                "registered_analysis": "ITT",
+            },
+            log=[],
+            status="validated",
+            failure_reason=None,
+        ),
+    )
+
+    result = preliminary_mod.preliminary_info_node(state)
+
+    assert result["registration_number"] == "NCT00309985"
+    assert result["ctgov_registry_document"]["document_id"] == "registry:NCT00309985"
+    assert result["registered_endpoint"] == "Overall Survival"
 
 
 def test_preliminary_node_surfaces_matching_secondary_endpoint(monkeypatch):

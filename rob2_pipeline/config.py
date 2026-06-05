@@ -5,6 +5,8 @@ from dotenv import load_dotenv
 
 from rob2_pipeline.constants import DEFAULT_EFFECT_OF_INTEREST
 
+load_dotenv()
+
 
 @dataclass(frozen=True)
 class LLMConfig:
@@ -13,6 +15,8 @@ class LLMConfig:
     max_tokens: int = 2000
     rpm_limit: int = 18
     rpd_limit: int = 190
+    request_timeout: float = 60.0
+    max_retries: int = 2
 
 
 def get_llm_config() -> LLMConfig:
@@ -22,6 +26,8 @@ def get_llm_config() -> LLMConfig:
         max_tokens=int(os.getenv("ROB2_MAX_TOKENS", "2000")),
         rpm_limit=int(os.getenv("ROB2_RPM_LIMIT", "18")),
         rpd_limit=int(os.getenv("ROB2_RPD_LIMIT", "190")),
+        request_timeout=float(os.getenv("ROB2_REQUEST_TIMEOUT", "60")),
+        max_retries=int(os.getenv("ROB2_MAX_RETRIES", "2")),
     )
 
 
@@ -40,16 +46,21 @@ LLM_TEMPERATURE = _llm_cfg.temperature
 LLM_MAX_TOKENS = _llm_cfg.max_tokens
 RPM_LIMIT = _llm_cfg.rpm_limit
 RPD_LIMIT = _llm_cfg.rpd_limit
+REQUEST_TIMEOUT = _llm_cfg.request_timeout
+MAX_RETRIES = _llm_cfg.max_retries
 
 PROVIDER_NAME = os.getenv("ROB2_PROVIDER", "openrouter")
 
 
 def build_provider():
-    load_dotenv()
     from rob2_pipeline.providers import get_provider
 
     common = dict(
-        model=LLM_MODEL, temperature=LLM_TEMPERATURE, max_tokens=LLM_MAX_TOKENS
+        model=LLM_MODEL,
+        temperature=LLM_TEMPERATURE,
+        max_tokens=LLM_MAX_TOKENS,
+        request_timeout=REQUEST_TIMEOUT,
+        max_retries=MAX_RETRIES,
     )
     if PROVIDER_NAME == "openrouter":
         return get_provider(

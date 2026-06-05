@@ -284,6 +284,9 @@ def add_domain_judgment_with_pivotality_tests(
     update["initial_domain_rationales"] = initial_domain_rationales
     pivotality_tests = list(state.get("pivotality_tests", {}).get(domain, []))
     new_pivotality_tests_by_sq = {}
+    final_sq_answers_for_tests = {
+        key: dict(value) for key, value in state.get("sq_answers", {}).items()
+    }
 
     for sq_id in sq_ids:
         sq_answer = initial_sq_answers.get(sq_id)
@@ -323,6 +326,85 @@ def add_domain_judgment_with_pivotality_tests(
         pivotality_tests.append(test_record)
         new_pivotality_tests_by_sq[sq_id] = test_record
 
+    final_answers_changed = final_sq_answers_for_tests != initial_sq_answers
+    final_judgment_changed = judgment != initial_judgment
+    if final_answers_changed or final_judgment_changed:
+        for sq_id in sq_ids:
+            sq_answer = final_sq_answers_for_tests.get(sq_id)
+            if not sq_answer:
+                continue
+            support_level = sq_answer.get("support_level", "").lower()
+            constraints = _constraints_for_sq(state, sq_id)
+            if support_level not in WEAK_SUPPORT_LEVELS and not constraints:
+                continue
+
+            conservative_answer, test_judgment = _conservative_pivotality_test(
+                final_sq_answers_for_tests,
+                sq_id,
+                judgment,
+                judge_fn,
+            )
+            pivotal = test_judgment != judgment
+
+            test_record = {
+                "sq_id": sq_id,
+                "original_answer": sq_answer.get("answer", "NI"),
+                "support_level": support_level or "constrained",
+                "conservative_test_answer": conservative_answer,
+                "original_domain_judgment": judgment,
+                "test_domain_judgment": test_judgment,
+                "pivotal": pivotal,
+                "acceptance_status": _acceptance_status(
+                    pivotal,
+                    sq_answer,
+                    state,
+                    domain,
+                    sq_id,
+                ),
+            }
+            if constraints:
+                test_record["constraints"] = constraints
+            pivotality_tests.append(test_record)
+            new_pivotality_tests_by_sq[sq_id] = test_record
+
+    needs_final_adjudication = any(
+        test.get("pivotal")
+        and test.get("acceptance_status") == "needs_adjudication"
+        for test in new_pivotality_tests_by_sq.values()
+    )
+    if needs_final_adjudication:
+        state, judgment, rationale = _adjudicate_pivotal_sq_answers(
+            state,
+            domain,
+            judgment,
+            rationale,
+            judge_fn,
+            sq_ids,
+        )
+        update = add_domain_judgment(state, domain, judgment, rationale)
+        update["initial_domain_judgments"] = initial_domain_judgments
+        update["initial_domain_rationales"] = initial_domain_rationales
+        final_sq_answers_for_tests = {
+            key: dict(value) for key, value in state.get("sq_answers", {}).items()
+        }
+        for test in pivotality_tests:
+            sq_id = test.get("sq_id")
+            final_answer = final_sq_answers_for_tests.get(sq_id)
+            if not final_answer or test.get("original_domain_judgment") != judgment:
+                continue
+            test["original_answer"] = final_answer.get("answer", test.get("original_answer"))
+            test["support_level"] = _support_level(final_answer) or test.get(
+                "support_level",
+                "constrained",
+            )
+            test["acceptance_status"] = _acceptance_status(
+                bool(test.get("pivotal")),
+                final_answer,
+                state,
+                domain,
+                str(sq_id),
+            )
+
     if pivotality_tests:
         all_tests = dict(state.get("pivotality_tests", {}))
         all_tests[domain] = pivotality_tests
@@ -330,12 +412,12 @@ def add_domain_judgment_with_pivotality_tests(
     routing_decisions = [
         _micro_agent_routing_decision(
             sq_id,
-            initial_sq_answers[sq_id],
+            final_sq_answers_for_tests[sq_id],
             _constraints_for_sq(state, sq_id),
             new_pivotality_tests_by_sq.get(sq_id),
         )
         for sq_id in sq_ids
-        if sq_id in initial_sq_answers
+        if sq_id in final_sq_answers_for_tests
     ]
     if routing_decisions:
         all_decisions = dict(state.get("micro_agent_routing_decisions", {}))
@@ -344,7 +426,11 @@ def add_domain_judgment_with_pivotality_tests(
     if state.get("sq_support_adjudications"):
         update["sq_support_adjudications"] = state["sq_support_adjudications"]
     if state.get("sq_answers"):
-        update["sq_answers"] = state["sq_answers"]
+        update["sq_answers"] = {
+            sq_id: state["sq_answers"][sq_id]
+            for sq_id in sq_ids
+            if sq_id in state["sq_answers"]
+        }
     if state.get("_sq_adjudication_llm_call_log"):
         update["llm_call_log"] = state["_sq_adjudication_llm_call_log"]
     return update
@@ -510,6 +596,8 @@ def _adjudicate_pivotal_sq_answers(
         if sq_answer.get("classification_blocked"):
             continue
         if sq_answer.get("answer") == "NA":
+            continue
+        if _adjudication_for_sq(updated_state, domain, sq_id):
             continue
         support_level = sq_answer.get("support_level", "").lower()
         constraints = _constraints_for_sq(updated_state, sq_id)
@@ -826,6 +914,7 @@ def _build_sq_support_adjudication_prompt(
         rendered_sources = "No selected packet sources were available."
 
     domain_marker = _prompt_marker_for_adjudication(domain, sq_id)
+    domain_specific_guidance = _adjudication_domain_guidance(domain, state)
 
     return f"""Re-evaluate one RoB 2 signaling-question answer. Do not re-run a full domain.
 Return only JSON matching the adjudication contract. Do not include markdown fences.
@@ -835,6 +924,9 @@ Outcome: {state.get("outcome", "Not reported")}
 Domain: {domain}
 
 {render_methodology(methodology, [sq_id])}
+
+Domain-specific adjudication guidance:
+{domain_specific_guidance}
 
 Original answer metadata:
 - answer: {initial_answer.get("answer", "NI")}
@@ -863,6 +955,21 @@ JSON fields:
 - support_rationale: brief support rationale
 - residual_uncertainty: brief residual uncertainty
 - quote_traceability_status: "traceable", "untraceable", or "traceability_not_assessed" """
+
+
+def _adjudication_domain_guidance(domain: str, state: dict) -> str:
+    if domain != "D3":
+        return "No additional domain-specific adjudication guidance."
+    return (
+        "For time-to-event outcomes such as progression-free survival, observed "
+        "progression or death events are not missing outcome data. Study-drug "
+        "discontinuation because progression or death occurred is not itself "
+        "missing outcome data unless the evidence says outcome follow-up was "
+        "censored or stopped before the event was observed. Treat early censoring, "
+        "loss to follow-up, withdrawal, switching, or stopping assigned intervention "
+        "before outcome ascertainment as the missing-data concern for "
+        f"{state.get('outcome', 'the assessed outcome')}."
+    )
 
 
 def _render_support_constraints(constraints: list[dict]) -> str:

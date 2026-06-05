@@ -68,6 +68,18 @@ def domain4_judge_node(state: RoB2State) -> RoB2State:
         state, "D4", judgment, rationale, judge_domain4, DOMAIN4_STAGE.sq_ids
     )
     final_sq_answers = update.get("sq_answers", state["sq_answers"])
+    d4_adjudications = (update.get("sq_support_adjudications") or {}).get("D4", [])
+    controlled_d4_answers = apply_domain4_control(state, final_sq_answers)
+    if controlled_d4_answers != final_sq_answers:
+        final_sq_answers = controlled_d4_answers
+        update["sq_answers"] = {
+            sq_id: final_sq_answers[sq_id]
+            for sq_id in DOMAIN4_STAGE.sq_ids
+            if sq_id in final_sq_answers
+        }
+        final_judgment, final_rationale = judge_domain4(final_sq_answers)
+        update["domain_judgments"]["D4"] = final_judgment
+        update["domain_rationales"]["D4"] = final_rationale
     final_judgment = update["domain_judgments"]["D4"]
     final_rationale = update["domain_rationales"]["D4"]
     if final_judgment != judgment or final_rationale != rationale:

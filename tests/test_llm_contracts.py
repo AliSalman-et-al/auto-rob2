@@ -3,6 +3,7 @@ import json
 from pydantic import BaseModel, Field
 
 from rob2_pipeline.llm_contracts import call_json_contract_llm
+from rob2_pipeline.nodes.domain_classifier import _answer_quote_is_packet_bound
 from rob2_pipeline.providers.base import LLMResponse
 from rob2_pipeline.trace import end_trace, get_current_trace, start_trace
 
@@ -48,6 +49,9 @@ def test_json_contract_validates_against_local_schema(monkeypatch):
 
     assert result.artifact == {"schema_version": "toy-v1", "answer": "Y"}
     assert result.status == "validated"
+    assert "JSON schema:" in provider.prompts[0]
+    assert "Do not omit required fields" in provider.prompts[0]
+    assert "Required schema_version: toy-v1" in provider.prompts[0]
     assert result.log[0]["validation_status"] == "validated"
 
 
@@ -113,3 +117,26 @@ def test_json_contract_trace_records_contract_metadata(monkeypatch):
     assert call.validation_status == "validated"
     assert call.input_tokens == 10
     assert call.output_tokens == 5
+
+
+def test_packet_quote_validator_accepts_traceable_ellipsis_fragments():
+    packet = {
+        "sources": [
+            {
+                "text": (
+                    "Registered outcomes from ClinicalTrials.gov: PRIMARY: "
+                    "Radiographic Progression-Free Survival (rPFS) Based on "
+                    "Independent Central Review. ITT population was randomized."
+                )
+            }
+        ],
+        "candidate_facts": [],
+    }
+    answer = {
+        "quote": (
+            "Registered outcomes from ClinicalTrials.gov: PRIMARY: "
+            "Radiographic Progression-Free Survival (rPFS) ... ITT population"
+        )
+    }
+
+    assert _answer_quote_is_packet_bound(answer, packet)

@@ -14,6 +14,28 @@ def test_quote_support_accepts_exact_source_quote():
     )
 
 
+def test_quote_support_accepts_traceable_ellipsis_fragments():
+    source = (
+        "Discontinued study drug (n = 135) Discontinued study drug (n = 242) "
+        "Progressivedisease† (n = 65; 11.3%) "
+        "Progressivedisease† (n = 171; 29.7%)"
+    )
+
+    assert quote_is_supported(
+        "Progressivedisease† (n = 65; 11.3%) ... Progressivedisease† (n = 171; 29.7%)",
+        source.casefold(),
+    )
+
+
+def test_quote_support_rejects_ellipsis_with_hallucinated_fragment():
+    source = "Progressivedisease† (n = 65; 11.3%) was listed as a reason."
+
+    assert not quote_is_supported(
+        "Progressivedisease† (n = 65; 11.3%) ... Sponsor confirmed no missing data",
+        source.casefold(),
+    )
+
+
 def test_quote_support_rejects_hallucinated_quote():
     source = "Participants were randomly assigned using a central web system."
 
@@ -45,6 +67,29 @@ def test_verify_sq_evidence_flags_missing_d3_denominator():
     )
 
 
+def test_verify_sq_evidence_accepts_d3_percentage_in_quote():
+    evidence = empty_paper_evidence()
+    state = {
+        "full_text": "Missing data 0 1 (0.3%).",
+        "evidence": evidence,
+        "rag_contexts": {},
+        "sq_answers": {
+            "3.1": {
+                "answer": "Y",
+                "quote": "Missing data 0 1 (0.3%).",
+                "justification": "Outcome data were nearly complete.",
+            }
+        },
+    }
+
+    flags = verify_sq_evidence(state)
+
+    assert not any(
+        flag["sq_id"] == "3.1" and "denominator" in flag["issue"]
+        for flag in flags
+    )
+
+
 def test_verify_sq_evidence_flags_unsupported_selective_reporting_quote():
     evidence = empty_paper_evidence()
     evidence["results"]["text"] = "The registered primary outcome was reported."
@@ -65,6 +110,61 @@ def test_verify_sq_evidence_flags_unsupported_selective_reporting_quote():
 
     assert any(flag["issue"] == "quote_not_found_in_source_context" for flag in flags)
     assert any("multiple eligible" in flag["issue"] for flag in flags)
+
+
+def test_verify_sq_evidence_accepts_ctgov_registry_quote():
+    state = {
+        "full_text": "",
+        "evidence": empty_paper_evidence(),
+        "rag_contexts": {},
+        "ctgov_design": (
+            "Authoritative ClinicalTrials.gov registry design metadata:\n"
+            "  Masking: NONE (masked parties: not specified)"
+        ),
+        "sq_answers": {
+            "2.1": {
+                "answer": "Y",
+                "quote": "Masking: NONE (masked parties: not specified)",
+                "justification": "Registry design metadata says masking was none.",
+            }
+        },
+        "evidence_packets": {},
+    }
+
+    flags = verify_sq_evidence(state)
+
+    assert not any(flag["issue"] == "quote_not_found_in_source_context" for flag in flags)
+
+
+def test_verify_sq_evidence_accepts_packet_source_quote():
+    state = {
+        "full_text": "",
+        "evidence": empty_paper_evidence(),
+        "rag_contexts": {},
+        "sq_answers": {
+            "1.1": {
+                "answer": "Y",
+                "quote": "Randomization was stratified according to disease volume.",
+                "justification": "The selected packet source directly states the method.",
+            }
+        },
+        "evidence_packets": {
+            "1.1": {
+                "sources": [
+                    {
+                        "text": (
+                            "Patients were randomly assigned. Randomization was "
+                            "stratified according to disease volume."
+                        )
+                    }
+                ]
+            }
+        },
+    }
+
+    flags = verify_sq_evidence(state)
+
+    assert not any(flag["issue"] == "quote_not_found_in_source_context" for flag in flags)
 
 
 def test_quote_verifier_surfaces_packet_support_constraints():
@@ -99,6 +199,36 @@ def test_quote_verifier_surfaces_packet_support_constraints():
         flag["sq_id"] == "5.1" and "packet" in flag["issue"]
         for flag in result["evidence_validation_flags"]
     )
+
+
+def test_quote_verifier_ignores_not_applicable_packet_failures():
+    state = {
+        "full_text": "",
+        "evidence": empty_paper_evidence(),
+        "rag_contexts": {},
+        "sq_answers": {
+            "2.4": {
+                "answer": "NA",
+                "quote": "Not applicable",
+                "justification": "Not applicable",
+            }
+        },
+        "evidence_packets": {
+            "2.4": {
+                "sq_id": "2.4",
+                "packet_grade": {
+                    "missing_evidence": ["deviation_outcome_impact"],
+                    "retry_recommended": True,
+                },
+            }
+        },
+        "verifier_trace": [],
+    }
+
+    result = quote_verifier_node(state)
+
+    assert result["evidence_validation_flags"] == []
+    assert result["support_constraints"] == []
 
 
 def test_quote_verifier_surfaces_typed_support_constraints():

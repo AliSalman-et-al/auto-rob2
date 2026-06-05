@@ -121,30 +121,65 @@ def test_is_rate_limit_error_handles_429():
 
 
 def test_openrouter_uses_shared_rate_limiter(monkeypatch):
+    from rob2_pipeline.providers.openrouter import OpenRouterProvider
+
     fake_client_calls: list[tuple[str, str]] = []
 
-    class FakeMessage:
-        def __init__(self, content):
-            self.content = content
-            self.usage_metadata = {"input_tokens": 10, "output_tokens": 5}
-            self.additional_kwargs = {}
+    def fake_post(self, system, user):
+        fake_client_calls.append((system, user))
+        return {
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }
 
-    class FakeClient:
-        def invoke(self, messages):
-            fake_client_calls.append((messages[0].content, messages[1].content))
-            return FakeMessage("ok")
-
-    monkeypatch.setattr(
-        "rob2_pipeline.providers.openrouter.ChatOpenRouter",
-        lambda **_: FakeClient(),
-    )
-
-    from rob2_pipeline.providers.openrouter import OpenRouterProvider
+    monkeypatch.setattr(OpenRouterProvider, "_post_chat_completion", fake_post)
 
     provider = OpenRouterProvider(api_key="x", model="test/model")
     assert isinstance(provider._rate_limiter, SlidingWindowRateLimiter)
     provider.complete(system="sys", user="msg")
     assert fake_client_calls == [("sys", "msg")]
+
+
+def test_openrouter_retry_classifier_only_retries_transient_errors():
+    from rob2_pipeline.providers.openrouter import _is_retryable_openrouter_error
+
+    class FakeError(Exception):
+        def __init__(self, message: str, status_code=None):
+            super().__init__(message)
+            self.status_code = status_code
+
+    assert _is_retryable_openrouter_error(FakeError("rate limit exceeded", 429))
+    assert _is_retryable_openrouter_error(FakeError("server error", 503))
+    assert _is_retryable_openrouter_error(RuntimeError("gateway timeout"))
+    assert not _is_retryable_openrouter_error(FakeError("bad request", 400))
+    assert not _is_retryable_openrouter_error(RuntimeError("invalid api key"))
+    assert not _is_retryable_openrouter_error(RuntimeError("context length exceeded"))
+
+
+def test_openrouter_wraps_connection_reset_as_retryable_error(monkeypatch):
+    from rob2_pipeline.providers.openrouter import (
+        OpenRouterProvider,
+        _is_retryable_openrouter_error,
+    )
+
+    def fake_urlopen(*args, **kwargs):
+        raise ConnectionResetError("connection reset by peer")
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    provider = OpenRouterProvider(
+        api_key="x",
+        model="test/model",
+        request_timeout=1,
+        max_retries=1,
+    )
+
+    try:
+        provider.complete(system="sys", user="msg")
+    except RuntimeError as exc:
+        assert "OpenRouter connection failed" in str(exc)
+        assert _is_retryable_openrouter_error(exc)
+    else:
+        raise AssertionError("expected provider call to fail")
 
 
 def test_anthropic_provider_estimates_and_waits(monkeypatch):

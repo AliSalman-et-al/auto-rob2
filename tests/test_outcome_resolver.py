@@ -184,10 +184,48 @@ def test_untraceable_quote_creates_constraint_and_unsupported_classification(
         _state("Symptom severity", "Clinicians graded symptom severity at each visit.")
     )
 
-    assert result["outcome_type"] == "clinician-composite"
+    assert result["outcome_type"] == "patient-reported"
     assert result["outcome_classification_support"]["support_level"] == "unsupported"
     assert result["support_constraints"][0]["constraint_type"] == "quote_untraceable"
     assert result["outcome_normalization_artifact"]["auto_accept_blocked"] is True
+
+
+def test_untraceable_vital_status_quote_preserves_semantic_outcome_type(monkeypatch):
+    monkeypatch.setattr(
+        outcome_resolver,
+        "call_json_contract_llm",
+        _mock_llm(
+            _response(
+                "vital-status",
+                "strong",
+                "Overall survival is a death endpoint.",
+                {
+                    "time_to_event": True,
+                    "objective_event": True,
+                    "death_only_objective_event": True,
+                    "clinician_judged": False,
+                    "composite": False,
+                },
+                "Overall survival was defined as the time until death from any cause.",
+                definition="Time until death from any cause.",
+                aliases=["OS", "overall survival"],
+            ),
+            [],
+        ),
+    )
+
+    result = outcome_resolver.outcome_resolver_node(
+        _state(
+            "Overall Survival",
+            "After follow-up, the median overall survival was longer with treatment.",
+        )
+    )
+
+    assert result["outcome_type"] == "vital-status"
+    assert result["outcome_properties"]["objective_event"] is True
+    assert result["outcome_properties"]["clinician_judged"] is False
+    assert result["outcome_classification_support"]["support_level"] == "unsupported"
+    assert result["support_constraints"][0]["constraint_type"] == "quote_untraceable"
 
 
 def test_clinician_composite_progression_outcome(monkeypatch):
@@ -219,6 +257,33 @@ def test_clinician_composite_progression_outcome(monkeypatch):
     assert result["outcome_type"] == "clinician-composite"
     assert result["outcome_properties"]["composite"] is True
     assert result["outcome_properties"]["lab_or_imaging_threshold"] is True
+
+
+def test_outcome_type_normalization_note_is_not_an_error(monkeypatch):
+    quote = "Radiographic progression-free survival was assessed by independent central review."
+    monkeypatch.setattr(
+        outcome_resolver,
+        "call_json_contract_llm",
+        _mock_llm(
+            _response(
+                "clinician-graded",
+                "strong",
+                "The assessed outcome is clinician graded.",
+                {"time_to_event": True, "clinician_judged": True},
+                quote,
+            ),
+            [],
+        ),
+    )
+    state = _state("Progression-Free Survival", quote)
+    state["outcome_type"] = "clinician-composite"
+
+    result = outcome_resolver.outcome_resolver_node(state)
+
+    assert result["errors"] == []
+    assert result["outcome_normalization_notes"] == [
+        "INFO: outcome_type normalized from 'clinician-composite' to 'clinician-graded' using outcome-bound LLM resolution."
+    ]
 
 
 def test_safety_outcome_resolves_to_clinician_graded(monkeypatch):

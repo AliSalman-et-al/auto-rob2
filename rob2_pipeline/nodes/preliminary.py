@@ -35,6 +35,17 @@ def _prefer_extracted(value: str, fallback: str) -> str:
     return fallback if value == "Not reported" and fallback != "Not reported" else value
 
 
+def _normalize_registration_number(value: str, evidence_text: str) -> str:
+    combined = "\n".join(part for part in [value, evidence_text] if part)
+    nct = re.search(r"\b(NCT\d{8})\b", combined, flags=re.IGNORECASE)
+    if nct:
+        return nct.group(1).upper()
+    isrctn = re.search(r"\b(ISRCTN\d+)\b", combined, flags=re.IGNORECASE)
+    if isrctn:
+        return isrctn.group(1).upper()
+    return value or "Not reported"
+
+
 def _normalize_endpoint_name(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
 
@@ -122,9 +133,9 @@ def preliminary_info_node(state: RoB2State) -> RoB2State:
             *(format_evidence(evidence[field]) for field in EVIDENCE_SECTION_FIELDS),
         ]
     )
-    registration_number = _prefer_extracted(
+    registration_number = _normalize_registration_number(
         artifact.get("registration_number", "Not reported"),
-        _first_match(evidence_text, [r"\b(NCT\d{8})\b", r"\b(ISRCTN\d+)\b"]),
+        evidence_text,
     )
     n_randomized = _prefer_extracted(
         artifact.get("n_randomized", "Not reported"),

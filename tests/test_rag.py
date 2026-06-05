@@ -10,6 +10,7 @@ from rob2_pipeline.rag import (
     grade_retrieved_context,
     _doc_key,
     retrieve_adaptive,
+    retrieve_lexical,
 )
 
 
@@ -217,6 +218,49 @@ class TestRetrieveAdaptive:
         texts = [meta["text"] for meta in metas]
 
         assert len(texts) == len(set(texts))
+
+
+class TestRetrieveLexical:
+    def test_preserves_supplement_provenance_without_vector_dependencies(self):
+        docs = [
+            Document(
+                page_content="The primary paper reports the main result.",
+                metadata={
+                    "section": "Results",
+                    "page_numbers": [4],
+                    "document_id": "primary",
+                    "document_name": "trial.pdf",
+                    "document_role": "primary",
+                    "source_kind": "rag_chunk",
+                    "source_path": "trial.pdf",
+                },
+            ),
+            Document(
+                page_content=(
+                    "The protocol prespecified radiographic progression-free "
+                    "survival and the statistical analysis plan."
+                ),
+                metadata={
+                    "section": "Protocol Endpoints",
+                    "page_numbers": [22],
+                    "document_id": "supplement:002",
+                    "document_name": "protocol.pdf",
+                    "document_role": "protocol",
+                    "source_kind": "rag_chunk",
+                    "source_path": "protocol.pdf",
+                },
+            ),
+        ]
+
+        text, metas = retrieve_lexical(
+            docs,
+            ["prespecified progression-free survival protocol analysis plan"],
+            section_keywords=["protocol"],
+        )
+
+        assert "progression-free survival" in text
+        assert metas[0]["document_id"] == "supplement:002"
+        assert metas[0]["document_role"] == "protocol"
 
 
 class TestGradeRetrievedContext:

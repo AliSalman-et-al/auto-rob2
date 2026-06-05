@@ -235,6 +235,51 @@ def test_d2_d5_family_facts_require_structured_fields(
         )
 
 
+def test_family_fields_coerce_llm_scalar_values_at_schema_boundary():
+    analysis = EvidenceFactRecord.model_validate(
+        _valid_fact(
+            artifact_id="evidence-fact:d2:2.6:analysis-population",
+            fact_type="analysis_population_fact",
+            domain="d2",
+            sq_ids=["2.6"],
+            claim_type="analysis",
+            claim="The analysis population comprised 790 participants.",
+            quote="Total enrolled: 790",
+            family="analysis_population",
+            family_fields={
+                "population_label": "All randomized participants",
+                "included_participants": 790,
+                "excluded_participants": None,
+                "analysis_principle": "Intention-to-treat",
+                "exclusion_impact": None,
+            },
+        )
+    )
+    reporting = EvidenceFactRecord.model_validate(
+        _valid_fact(
+            artifact_id="evidence-fact:d5:5.3:result-reporting",
+            fact_type="result_reporting_fact",
+            domain="d5",
+            sq_ids=["5.3"],
+            claim_type="result_reporting",
+            claim="Overall survival was reported.",
+            quote="Hazard ratio 0.61",
+            family="result_reporting",
+            family_fields={
+                "reported_outcome": "Overall Survival",
+                "reported_measurement": "Hazard ratio",
+                "reported_analysis": "Cox model",
+                "result_metric": "0.61",
+                "matches_prespecification": True,
+            },
+        )
+    )
+
+    assert analysis.family_fields.included_participants == "790"
+    assert analysis.family_fields.excluded_participants == "Not reported"
+    assert reporting.family_fields.matches_prespecification == "Yes"
+
+
 def test_registry_prespecification_fact_accepts_snapshot_provenance():
     fact = EvidenceFactRecord.model_validate(
         _valid_fact(
@@ -454,8 +499,16 @@ def test_mine_evidence_families_covers_one_fact_family_for_each_d2_d5_domain():
         ),
     }
 
+    calls = []
+
     def fake_call(state, prompt, node_name):
-        sq_id = node_name.removeprefix("evidence_family_mining_").replace("_", ".")
+        calls.append(node_name)
+        family_key = node_name.removeprefix("evidence_family_mining_").replace("-", "_")
+        sq_id = next(
+            sq_id
+            for sq_id, (family, _domain, _claim_type, _fields) in responses.items()
+            if family == family_key
+        )
         family, domain, claim_type, family_fields = responses[sq_id]
         return (
             json.dumps(
@@ -517,6 +570,12 @@ def test_mine_evidence_families_covers_one_fact_family_for_each_d2_d5_domain():
 
     update = mine_evidence_families(state, call_fn=fake_call)
 
+    assert calls == [
+        "evidence_family_mining_deviations-adherence",
+        "evidence_family_mining_missing-outcome-data",
+        "evidence_family_mining_outcome-measurement",
+        "evidence_family_mining_result-reporting",
+    ]
     families = {fact["family"] for fact in update["evidence_store"]["supported_facts"]}
     assert families == {
         "deviations_adherence",
@@ -697,6 +756,119 @@ def test_mine_evidence_families_retries_then_records_failed_claim_on_bad_schema(
     assert store["supported_facts"] == []
     assert store["failed_claims"][0]["support_status"] == "failed"
     assert "validation failed" in store["failed_claims"][0]["failure_reason"]
+
+
+def test_mine_evidence_families_records_failed_claim_when_llm_call_fails():
+    def fake_call(state, prompt, node_name):
+        raise RuntimeError("OpenRouter connection failed: connection reset")
+
+    state = {
+        "pdf_path": "inputs/benchmark/TITAN.pdf",
+        "outcome": "Overall Survival",
+        "evidence_packets": {
+            "1.1": {
+                "sq_id": "1.1",
+                "domain": "d1",
+                "sources": [
+                    {
+                        "text": "Randomized centrally.",
+                        "section": "Methods",
+                        "page_numbers": [4],
+                        "document_id": "primary:TITAN",
+                        "document_name": "TITAN primary report",
+                        "document_role": "primary",
+                        "source_kind": "rag_chunk",
+                        "source_path": "inputs/benchmark/TITAN.pdf",
+                    }
+                ],
+            }
+        },
+    }
+
+    update = mine_evidence_families(state, call_fn=fake_call)
+
+    assert update["evidence_store"]["supported_facts"] == []
+    failed = update["evidence_store"]["failed_claims"][0]
+    assert failed["sq_ids"] == ["1.1"]
+    assert failed["support_status"] == "failed"
+    assert "OpenRouter connection failed" in failed["failure_reason"]
+
+
+def test_mine_evidence_families_prompt_enumerates_required_fact_keys():
+    calls = []
+
+    def fake_call(state, prompt, node_name):
+        calls.append(prompt)
+        return (
+            json.dumps(
+                {
+                    "facts": [
+                        {
+                            "artifact_id": "evidence-fact:d1:1.1:randomization:1",
+                            "fact_type": "randomization_allocation_fact",
+                            "domain": "d1",
+                            "sq_ids": ["1.1"],
+                            "claim_type": "trial_method",
+                            "claim": "Randomized centrally.",
+                            "quote": "Randomized centrally.",
+                            "support_level": "strong",
+                            "support_status": "supported",
+                            "uncertainty": False,
+                            "family": "randomization_allocation",
+                            "family_fields": {
+                                "method": "central randomization",
+                                "allocation_concealment": "not reported",
+                                "unit_of_randomization": "participant",
+                            },
+                            "provenance": {
+                                "document_id": "primary:TITAN",
+                                "document_name": "TITAN primary report",
+                                "document_role": "primary",
+                                "source_kind": "rag_chunk",
+                                "source_path": "inputs/benchmark/TITAN.pdf",
+                                "source_section": "Methods",
+                                "page_numbers": [4],
+                            },
+                            "failure_reason": "",
+                        }
+                    ]
+                }
+            ),
+            [{"node": node_name, "cache_hit": False}],
+            None,
+        )
+
+    state = {
+        "pdf_path": "inputs/benchmark/TITAN.pdf",
+        "outcome": "Overall Survival",
+        "evidence_packets": {
+            "1.1": {
+                "sq_id": "1.1",
+                "domain": "d1",
+                "sources": [
+                    {
+                        "text": "Randomized centrally.",
+                        "section": "Methods",
+                        "page_numbers": [4],
+                        "document_id": "primary:TITAN",
+                        "document_name": "TITAN primary report",
+                        "document_role": "primary",
+                        "source_kind": "rag_chunk",
+                        "source_path": "inputs/benchmark/TITAN.pdf",
+                    }
+                ],
+            }
+        },
+    }
+
+    mine_evidence_families(state, call_fn=fake_call)
+
+    prompt = calls[0]
+    assert "Do not omit required keys" in prompt
+    assert "artifact_id, fact_type, domain, sq_ids, claim_type, claim" in prompt
+    assert "support_level, support_status, uncertainty, provenance" in prompt
+    assert "Template for one supported fact" in prompt
+    assert "set that field to 'Not reported'" in prompt
 
 
 def test_select_evidence_facts_prefers_typed_family_facts_with_provenance():

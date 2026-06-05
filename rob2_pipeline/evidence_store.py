@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from rob2_pipeline.types import LLMCallLogEntry
 
@@ -34,7 +34,18 @@ EvidenceFamily = Literal[
 ]
 
 
-class RandomizationAllocationFields(BaseModel):
+class _FamilyStringFields(BaseModel):
+    @field_validator("*", mode="before")
+    @classmethod
+    def coerce_descriptive_field(cls, value):
+        if value is None:
+            return "Not reported"
+        if isinstance(value, bool):
+            return "Yes" if value else "No"
+        return str(value)
+
+
+class RandomizationAllocationFields(_FamilyStringFields):
     model_config = ConfigDict(extra="forbid")
 
     method: str = Field(min_length=1)
@@ -42,7 +53,7 @@ class RandomizationAllocationFields(BaseModel):
     unit_of_randomization: str = Field(min_length=1)
 
 
-class PrespecificationFields(BaseModel):
+class PrespecificationFields(_FamilyStringFields):
     model_config = ConfigDict(extra="forbid")
 
     artifact_type: Literal["registry", "protocol", "sap"]
@@ -51,7 +62,7 @@ class PrespecificationFields(BaseModel):
     prespecified_analysis: str = Field(min_length=1)
 
 
-class MaskingAwarenessFields(BaseModel):
+class MaskingAwarenessFields(_FamilyStringFields):
     model_config = ConfigDict(extra="forbid")
 
     participant_awareness: str = Field(min_length=1)
@@ -60,7 +71,7 @@ class MaskingAwarenessFields(BaseModel):
     awareness_context: str = Field(min_length=1)
 
 
-class DeviationsAdherenceFields(BaseModel):
+class DeviationsAdherenceFields(_FamilyStringFields):
     model_config = ConfigDict(extra="forbid")
 
     awareness_status: str = Field(min_length=1)
@@ -70,7 +81,7 @@ class DeviationsAdherenceFields(BaseModel):
     outcome_impact: str = Field(min_length=1)
 
 
-class AnalysisPopulationFields(BaseModel):
+class AnalysisPopulationFields(_FamilyStringFields):
     model_config = ConfigDict(extra="forbid")
 
     population_label: str = Field(min_length=1)
@@ -80,7 +91,7 @@ class AnalysisPopulationFields(BaseModel):
     exclusion_impact: str = Field(min_length=1)
 
 
-class MissingOutcomeDataFields(BaseModel):
+class MissingOutcomeDataFields(_FamilyStringFields):
     model_config = ConfigDict(extra="forbid")
 
     randomized_count: str = Field(min_length=1)
@@ -90,7 +101,7 @@ class MissingOutcomeDataFields(BaseModel):
     analysis_handling: str = Field(min_length=1)
 
 
-class OutcomeMeasurementFields(BaseModel):
+class OutcomeMeasurementFields(_FamilyStringFields):
     model_config = ConfigDict(extra="forbid")
 
     assessed_outcome: str = Field(min_length=1)
@@ -100,7 +111,7 @@ class OutcomeMeasurementFields(BaseModel):
     influence_risk: str = Field(min_length=1)
 
 
-class ResultReportingFields(BaseModel):
+class ResultReportingFields(_FamilyStringFields):
     model_config = ConfigDict(extra="forbid")
 
     reported_outcome: str = Field(min_length=1)
@@ -151,7 +162,7 @@ class EvidenceFactRecord(BaseModel):
     uncertainty: bool
     provenance: EvidenceProvenance
     family: EvidenceFamily | None = None
-    family_fields: FamilyFields | None = None
+    family_fields: FamilyFields | dict[str, Any] | None = None
     failure_reason: str = ""
 
     @model_validator(mode="after")
@@ -164,6 +175,8 @@ class EvidenceFactRecord(BaseModel):
             raise ValueError("supported evidence facts require a quote")
         if self.support_status == "failed" and not self.failure_reason.strip():
             raise ValueError("failed evidence claims require a failure_reason")
+        if self.support_status == "failed":
+            return self
         if self.family == "randomization_allocation" and not isinstance(
             self.family_fields, RandomizationAllocationFields
         ):
@@ -467,22 +480,25 @@ def mine_evidence_families(
     failed: list[EvidenceFactRecord] = []
     llm_log: list[LLMCallLogEntry] = []
 
-    for sq_id, packet in sorted(state.get("evidence_packets", {}).items()):
-        family = FAMILY_BY_SQ.get(sq_id)
-        if family is None:
-            continue
-        zones = _selected_zones(packet, max_sources_per_sq)
+    for family, sq_ids, zones in _family_mining_jobs(
+        state.get("evidence_packets", {}),
+        max_sources_per_sq,
+    ):
         if not zones:
             continue
-
-        prompt = _build_family_prompt(state, sq_id, family, zones)
-        response, log, _parsed = call_fn(
-            state, prompt, f"evidence_family_mining_{sq_id.replace('.', '_')}"
-        )
+        prompt = _build_family_prompt(state, sq_ids, family, zones)
+        node_suffix = str(family).replace("_", "-")
+        try:
+            response, log, _parsed = call_fn(
+                state, prompt, f"evidence_family_mining_{node_suffix}"
+            )
+        except Exception as exc:  # noqa: BLE001
+            failed.append(_failed_family_claim(state, sq_ids, family, zones, exc))
+            continue
         llm_log.extend(log)
         try:
             next_supported, next_failed = _validate_family_response(
-                response, family, sq_id
+                response, family, sq_ids
             )
             supported.extend(next_supported)
             failed.extend(next_failed)
@@ -493,17 +509,17 @@ def mine_evidence_families(
         repair_response, repair_log, _repair_parsed = call_fn(
             state,
             repair_prompt,
-            f"evidence_family_mining_{sq_id.replace('.', '_')}_repair",
+            f"evidence_family_mining_{node_suffix}_repair",
         )
         llm_log.extend(repair_log)
         try:
             next_supported, next_failed = _validate_family_response(
-                repair_response, family, sq_id
+                repair_response, family, sq_ids
             )
             supported.extend(next_supported)
             failed.extend(next_failed)
         except Exception as repair_exc:  # noqa: BLE001
-            failed.append(_failed_family_claim(state, sq_id, family, zones, repair_exc))
+            failed.append(_failed_family_claim(state, sq_ids, family, zones, repair_exc))
 
     store = EvidenceStore(
         artifact_id=_store_artifact_id(state),
@@ -521,6 +537,45 @@ def mine_evidence_families(
         "evidence_store": store.model_dump(),
         "selected_evidence_facts": selected_facts,
     }
+
+
+def _family_mining_jobs(
+    evidence_packets: dict,
+    max_sources_per_sq: int,
+) -> list[tuple[EvidenceFamily, list[str], list[dict]]]:
+    grouped: dict[EvidenceFamily, dict[str, Any]] = {}
+    seen_zone_keys: dict[EvidenceFamily, set[tuple]] = {}
+    for sq_id, packet in sorted(evidence_packets.items()):
+        family = FAMILY_BY_SQ.get(sq_id)
+        if family is None:
+            continue
+        group = grouped.setdefault(family, {"sq_ids": [], "zones": []})
+        seen = seen_zone_keys.setdefault(family, set())
+        group["sq_ids"].append(sq_id)
+        for zone in _selected_zones(packet, max_sources_per_sq):
+            zone_key = _zone_identity(zone)
+            if zone_key in seen:
+                continue
+            seen.add(zone_key)
+            zone["sq_ids"] = [sq_id]
+            zone["family"] = family
+            zone["zone_id"] = f"{family}:{len(group['zones']) + 1}"
+            group["zones"].append(zone)
+    return [
+        (family, group["sq_ids"], group["zones"])
+        for family, group in grouped.items()
+    ]
+
+
+def _zone_identity(zone: dict) -> tuple:
+    provenance = zone.get("provenance") or {}
+    return (
+        provenance.get("document_id", ""),
+        provenance.get("source_kind", ""),
+        provenance.get("source_section", ""),
+        tuple(provenance.get("page_numbers") or []),
+        zone.get("text", ""),
+    )
 
 
 def _select_family_packets(
@@ -602,20 +657,112 @@ def _selected_zones(packet: dict, max_sources: int) -> list[dict]:
 
 
 def _build_family_prompt(
-    state: dict, sq_id: str, family: EvidenceFamily, zones: list[dict]
+    state: dict, sq_ids: list[str], family: EvidenceFamily, zones: list[dict]
 ) -> str:
+    domain = f"d{sq_ids[0].split('.')[0]}"
     return "\n".join(
         [
             "Extract typed evidence facts from the bounded source zones only.",
             "Do not use outside knowledge, full text, regex keyword matches, or "
             "unstated context to decide semantic fact meaning.",
             f"Outcome: {state.get('outcome', 'Not reported')}",
-            f"SQ ID: {sq_id}",
+            f"SQ IDs: {', '.join(sq_ids)}",
             f"Evidence family: {family}",
             f"Schema: {FAMILY_SCHEMA_TEXT[family]}",
-            "Return JSON only in this shape: "
-            '{"facts": [{EvidenceFactRecord fields including provenance, family, '
-            "and family_fields}]}",
+            "Extract facts for this evidence family once, then assign each fact "
+            "to every SQ ID it directly supports. A fact may support multiple "
+            "listed SQ IDs only when the same quote supports all of them.",
+            "Return JSON only. Do not omit required keys. Every facts[] item "
+            "must be a complete EvidenceFactRecord object with exactly these "
+            "top-level keys:",
+            (
+                "artifact_id, fact_type, domain, sq_ids, claim_type, claim, "
+                "quote, support_level, support_status, uncertainty, provenance, "
+                "family, family_fields, failure_reason"
+            ),
+            "Use support_status='supported' only when quote is a direct source "
+            "quote supporting claim. Family fields are required schema fields, "
+            "not a requirement that every methodological detail is reported; "
+            "when a supported quote establishes the claim but a field is not "
+            "reported in the selected zones, set that field to 'Not reported' "
+            "instead of failing the whole fact. When the selected zones do not "
+            "support any claim for this family, return one failed fact with support_status='failed', "
+            "support_level='unsupported', quote='', family set to the evidence "
+            "family, family_fields=null, provenance copied from the most relevant "
+            "selected source zone, and a specific failure_reason.",
+            "Use claim_type as one of: trial_method, outcome_measurement, "
+            "analysis, result_reporting, registry, other.",
+            "Use support_level as one of: strong, moderate, weak, unsupported.",
+            "Use support_status as one of: supported, failed.",
+            "Use uncertainty as a JSON boolean.",
+            "Template for one supported fact:",
+            json.dumps(
+                {
+                    "facts": [
+                        {
+                            "artifact_id": f"evidence-fact:{domain}:{family}:1",
+                            "fact_type": f"{family}_fact",
+                            "domain": domain,
+                            "sq_ids": [sq_ids[0]],
+                            "claim_type": "trial_method",
+                            "claim": "One sentence claim supported by the quote.",
+                            "quote": "Exact quote copied from one selected source zone.",
+                            "support_level": "moderate",
+                            "support_status": "supported",
+                            "uncertainty": False,
+                            "provenance": {
+                                "document_id": "copy from selected zone provenance",
+                                "document_name": "copy from selected zone provenance",
+                                "document_role": "copy from selected zone provenance",
+                                "source_kind": "copy from selected zone provenance",
+                                "source_path": "copy from selected zone provenance",
+                                "source_section": "copy from selected zone provenance",
+                                "page_numbers": [],
+                                "retrieval_date": "",
+                                "api_response_hash": "",
+                            },
+                            "family": family,
+                            "family_fields": {},
+                            "failure_reason": "",
+                        }
+                    ]
+                },
+                indent=2,
+            ),
+            "Template for one failed fact:",
+            json.dumps(
+                {
+                    "facts": [
+                        {
+                            "artifact_id": f"evidence-fact:{domain}:{family}:failed",
+                            "fact_type": f"{family}_fact",
+                            "domain": domain,
+                            "sq_ids": [sq_ids[0]],
+                            "claim_type": "other",
+                            "claim": "Selected source zones do not support a claim for this SQ.",
+                            "quote": "",
+                            "support_level": "unsupported",
+                            "support_status": "failed",
+                            "uncertainty": True,
+                            "provenance": {
+                                "document_id": "copy from selected zone provenance",
+                                "document_name": "copy from selected zone provenance",
+                                "document_role": "copy from selected zone provenance",
+                                "source_kind": "copy from selected zone provenance",
+                                "source_path": "copy from selected zone provenance",
+                                "source_section": "copy from selected zone provenance",
+                                "page_numbers": [],
+                                "retrieval_date": "",
+                                "api_response_hash": "",
+                            },
+                            "family": family,
+                            "family_fields": None,
+                            "failure_reason": "Specific missing evidence reason.",
+                        }
+                    ]
+                },
+                indent=2,
+            ),
             "Selected source zones:",
             json.dumps(zones, indent=2),
         ]
@@ -623,27 +770,43 @@ def _build_family_prompt(
 
 
 def _build_repair_prompt(original_prompt: str, exc: Exception) -> str:
+    failure_summary = _summarize_validation_error(str(exc))
     return "\n\n".join(
         [
-            f"Your previous evidence-family extraction was invalid: {exc}",
+            f"Your previous evidence-family extraction was invalid: {failure_summary}",
             "Return JSON only. Preserve semantic claims only when they are "
-            "supported by the selected source zones.",
+            "supported by the selected source zones. Every facts[] item must "
+            "include artifact_id, fact_type, domain, sq_ids, claim_type, claim, "
+            "quote, support_level, support_status, uncertainty, provenance, "
+            "family, family_fields, and failure_reason.",
+            "For failed facts, do not use empty provenance fields. Copy provenance "
+            "from the most relevant selected source zone and set family_fields to null.",
             original_prompt,
         ]
     )
 
 
+def _summarize_validation_error(message: str, *, max_lines: int = 8) -> str:
+    lines = [line for line in message.splitlines() if line.strip()]
+    if len(lines) <= max_lines:
+        return message
+    return "\n".join([*lines[:max_lines], f"... ({len(lines) - max_lines} more lines)"])
+
+
 def _validate_family_response(
-    response: str, family: EvidenceFamily, sq_id: str
+    response: str, family: EvidenceFamily, sq_ids: list[str]
 ) -> tuple[list[EvidenceFactRecord], list[EvidenceFactRecord]]:
     payload = json.loads(response)
     raw_facts = payload["facts"]
     facts = [EvidenceFactRecord.model_validate(raw) for raw in raw_facts]
     supported: list[EvidenceFactRecord] = []
     failed: list[EvidenceFactRecord] = []
+    allowed_sq_ids = set(sq_ids)
     for fact in facts:
-        if sq_id not in fact.sq_ids:
-            raise ValueError(f"fact {fact.artifact_id!r} does not include SQ {sq_id}")
+        if set(fact.sq_ids).isdisjoint(allowed_sq_ids):
+            raise ValueError(
+                f"fact {fact.artifact_id!r} does not include any requested SQ ID"
+            )
         if fact.support_status == "failed":
             failed.append(fact)
             continue
@@ -654,16 +817,17 @@ def _validate_family_response(
 
 
 def _failed_family_claim(
-    state: dict, sq_id: str, family: EvidenceFamily, zones: list[dict], exc: Exception
+    state: dict, sq_ids: list[str], family: EvidenceFamily, zones: list[dict], exc: Exception
 ) -> EvidenceFactRecord:
     provenance = dict(zones[0]["provenance"])
     provenance["source_path"] = provenance.get("source_path") or "unknown"
     provenance["source_section"] = provenance.get("source_section") or "Unknown"
+    domain = f"d{sq_ids[0].split('.')[0]}"
     return EvidenceFactRecord(
-        artifact_id=f"evidence-fact:{sq_id}:family-mining-failed",
+        artifact_id=f"evidence-fact:{domain}:{family}:family-mining-failed",
         fact_type=f"{family}_extraction",
-        domain=f"d{sq_id.split('.')[0]}",
-        sq_ids=[sq_id],
+        domain=domain,
+        sq_ids=sq_ids,
         claim_type="other",
         claim=f"Evidence-family mining failed for {family}.",
         quote="",

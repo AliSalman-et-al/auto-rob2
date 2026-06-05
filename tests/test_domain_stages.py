@@ -215,3 +215,28 @@ def test_domain_sq_stage_uses_deterministic_json_fallback_when_contract_fails():
     assert result["sq_answers"]["3.1"]["answer"] == "NI"
     assert result["sq_answers"]["3.1"]["contract_validation_status"] == "fallback"
     assert result["sq_answers"]["3.1"]["support_rationale"] == "invalid json"
+
+
+def test_domain2_conditional_legacy_branch_has_call_function(monkeypatch):
+    import rob2_pipeline.nodes.domain2 as domain2
+
+    captured = {}
+
+    def fake_has_ready_packets(state, *, domain, sq_ids):
+        captured["packet_check"] = (domain, sq_ids)
+        return False
+
+    def fake_run_domain_sq_stage(state, stage, call_fn=None):
+        captured["stage"] = stage.node_name
+        captured["call_fn"] = call_fn
+        return {"sq_answers": {"2.3": {"answer": "NI"}}}
+
+    monkeypatch.setattr(domain2, "has_ready_packets", fake_has_ready_packets)
+    monkeypatch.setattr(domain2, "run_domain_sq_stage", fake_run_domain_sq_stage)
+
+    result = domain2.domain2_conditional_node({"sq_answers": {}})
+
+    assert captured["packet_check"] == ("d2", ("2.3", "2.4", "2.5"))
+    assert captured["stage"] == "domain2_conditional"
+    assert captured["call_fn"] is None
+    assert result["sq_answers"]["2.3"]["answer"] == "NI"

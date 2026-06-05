@@ -12,6 +12,7 @@ LangGraph node would require touching ~10 files for no functional gain.
 """
 
 import json
+import os
 import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -130,33 +131,44 @@ def append_llm_call(
     validation_error: str | None = None,
     fallback_artifact: dict[str, Any] | None = None,
 ) -> None:
+    entry = LlmNodeTrace(
+        node=node,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        response=response,
+        provider=provider,
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cached=cached,
+        latency_ms=latency_ms,
+        cache_hit=cache_hit,
+        parse_error=parse_error,
+        parsed_answers=parsed_answers,
+        is_repair=is_repair,
+        reasoning_content=reasoning_content,
+        prompt_version=prompt_version,
+        schema_version=schema_version,
+        parse_status=parse_status,
+        validation_status=validation_status,
+        validation_error=validation_error,
+        fallback_artifact=fallback_artifact,
+    )
+    _write_llm_tap(entry)
     if _CURRENT_TRACE is None:
         return
-    _CURRENT_TRACE.llm_calls.append(
-        LlmNodeTrace(
-            node=node,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            response=response,
-            provider=provider,
-            model=model,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cached=cached,
-            latency_ms=latency_ms,
-            cache_hit=cache_hit,
-            parse_error=parse_error,
-            parsed_answers=parsed_answers,
-            is_repair=is_repair,
-            reasoning_content=reasoning_content,
-            prompt_version=prompt_version,
-            schema_version=schema_version,
-            parse_status=parse_status,
-            validation_status=validation_status,
-            validation_error=validation_error,
-            fallback_artifact=fallback_artifact,
-        )
-    )
+    _CURRENT_TRACE.llm_calls.append(entry)
+
+
+def _write_llm_tap(entry: LlmNodeTrace) -> None:
+    tap_dir_raw = os.environ.get("ROB2_LLM_TAP_DIR")
+    if not tap_dir_raw:
+        return
+    tap_dir = Path(tap_dir_raw).expanduser()
+    tap_dir.mkdir(parents=True, exist_ok=True)
+    tap_path = tap_dir / "llm_calls.jsonl"
+    with tap_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(asdict(entry), ensure_ascii=False, default=str) + "\n")
 
 
 @contextmanager

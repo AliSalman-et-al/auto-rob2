@@ -43,6 +43,18 @@ class OutcomeSupportArtifact(BaseModel):
     constraints: list[OutcomeConstraintArtifact] = Field(default_factory=list)
 
 
+class OutcomePropertiesArtifact(BaseModel):
+    objective_event: bool = False
+    clinician_judged: bool = False
+    patient_reported: bool = False
+    composite: bool = False
+    time_to_event: bool = False
+    safety_harm: bool = False
+    lab_or_imaging_threshold: bool = False
+    blinded_adjudication: bool = False
+    death_only_objective_event: bool = False
+
+
 class OutcomeNormalizationArtifact(BaseModel):
     schema_version: Literal["outcome-normalization-v1"]
     outcome_type: Literal[
@@ -54,7 +66,7 @@ class OutcomeNormalizationArtifact(BaseModel):
     ]
     normalized_definition: str = ""
     aliases: list[str] = Field(default_factory=list)
-    outcome_properties: dict[str, bool]
+    outcome_properties: OutcomePropertiesArtifact
     support: OutcomeSupportArtifact
     uncertainty: bool
 
@@ -90,7 +102,12 @@ Evidence sections:
 Ignore trial-wide mentions of other endpoint families unless the text ties them to the assessed outcome.
 Return JSON matching OutcomeNormalizationArtifact. Include outcome_type,
 normalized_definition, aliases, outcome_properties, support, uncertainty, quotes,
-constraints, and uncertainty. Use only exact quotes from the evidence sections."""
+constraints, and uncertainty. outcome_properties must include objective_event,
+clinician_judged, patient_reported, composite, time_to_event, safety_harm,
+lab_or_imaging_threshold, blinded_adjudication, and death_only_objective_event.
+Use only exact quotes copied from the evidence sections; if no exact definition
+quote exists, quote the closest exact outcome-bound result text and explain the
+remaining uncertainty."""
 
 
 def _quote_is_traceable(quote: str, sections: dict[str, str]) -> bool:
@@ -102,13 +119,17 @@ def _quote_is_traceable(quote: str, sections: dict[str, str]) -> bool:
 
 
 def _unsupported(
-    reason: str, constraint_type: str = "missing_required_evidence"
+    reason: str,
+    constraint_type: str = "missing_required_evidence",
+    *,
+    outcome_type: str = "clinician-composite",
+    outcome_properties: dict[str, bool] | None = None,
 ) -> dict:
     return {
-        "outcome_type": "clinician-composite",
+        "outcome_type": outcome_type,
         "normalized_definition": "",
         "aliases": [],
-        "outcome_properties": dict(DEFAULT_OUTCOME_PROPERTIES),
+        "outcome_properties": outcome_properties or dict(DEFAULT_OUTCOME_PROPERTIES),
         "outcome_classification_support": {
             "support_level": "unsupported",
             "support_rationale": reason,
@@ -145,6 +166,9 @@ def _normalization_artifact(state: RoB2State, resolution: dict) -> dict:
 
 
 def _validate_resolution(resolution: dict, sections: dict[str, str]) -> dict:
+    resolution["outcome_properties"] = _normalize_outcome_properties(
+        resolution.get("outcome_properties", {})
+    )
     constraints = list(resolution["support"].get("constraints", []))
     for quote in resolution["support"].get("quotes", []):
         if not _quote_is_traceable(quote["quote"], sections):
@@ -158,12 +182,35 @@ def _validate_resolution(resolution: dict, sections: dict[str, str]) -> dict:
             )
     if constraints:
         fallback = _unsupported(
-            constraints[0]["reason"], constraints[0]["constraint_type"]
+            constraints[0]["reason"],
+            constraints[0]["constraint_type"],
+            outcome_type=resolution.get("outcome_type", "clinician-composite"),
+            outcome_properties=resolution["outcome_properties"],
         )
+        fallback["normalized_definition"] = resolution.get("normalized_definition", "")
+        fallback["aliases"] = resolution.get("aliases", [])
         fallback["outcome_classification_support"]["constraints"] = constraints
         return fallback
     resolution["outcome_classification_support"] = resolution.pop("support")
     return resolution
+
+
+def _normalize_outcome_properties(raw_properties: object) -> dict[str, bool]:
+    if hasattr(raw_properties, "model_dump"):
+        raw = raw_properties.model_dump()
+    elif isinstance(raw_properties, dict):
+        raw = dict(raw_properties)
+    else:
+        raw = {}
+    properties = {
+        field: bool(raw.get(field, DEFAULT_OUTCOME_PROPERTIES[field]))
+        for field in PROPERTY_FIELDS
+    }
+    if raw.get("death_only_objective_event"):
+        properties["objective_event"] = True
+        properties["clinician_judged"] = False
+        properties["composite"] = False
+    return properties
 
 
 def outcome_resolver_node(state: RoB2State) -> RoB2State:
@@ -216,9 +263,10 @@ def outcome_resolver_node(state: RoB2State) -> RoB2State:
         )
 
     errors = list(state.get("errors", []))
+    normalization_notes = list(state.get("outcome_normalization_notes", []))
     previous_type = state.get("outcome_type", "")
     if previous_type and previous_type != resolution["outcome_type"]:
-        errors.append(
+        normalization_notes.append(
             "INFO: outcome_type normalized from "
             f"{previous_type!r} to {resolution['outcome_type']!r} using outcome-bound LLM resolution."
         )
@@ -230,5 +278,6 @@ def outcome_resolver_node(state: RoB2State) -> RoB2State:
         "outcome_normalization_artifact": _normalization_artifact(state, resolution),
         "support_constraints": support_constraints,
         "errors": errors,
+        "outcome_normalization_notes": normalization_notes,
         "llm_call_log": result.log,
     }

@@ -48,7 +48,12 @@ def call_json_contract_llm(
     del state  # Reserved for future state-aware contract metadata.
     provider = build_provider()
     attempts: list[dict[str, Any]] = []
-    current_prompt = prompt
+    contract_prompt = _contract_prompt(
+        original_prompt=prompt,
+        schema_model=schema_model,
+        schema_version=schema_version,
+    )
+    current_prompt = contract_prompt
     last_failure = "JSON contract validation did not run."
 
     for attempt_index in range(max(1, max_attempts)):
@@ -114,7 +119,7 @@ def call_json_contract_llm(
                 log=[
                     _contract_log_entry(
                         node_name=node_name,
-                        prompt=prompt,
+                        prompt=contract_prompt,
                         response=response_obj.content,
                         response_obj=response_obj,
                         latency_ms=sum(a["latency_ms"] for a in attempts),
@@ -130,7 +135,7 @@ def call_json_contract_llm(
 
         current_prompt = _repair_prompt(
             node_name=node_name,
-            original_prompt=prompt,
+            original_prompt=contract_prompt,
             schema_model=schema_model,
             failure_reason=last_failure,
         )
@@ -141,7 +146,7 @@ def call_json_contract_llm(
         log=[
             _contract_log_entry(
                 node_name=node_name,
-                prompt=prompt,
+                prompt=contract_prompt,
                 response=attempts[-1]["response_obj"].content,
                 response_obj=attempts[-1]["response_obj"],
                 latency_ms=sum(a["latency_ms"] for a in attempts),
@@ -156,6 +161,23 @@ def call_json_contract_llm(
         ],
         status="fallback",
         failure_reason=last_failure,
+    )
+
+
+def _contract_prompt(
+    *,
+    original_prompt: str,
+    schema_model: type[BaseModel],
+    schema_version: str,
+) -> str:
+    return (
+        f"{original_prompt}\n\n"
+        "You must return exactly one JSON object that validates against this "
+        "local Pydantic JSON schema. Do not omit required fields. Do not add "
+        "keys rejected by additionalProperties=false. Use null only when the "
+        "schema allows null.\n\n"
+        f"Required schema_version: {schema_version}\n\n"
+        f"JSON schema:\n{json.dumps(schema_model.model_json_schema(), indent=2)}"
     )
 
 

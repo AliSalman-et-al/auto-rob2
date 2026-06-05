@@ -126,6 +126,8 @@ def _blocking_reasons(state: RoB2State) -> list[dict]:
                 }
             )
     for error in state.get("errors", []) or []:
+        if str(error).strip().startswith("INFO:"):
+            continue
         reasons.append(
             {
                 "kind": "failed_required_artifact",
@@ -137,6 +139,10 @@ def _blocking_reasons(state: RoB2State) -> list[dict]:
 
 def _non_acceptance_reasons(state: RoB2State) -> list[dict]:
     reasons = []
+    reasons.extend(_overall_judgment_reasons(state))
+    reasons.extend(_unresolved_support_constraint_reasons(state))
+    reasons.extend(_local_guardrail_reasons(state))
+    reasons.extend(_degraded_retrieval_reasons(state))
     reasons.extend(_pivotal_support_reasons(state))
     for sq_id, readiness in _packet_readiness_items(state):
         status = readiness.get("status", "")
@@ -150,6 +156,94 @@ def _non_acceptance_reasons(state: RoB2State) -> list[dict]:
                 }
             )
     return reasons
+
+
+def _local_guardrail_reasons(state: RoB2State) -> list[dict]:
+    reasons = []
+    for sq_id, answer in (state.get("sq_answers") or {}).items():
+        if answer.get("answer") == "NA":
+            continue
+        applied = [
+            key
+            for key in (
+                "d3_time_to_event_guard_applied",
+                "d3_time_to_event_completeness_guard_applied",
+                "d3_safety_outcome_binding_guard_applied",
+                "d5_guard_applied",
+                "d5_prespecification_guard_applied",
+                "d4_objective_control_applied",
+                "d4_safety_measurement_guard_applied",
+                "d4_safety_influence_guard_applied",
+                "d4_safety_influence_source_guard_applied",
+                "d4_safety_possible_influence_guard_applied",
+                "d2_actual_deviation_guard_applied",
+                "d2_safety_analysis_guard_applied",
+                "d1_randomized_design_guard_applied",
+                "d1_concealment_guard_applied",
+                "d1_baseline_balance_guard_applied",
+                "d1_baseline_source_guard_applied",
+            )
+            if answer.get(key)
+        ]
+        for guard in applied:
+            reasons.append(
+                {
+                    "kind": "local_guardrail_applied",
+                    "sq_id": sq_id,
+                    "guard": guard,
+                    "reason": answer.get("support_rationale", ""),
+                }
+            )
+    return reasons
+
+
+def _degraded_retrieval_reasons(state: RoB2State) -> list[dict]:
+    warnings = (state.get("evidence") or {}).get("warnings", []) or []
+    reasons = []
+    for warning in warnings:
+        if "used lexical chunk retrieval fallback" not in str(warning):
+            continue
+        reasons.append(
+            {
+                "kind": "degraded_retrieval",
+                "reason": str(warning),
+            }
+        )
+    return reasons
+
+
+def _unresolved_support_constraint_reasons(state: RoB2State) -> list[dict]:
+    reasons = []
+    for constraint in state.get("support_constraints", []) or []:
+        sq_id = constraint.get("sq_id")
+        answer = (state.get("sq_answers") or {}).get(sq_id, {})
+        if answer.get("answer") == "NA":
+            continue
+        reasons.append(
+            {
+                "kind": "unresolved_support_constraint",
+                "sq_id": sq_id,
+                "constraint_type": constraint.get("constraint_type", "unknown"),
+                "reason": constraint.get("reason", ""),
+            }
+        )
+    return reasons
+
+
+def _overall_judgment_reasons(state: RoB2State) -> list[dict]:
+    judgment = judge_overall_artifact(
+        state.get("domain_judgments", {}), state.get("overall_policy", "official_rob2")
+    )
+    label = judgment.get("label", "")
+    if label in {"", "Low"}:
+        return []
+    return [
+        {
+            "kind": "overall_judgment_not_low",
+            "judgment": label,
+            "reason": judgment.get("rationale", ""),
+        }
+    ]
 
 
 def _pivotal_support_reasons(state: RoB2State) -> list[dict]:
@@ -205,10 +299,12 @@ def _packet_readiness_items(state: RoB2State) -> list[tuple[str, dict]]:
             sq_id: packet.get("packet_readiness", {})
             for sq_id, packet in (state.get("evidence_packets") or {}).items()
         }
+    sq_answers = state.get("sq_answers") or {}
     return [
         (sq_id, readiness)
         for sq_id, readiness in readiness_by_sq.items()
         if isinstance(readiness, dict)
+        and (sq_answers.get(sq_id) or {}).get("answer") != "NA"
     ]
 
 

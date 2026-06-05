@@ -263,7 +263,7 @@ If 2.3 is N/PN, answer 2.4 and 2.5 as NA. If 2.3 is Y/PY/NI, answer 2.4.
 
 If 2.4 is N/PN/NI/NA, answer 2.5 as NA. If 2.4 is Y/PY, answer 2.5.
 
-For open-label trials, absence of clear reporting about deviations, concomitant interventions, contamination, nonadherence, or protocol departures is not automatically reassuring; do not answer N or PN solely because no deviations are reported. Answer NI when the evidence does not actively support that deviations were absent or unlikely.
+For open-label trials, awareness alone is not a deviation. Answer N or PN for 2.3 when the selected evidence describes ordinary protocol-consistent care, ITT follow-up, or no indication that protocol-inconsistent intervention changes arose because of recruitment, engagement, unblinding, or trial personnel. Use NI only when deviations are actually described but the selected evidence cannot support a reasonable PY or PN judgment about whether they arose because of the trial context.
 """
     + SQ_SUPPORT_METADATA_INSTRUCTION
     + """
@@ -465,6 +465,8 @@ Before answering Q3.1, identify the numerator and denominator for outcome-data c
 
 If ClinicalTrials.gov participant flow data is provided above, use it as supporting participant disposition evidence for Q3.1. Do not assume treatment completion equals outcome-data availability; compare it with paper text about the assessed outcome and missing outcome data.
 
+For time-to-event outcomes such as progression-free survival, do not count observed outcome events (for example progression or death) as missing outcome data. Study-drug discontinuation because progression or death occurred is not itself missing outcome data unless the evidence says outcome follow-up was censored or stopped before the event was observed. Treat early censoring, loss to follow-up, withdrawal, switching, or stopping assigned intervention before outcome ascertainment as the missing-data concern.
+
 If 3.1 is Y/PY, answer 3.2-3.4 as NA.
 
 If 3.2 is Y/PY, answer 3.3-3.4 as NA. If 3.2 is N/PN, answer 3.3.
@@ -622,6 +624,8 @@ Answer Domain 5 signaling questions: Bias in selection of the reported result.
 IMPORTANT: You are assessing Domain 5 for the specific outcome: {outcome}. All three questions concern whether the {outcome} result was selectively reported. Do NOT reason about whether other outcomes were selectively reported or chosen. Each outcome is assessed independently.
 
 If a trial registration number is available, compare the registry/protocol outcomes and analysis intentions against the result being assessed. Focus on whether the numerical result was selected on the basis of the results, not merely whether the assessed outcome was primary or secondary.
+
+For Q5.2 and Q5.3, Y/PY means harmful selective reporting: the reported {outcome} result was chosen on the basis of the observed results from multiple eligible measurements or analyses. If the evidence says the {outcome} result matched the registry/protocol, was the prespecified primary endpoint, was fully reported, or no alternative measurement/analysis is shown, answer N or PN rather than Y/PY.
 """
     + SQ_SUPPORT_METADATA_INSTRUCTION
     + """
