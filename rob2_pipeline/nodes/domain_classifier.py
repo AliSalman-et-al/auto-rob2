@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -276,8 +277,27 @@ def _answer_quote_is_packet_bound(answer: dict, packet: EvidencePacket) -> bool:
     return any(quote in _normalize_quote(text) for text in packet_texts)
 
 
+# Typographic glyph variants that PDF extraction and LLM output disagree on,
+# which would otherwise make an identical quote fail the substring check.
+# Dashes: hyphen, non-breaking hyphen, figure dash, en/em dash, horizontal bar,
+# hyphen bullet, minus sign, small/fullwidth forms. Quotes: curly single and
+# double. Plus the ellipsis character.
+_DASH_VARIANTS_RE = re.compile(r"[‐‑‒–—―⁃−﹘﹣－]")
+_SINGLE_QUOTE_RE = re.compile(r"[‘’‚‛]")
+_DOUBLE_QUOTE_RE = re.compile(r"[“”„‟]")
+
+
 def _normalize_quote(text: str) -> str:
-    return " ".join(str(text).casefold().split())
+    # Fold typographic glyph variants so a quote that reproduces the source text
+    # with different glyphs (e.g. "Kaplan‑Meier" with a non-breaking hyphen, or
+    # "patients’" with a curly apostrophe) still matches. This does not weaken
+    # the guard's purpose of rejecting hallucinated or paraphrased quotes: only
+    # punctuation glyphs and whitespace are normalized, never words.
+    normalized = _DASH_VARIANTS_RE.sub("-", str(text))
+    normalized = _SINGLE_QUOTE_RE.sub("'", normalized)
+    normalized = _DOUBLE_QUOTE_RE.sub('"', normalized)
+    normalized = normalized.replace("…", "...")
+    return " ".join(normalized.casefold().split())
 
 
 def _classifier_fallback(

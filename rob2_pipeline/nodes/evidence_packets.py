@@ -123,6 +123,40 @@ def packet_block_for_domain(
     return compact("\n\n".join(parts), max_chars)
 
 
+def _select_with_coverage(
+    ranked: list, coverage_groups: tuple[tuple[str, ...], ...], limit: int
+) -> list:
+    """Select up to ``limit`` ranked sources, but first reserve one slot for
+    each coverage group that has a matching source.
+
+    Without coverage groups this is just the top-``limit`` by rank. With them,
+    the highest-ranked source matching each group is secured before the
+    remaining slots are filled by rank, so an SQ that needs two distinct kinds
+    of evidence (e.g. 5.3's pre-specified plan and reported methods) cannot have
+    the higher-ranking kind take every slot. Final order stays rank order.
+
+    Assumes ``len(coverage_groups) <= limit``. With more groups than slots, the
+    lowest-ranked reserved sources are dropped by the final cap.
+    """
+    if not coverage_groups:
+        return ranked[:limit]
+    chosen: list[int] = []
+    for group in coverage_groups:
+        for index, source in enumerate(ranked):
+            if index in chosen:
+                continue
+            text = (source.get("text") or "").casefold()
+            if any(term in text for term in group):
+                chosen.append(index)
+                break
+    for index in range(len(ranked)):
+        if len(chosen) >= limit:
+            break
+        if index not in chosen:
+            chosen.append(index)
+    return [ranked[index] for index in sorted(chosen)][:limit]
+
+
 def _build_packet_for_contract(
     state: RoB2State, contract: EvidenceContract
 ) -> EvidencePacket:
@@ -135,7 +169,7 @@ def _build_packet_for_contract(
             source.get("score", 1e9),
         ),
     )
-    selected = ranked[:3]
+    selected = _select_with_coverage(ranked, contract.coverage_groups, 3)
     text = "\n\n".join(
         source.get("text", "") for source in selected if source.get("text")
     )

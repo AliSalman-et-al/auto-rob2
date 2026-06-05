@@ -16,6 +16,40 @@ class EvidenceContract:
     needs_denominator: bool = False
     outcome_bound: bool = False
     needs_prespecification: bool = False
+    # Each group is a set of terms the packet must cover with at least one
+    # selected source when such a source exists, regardless of matched-term
+    # rank. This guarantees an SQ that needs two distinct kinds of evidence
+    # gets both, rather than letting the higher-ranking kind take every slot.
+    coverage_groups: tuple[tuple[str, ...], ...] = ()
+
+
+# SQ 5.3 ("was the result selected from multiple eligible analyses?") can only
+# be answered N/PN when the model sees BOTH the pre-specified analysis plan
+# ("what was planned") and the reported analysis methods ("what was done") and
+# can check they match. These two coverage groups reserve one packet slot for
+# each half so reported-methods sources cannot crowd the plan out (or vice
+# versa). REPORTED_METHODS_TERMS is also reused as 5.3 matching terms so the
+# best methods source ranks high within its group.
+# High-precision only: coverage reserves a packet slot for a matching source,
+# so a false match seats junk as the "plan" witness. Short ambiguous substrings
+# are deliberately excluded ("nct" matches "function"/"junction"; "sap" matches
+# "sapphire"); "registr" already covers registered/registration/registry.
+PRESPECIFICATION_COVERAGE_TERMS = (
+    "registr",
+    "protocol",
+    "statistical analysis plan",
+    "pre-spec",
+    "prespec",
+    "clinicaltrials",
+)
+REPORTED_METHODS_TERMS = (
+    "cox",
+    "kaplan",
+    "proportional",
+    "log-rank",
+    "log rank",
+    "restricted mean",
+)
 
 
 CONTRACTS: dict[str, EvidenceContract] = {
@@ -229,9 +263,16 @@ CONTRACTS: dict[str, EvidenceContract] = {
             "sap",
             "statistical analysis plan",
             "itt",
+            # Reported analysis-methods lexicon ranks the survival-methods
+            # sentence (Cox / Kaplan-Meier / log-rank) high within its coverage
+            # group. High-specificity tokens only; results-collision tokens
+            # ("hazard ratio", "stratified") and double-edged ones
+            # ("sensitivity", "covariate") are deliberately excluded.
+            *REPORTED_METHODS_TERMS,
         ),
         ("d5_registration", "d4_outcome_meas", "results"),
         outcome_bound=True,
+        coverage_groups=(PRESPECIFICATION_COVERAGE_TERMS, REPORTED_METHODS_TERMS),
     ),
 }
 
