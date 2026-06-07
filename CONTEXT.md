@@ -293,6 +293,13 @@ The shared interface for one LLM signaling-question stage. It records the graph
 node name, SQ ids, source-domain key, prompt builder, parser, and optional
 stage-local post-processing for answer corrections or NA control flow.
 
+### Packet-Bound SQ Classification
+
+The signaling-question classification mode where the selected Evidence Packet
+and its decision table are the only evidence authority for an SQ answer. D1-D5
+should use the same packet-bound classification concept even when domains have
+different branching or post-processing rules.
+
 ### Signaling Question Answer
 
 The parsed JSON-contract answer for one RoB 2 signaling question. It contains
