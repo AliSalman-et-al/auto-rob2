@@ -190,7 +190,12 @@ outcome-specific.
 
 The SQ-level contract that describes what an evidence packet needs: domain,
 required evidence labels, matching terms, fallback primary-paper sections, and
-flags such as denominator, outcome binding, or prespecification requirements.
+flags such as denominator, outcome binding, or prespecification requirements. It
+can also declare coverage groups: sets of terms where the packet must keep at
+least one selected source per group when one exists, so an SQ that needs two
+distinct kinds of evidence (e.g. D5 SQ 5.3's pre-specified-plan source and
+reported-analysis-methods source) does not let the higher-ranking kind take
+every slot.
 
 ### Evidence Packet
 

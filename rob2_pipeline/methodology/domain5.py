@@ -45,19 +45,19 @@ DOMAIN5_METHODOLOGY = DomainMethodology(
             "Was the result selected, on the basis of the results, from multiple eligible outcome measurements within the outcome domain?",
             {
                 "Y": ResponseRule(
-                    "Multiple eligible measurements existed, only a subset is reported without justification, and result-based selection is clear."
+                    "Selective reporting present (higher risk): the reported result for this outcome was chosen, on the basis of its value, from several pre-specified ways of measuring the same outcome (different scales, definitions, or time points). Answer Y only with specific evidence of such result-based selection."
                 ),
                 "PY": ResponseRule(
-                    "Multiple eligible measurements likely existed and reporting appears potentially selective."
+                    "Selective reporting may be present: multiple eligible measurements of this outcome likely existed and the reporting looks potentially result-driven, but result-based selection is not clearly shown."
                 ),
                 "PN": ResponseRule(
-                    "Most intended measurements are reported or omissions are explained."
+                    "Selective reporting probably absent: most intended measurements of this outcome are reported, or any omission is explained and unrelated to the result."
                 ),
                 "N": ResponseRule(
-                    "All intended eligible measurements are reported, only one measurement was possible, or inconsistencies are unrelated to results."
+                    "Selective reporting absent (lower risk): the pre-specified measurement of this outcome is reported as planned, only one measurement was possible, or any inconsistency is unrelated to the result. A pre-specified result reported as planned is N, not Y. Other distinct outcomes listed in the registry (for example a different endpoint) are not multiple eligible measurements of this outcome."
                 ),
                 "NI": ResponseRule(
-                    "Analysis intentions are unavailable or insufficient and multiple eligible measurements could have existed."
+                    "Analysis intentions are unavailable or insufficient and multiple eligible measurements of this outcome could have existed."
                 ),
             },
             [Citation(SUPP, "p.26-27")],
@@ -72,16 +72,16 @@ DOMAIN5_METHODOLOGY = DomainMethodology(
             "Was the result selected, on the basis of the results, from multiple eligible analyses of the data?",
             {
                 "Y": ResponseRule(
-                    "Multiple eligible analyses existed, only a subset is reported without justification, and result-based selection is clear."
+                    "Selective reporting present (higher risk): the reported result was chosen, on the basis of its value, from several pre-specified eligible analyses of the same data (for example adjusted vs unadjusted models, different covariate sets, or different handling of missing data). Answer Y only with specific evidence of such result-based selection."
                 ),
                 "PY": ResponseRule(
-                    "Multiple analyses likely existed and reporting appears potentially selective."
+                    "Selective reporting may be present: multiple eligible analyses likely existed and the reporting looks potentially result-driven, but result-based selection is not clearly shown."
                 ),
                 "PN": ResponseRule(
-                    "Intended analyses are mostly reported or omissions are explained."
+                    "Selective reporting probably absent: the intended analyses are mostly reported, or any omission is explained and unrelated to the result."
                 ),
                 "N": ResponseRule(
-                    "All intended analyses are reported, only one analysis was possible, or inconsistencies are unrelated to results."
+                    "Selective reporting absent (lower risk): the pre-specified analyses are reported as planned, only one analysis was possible, or any inconsistency is unrelated to the result. A pre-specified analysis reported as planned is N, not Y."
                 ),
                 "NI": ResponseRule(
                     "Analysis intentions are unavailable or insufficient and multiple eligible analyses could have existed."
