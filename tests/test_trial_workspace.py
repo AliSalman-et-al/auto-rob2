@@ -16,7 +16,6 @@ from rob2_pipeline.trial_workspace import (
     read_trial_workspace_manifest,
     write_evidence_store_trial_workspace,
     write_d1_judgment_workspace,
-    write_d1_sq_answer_workspace,
     write_domain_judgment_workspace,
     write_domain_sq_answer_workspace,
     write_outcome_normalization_workspace,
@@ -667,7 +666,7 @@ def test_outcome_normalization_workspace_persists_artifact_and_manifest_identity
     assert manifest.artifacts[0].content_hash == file_sha256(artifact_path)
 
 
-def test_d1_sq_answer_workspace_persists_loadable_artifact_and_contract_identity(
+def test_domain_sq_answer_workspace_persists_d1_loadable_artifact_and_contract_identity(
     tmp_path,
 ):
     trial_manifest_path = tmp_path / "trial_workspace" / "trial-workspace-manifest.json"
@@ -728,7 +727,8 @@ def test_d1_sq_answer_workspace_persists_loadable_artifact_and_contract_identity
         },
     }
 
-    manifest = write_d1_sq_answer_workspace(
+    manifest = write_domain_sq_answer_workspace(
+        domain="d1",
         trial_id="trial-001",
         outcome_id="overall-survival",
         workspace_root=tmp_path / "outcomes",
@@ -739,7 +739,7 @@ def test_d1_sq_answer_workspace_persists_loadable_artifact_and_contract_identity
         },
         outcome_definition={"outcome": "Overall survival"},
         rob2_settings={"effect_of_interest": "ITT"},
-        d1_sq_answer_artifact=artifact,
+        sq_answer_artifact=artifact,
         model_metadata={"provider": "openai", "model": "gpt-4.1"},
         contract_metadata={
             "schema_version": "d1-sq-answer-set-v1",
@@ -764,7 +764,8 @@ def test_d1_sq_answer_workspace_persists_loadable_artifact_and_contract_identity
     )
     assert identity.content_hash == file_sha256(artifact_path)
 
-    changed_contract = write_d1_sq_answer_workspace(
+    changed_contract = write_domain_sq_answer_workspace(
+        domain="d1",
         trial_id="trial-001",
         outcome_id="overall-survival",
         workspace_root=tmp_path / "other-outcomes",
@@ -775,7 +776,7 @@ def test_d1_sq_answer_workspace_persists_loadable_artifact_and_contract_identity
         },
         outcome_definition={"outcome": "Overall survival"},
         rob2_settings={"effect_of_interest": "ITT"},
-        d1_sq_answer_artifact=artifact,
+        sq_answer_artifact=artifact,
         model_metadata={"provider": "openai", "model": "gpt-4.1"},
         contract_metadata={
             "schema_version": "d1-sq-answer-set-v1",
@@ -789,14 +790,15 @@ def test_d1_sq_answer_workspace_persists_loadable_artifact_and_contract_identity
     assert changed_contract.artifacts[0].config_hash != identity.config_hash
 
 
-def test_d1_sq_answer_workspace_records_invalid_answers_and_missing_support_metadata(
+def test_domain_sq_answer_workspace_records_d1_invalid_answers_and_missing_support_metadata(
     tmp_path,
 ):
     trial_manifest_path = tmp_path / "trial_workspace" / "trial-workspace-manifest.json"
     trial_manifest_path.parent.mkdir(parents=True)
     trial_manifest_path.write_text('{"trial": "manifest"}\n', encoding="utf-8")
 
-    write_d1_sq_answer_workspace(
+    write_domain_sq_answer_workspace(
+        domain="d1",
         trial_id="trial-001",
         outcome_id="overall-survival",
         workspace_root=tmp_path / "outcomes",
@@ -804,7 +806,7 @@ def test_d1_sq_answer_workspace_records_invalid_answers_and_missing_support_meta
         upstream_artifact_paths={"trial-workspace-manifest": trial_manifest_path},
         outcome_definition={"outcome": "Overall survival"},
         rob2_settings={"effect_of_interest": "ITT"},
-        d1_sq_answer_artifact={
+        sq_answer_artifact={
             "artifact_id": "d1-sq-answer-set:overall-survival",
             "schema_version": "d1-sq-answer-set-v1",
             "domain": "d1",
