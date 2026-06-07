@@ -178,10 +178,6 @@ def _local_guardrail_reasons(state: RoB2State) -> list[dict]:
                 "d4_safety_possible_influence_guard_applied",
                 "d2_actual_deviation_guard_applied",
                 "d2_safety_analysis_guard_applied",
-                "d1_randomized_design_guard_applied",
-                "d1_concealment_guard_applied",
-                "d1_baseline_balance_guard_applied",
-                "d1_baseline_source_guard_applied",
             )
             if answer.get(key)
         ]
