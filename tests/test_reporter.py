@@ -77,7 +77,7 @@ def test_reviewer_report_renders_all_domains_from_assessment_artifacts():
     assert "cost_usd" not in reviewer_report
 
 
-def test_markdown_report_renders_d1_reviewer_skeleton_from_artifacts():
+def test_markdown_report_ignores_d1_reviewer_skeleton_artifact():
     state = {
         "d1_artifact": {
             "domain": "D1",
@@ -105,21 +105,22 @@ def test_markdown_report_renders_d1_reviewer_skeleton_from_artifacts():
             "cost_usd": 0.03,
         },
         "sq_answers": {},
-        "domain_judgments": {},
-        "domain_rationales": {},
+        "domain_judgments": {"D1": "Some concerns"},
+        "domain_rationales": {
+            "D1": "Sequence generation was reported, but concealment details were limited."
+        },
     }
 
     report = report_formatter_node(state)["markdown_report"]
 
-    assert "## D1 reviewer skeleton" in report
-    assert "**D1 judgment: Some concerns**" in report
+    assert "## D1 reviewer skeleton" not in report
+    assert "**Domain 1 judgment: Some concerns**" in report
     assert "Sequence generation was reported, but concealment details were limited." in report
-    assert "Automation confidence: needs_adjudication" in report
-    assert "One pivotal SQ has weak support." in report
-    assert "Patients were randomly assigned 1:1." in report
-    assert "**Strong**" in report
-    assert "Baseline ECOG performance status was imbalanced between groups." in report
-    assert "Allocation concealment quote does not identify who held the sequence." in report
+    assert "Automation confidence: needs_adjudication" not in report
+    assert "One pivotal SQ has weak support." not in report
+    assert "Patients were randomly assigned 1:1." not in report
+    assert "Baseline ECOG performance status was imbalanced between groups." not in report
+    assert "Allocation concealment quote does not identify who held the sequence." not in report
     assert "timing_ms" not in report
     assert "cost_usd" not in report
     assert "1250" not in report

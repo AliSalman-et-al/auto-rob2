@@ -134,95 +134,6 @@ def _list_item_text(item) -> str:
     return _clean_cell(str(item))
 
 
-def _d1_artifact_report_section(state: RoB2State) -> str:
-    artifact = state.get("d1_artifact") or state.get("d1_judgment_artifact") or {}
-    nested = (state.get("domain_sq_classifier_artifacts") or {}).get("d1") or {}
-    classifier = nested.get("sq") or state.get("d1_sq_classifier_artifact") or {}
-    if not artifact and not classifier:
-        return ""
-
-    judgment = artifact.get("judgment") or artifact.get("label") or state.get(
-        "domain_judgments", {}
-    ).get("D1", "Not assessed")
-    rationale = artifact.get("rationale") or state.get("domain_rationales", {}).get(
-        "D1", "Not assessed"
-    )
-    rows = [
-        "## D1 reviewer skeleton",
-        "",
-        f"**D1 judgment: {_clean_cell(judgment)}**",
-        f"**Algorithm rationale:** {_clean_cell(rationale)}",
-        "",
-    ]
-
-    confidence = artifact.get("automation_confidence") or state.get(
-        "automation_confidence", {}
-    ).get("D1")
-    if confidence:
-        if isinstance(confidence, dict):
-            status = _clean_cell(confidence.get("status", "Not reported"))
-            conf_rationale = _clean_cell(confidence.get("rationale", ""))
-            line = f"- Automation confidence: {status}"
-            if conf_rationale:
-                line = f"{line} ({conf_rationale})"
-            rows.extend(["### Automation confidence", line, ""])
-        else:
-            rows.extend(
-                [
-                    "### Automation confidence",
-                    f"- Automation confidence: {_clean_cell(str(confidence))}",
-                    "",
-                ]
-            )
-
-    evidence_items = artifact.get("key_evidence") or []
-    if not evidence_items and classifier.get("answers"):
-        evidence_items = [
-            {
-                "label": f"SQ {answer.get('sq_id', '?')}",
-                "claim": answer.get("justification", ""),
-                "quote": answer.get("quote", ""),
-                "support_level": answer.get("support_level", "unsupported"),
-            }
-            for answer in classifier.get("answers", [])
-        ]
-    if evidence_items:
-        rows.extend(["### Key evidence"])
-        for item in evidence_items:
-            if isinstance(item, dict):
-                support = _clean_cell(item.get("support_level", "unsupported")).title()
-                claim = _list_item_text(item)
-                quote = _clean_cell(item.get("quote", ""))
-                line = f"- **{support}**: {claim}"
-                if quote and quote != claim:
-                    line = f"{line} Quote: {quote}"
-                rows.append(line)
-            else:
-                rows.append(f"- {_list_item_text(item)}")
-        rows.append("")
-
-    contradictions = artifact.get("contradictions") or []
-    if contradictions:
-        rows.extend(["### Contradictions"])
-        rows.extend(f"- {_list_item_text(item)}" for item in contradictions)
-        rows.append("")
-
-    limitations = artifact.get("audit_limitations") or []
-    if not limitations:
-        limitations = [
-            f"D1 SQ {_clean_cell(test.get('sq_id', '?'))} has "
-            f"{_clean_cell(test.get('support_level', 'unsupported')).lower()} support."
-            for test in artifact.get("pivotality_tests", [])
-            if test.get("acceptance_status") == "audit_limited"
-        ]
-    if limitations:
-        rows.extend(["### Audit limitations"])
-        rows.extend(f"- {_list_item_text(item)}" for item in limitations)
-        rows.append("")
-
-    return "\n".join(rows)
-
-
 def _title_level(value: str) -> str:
     return _clean_cell(value).title()
 
@@ -472,9 +383,6 @@ def report_formatter_node(state: RoB2State) -> RoB2State:
     ]
     for domain in ["D1", "D2", "D3", "D4", "D5"]:
         parts.append(_domain_table(state, domain))
-    d1_artifact_report = _d1_artifact_report_section(state)
-    if d1_artifact_report:
-        parts.append(d1_artifact_report)
     adjudication_summary = _adjudication_summary_section(state)
     if adjudication_summary:
         parts.append(adjudication_summary)
