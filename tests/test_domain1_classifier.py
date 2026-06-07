@@ -2,6 +2,100 @@ from rob2_pipeline.models import empty_paper_evidence
 from rob2_pipeline.nodes.domain1 import domain1_sq_node
 
 
+def _ready_d1_packet(sq_id: str) -> dict:
+    return {
+        "artifact_id": f"evidence-packet:d1:{sq_id}",
+        "schema_version": "1.0",
+        "sq_id": sq_id,
+        "domain": "d1",
+        "required_evidence": ["sequence_generation"],
+        "sources": [
+            {
+                "text": "Randomization was performed centrally using a computer-generated sequence.",
+                "section": "Methods",
+                "page_numbers": [2],
+                "document_name": "trial.pdf",
+                "document_role": "primary",
+            }
+        ],
+        "candidate_facts": [
+            {
+                "artifact_id": f"evidence-fact:d1:{sq_id}:0",
+                "claim": "The random allocation sequence was computer-generated.",
+                "quote": "computer-generated sequence",
+                "support_level": "strong",
+            }
+        ],
+        "missing_evidence": [],
+        "negative_flags": [],
+        "decision_table": {
+            "artifact_id": f"decision-table:d1:{sq_id}",
+            "schema_version": "1.0",
+            "sq_id": sq_id,
+            "allowed_answers": ["Y", "PY", "PN", "N", "NI"],
+            "rows": [
+                {
+                    "answer": "Y",
+                    "rule": "Random component in sequence generation is described.",
+                    "allowed_by_packet": True,
+                    "supporting_facts": [
+                        {
+                            "artifact_id": f"evidence-fact:d1:{sq_id}:0",
+                            "claim": "The random allocation sequence was computer-generated.",
+                        }
+                    ],
+                    "evidence_gaps": [],
+                }
+            ],
+            "default_insufficient_evidence_answer": "NI",
+            "classifier_instruction": "Use only selected packet evidence.",
+        },
+        "packet_readiness": {"status": "ready"},
+    }
+
+
+def _base_state_with_ready_d1_packets() -> dict:
+    return {
+        "evidence": empty_paper_evidence("test"),
+        "intervention": "Drug A",
+        "comparator": "Placebo",
+        "outcome": "Overall Survival",
+        "ctgov_design": "",
+        "rag_contexts": {"d1": "outside generic retrieved text"},
+        "rag_chunk_metadata": {},
+        "trial_facts": {},
+        "sq_answers": {},
+        "evidence_packets": {
+            sq_id: _ready_d1_packet(sq_id) for sq_id in ("1.1", "1.2", "1.3")
+        },
+    }
+
+
+def test_domain1_ready_packets_delegate_to_generic_classifier(monkeypatch):
+    state = _base_state_with_ready_d1_packets()
+    captured = {}
+
+    def fake_run_json_sq_classifier(state, **kwargs):
+        captured.update(kwargs)
+        return {"sq_answers": {"1.1": {"answer": "Y"}}}
+
+    monkeypatch.setattr(
+        "rob2_pipeline.nodes.domain1.run_json_sq_classifier",
+        fake_run_json_sq_classifier,
+    )
+
+    result = domain1_sq_node(state)
+
+    assert result == {"sq_answers": {"1.1": {"answer": "Y"}}}
+    assert captured == {
+        "domain": "d1",
+        "stage": "sq",
+        "sq_ids": ("1.1", "1.2", "1.3"),
+        "node_name": "domain1_sq_json",
+        "artifact_key": "d1_sq_classifier_artifact",
+    }
+
+
 def test_domain1_sq_node_classifies_ready_packets_with_json_contract(monkeypatch):
     captured = {}
     evidence = empty_paper_evidence("test")

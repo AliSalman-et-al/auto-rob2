@@ -36,12 +36,12 @@ DOMAIN1_STAGE = DomainSqStage(
 
 
 def domain1_sq_node(state: RoB2State) -> RoB2State:
-    if has_ready_packets(state, domain="d1", sq_ids=D1_SQ_IDS):
+    if has_ready_packets(state, domain="d1", sq_ids=DOMAIN1_STAGE.sq_ids):
         return run_json_sq_classifier(
             state,
             domain="d1",
             stage="sq",
-            sq_ids=D1_SQ_IDS,
+            sq_ids=DOMAIN1_STAGE.sq_ids,
             node_name="domain1_sq_json",
             artifact_key="d1_sq_classifier_artifact",
         )
