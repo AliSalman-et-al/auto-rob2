@@ -192,6 +192,12 @@ LLM invocation, chunk-source logging, parsed-answer merging, and optional
 post-processing in one place while leaving prompt assembly in
 `domain_context.py` and deterministic judging in `judges/`.
 
+When ready evidence packets are available, domain SQ nodes use the generic
+packet-bound JSON classifier and persist classifier artifacts under
+`domain_sq_classifier_artifacts[domain][stage]`. Domain 1 follows this generic
+path specifically because ADR-0005 removed its former D1-only answer-rewriting
+controls, artifact state keys, and engineering diagnostics.
+
 ### LLM Calls
 
 All graph LLM calls go through `call_node_llm()` in
@@ -272,7 +278,7 @@ Important state groups:
 | Retrieval | `rag_contexts`, `rag_chunk_metadata`, `retrieval_grades`, `trial_retrieval_indexes` |
 | Packets | `evidence_packets`, `evidence_facts`, `packet_grades` |
 | Prompt context | Derived in `domain_context.py`; not persisted in state |
-| Judgments | `sq_answers`, `initial_domain_judgments`, `domain_judgments`, `overall_judgment` |
+| Judgments | `sq_answers`, `domain_sq_classifier_artifacts`, `initial_domain_judgments`, `domain_judgments`, `overall_judgment` |
 | Support audit | `pivotality_tests`, `sq_support_adjudications`, `support_constraints` |
 | Quality | `evidence_validation_flags`, `verification_actions`, `human_review_priority` |
 | Diagnostics | `errors`, `llm_call_log`, `verifier_trace` |

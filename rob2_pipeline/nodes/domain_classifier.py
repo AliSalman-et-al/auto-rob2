@@ -34,8 +34,8 @@ class OutcomeSpecificConcernArtifact(BaseModel):
 
 
 class DomainSqClassifierArtifact(BaseModel):
-    schema_version: str = Field(pattern=r"^d[2-5]-sq-classifier-v1$")
-    domain: Literal["d2", "d3", "d4", "d5"]
+    schema_version: str = Field(pattern=r"^d[1-5]-sq-classifier-v1$")
+    domain: Literal["d1", "d2", "d3", "d4", "d5"]
     stage: str = Field(min_length=1)
     branching: dict = Field(default_factory=dict)
     outcome_specific_concerns: list[OutcomeSpecificConcernArtifact] = Field(
@@ -57,7 +57,7 @@ def run_json_sq_classifier(
     stage: str,
     sq_ids: tuple[str, ...],
     node_name: str,
-    artifact_key: str,
+    artifact_key: str | None = None,
     branching: dict | None = None,
     outcome_specific_concerns: list[dict] | None = None,
     postprocess=None,
@@ -94,11 +94,14 @@ def run_json_sq_classifier(
     sq_answers = merge_sq_answers(state, parsed)
     if postprocess is not None:
         sq_answers = postprocess(state, sq_answers)
-    return {
+    update = {
         "sq_answers": sq_answers,
         "llm_call_log": log,
-        artifact_key: artifact,
+        "domain_sq_classifier_artifacts": {domain: {stage: artifact}},
     }
+    if artifact_key is not None:
+        update[artifact_key] = artifact
+    return update
 
 
 def has_ready_packets(state: RoB2State, *, domain: str, sq_ids: tuple[str, ...]) -> bool:

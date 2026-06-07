@@ -670,6 +670,39 @@ def test_automation_confidence_rejects_local_guardrail_corrections():
     )
 
 
+def test_automation_confidence_ignores_removed_d1_guard_flags():
+    result = overall_judge_node(
+        {
+            "domain_judgments": _complete_low_domain_judgments(),
+            "sq_answers": {
+                "1.1": {
+                    "answer": "Y",
+                    "support_level": "moderate",
+                    "d1_randomized_design_guard_applied": True,
+                },
+                "1.2": {
+                    "answer": "PY",
+                    "support_level": "moderate",
+                    "d1_concealment_guard_applied": True,
+                },
+                "1.3": {
+                    "answer": "N",
+                    "support_level": "moderate",
+                    "d1_baseline_balance_guard_applied": True,
+                    "d1_baseline_source_guard_applied": True,
+                },
+            },
+        }
+    )
+
+    confidence = result["automation_confidence"]
+    assert confidence["status"] == "auto_accept_candidate"
+    assert not any(
+        reason.get("guard", "").startswith("d1_")
+        for reason in confidence["non_acceptance_reasons"]
+    )
+
+
 def test_automation_confidence_rejects_degraded_retrieval_fallback():
     result = overall_judge_node(
         {
@@ -1007,7 +1040,7 @@ def test_d3_judge_node_reapplies_branch_control_after_adjudication(monkeypatch):
     assert result["sq_answers"]["3.4"]["answer"] == "NA"
 
 
-def test_d1_judge_corrects_baseline_balance_polarity_after_adjudication(monkeypatch):
+def test_d1_judge_keeps_post_adjudication_sq_answers_without_local_rewrite(monkeypatch):
     def fake_add_domain_judgment_with_pivotality_tests(*args, **kwargs):
         return {
             "sq_answers": {
@@ -1046,192 +1079,9 @@ def test_d1_judge_corrects_baseline_balance_polarity_after_adjudication(monkeypa
         }
     )
 
-    assert result["sq_answers"]["1.3"]["answer"] == "N"
-    assert result["sq_answers"]["1.3"]["d1_baseline_balance_guard_applied"] is True
-    assert result["domain_judgments"]["D1"] == "Low"
-
-
-def test_d1_judge_uses_authoritative_randomized_design_evidence(monkeypatch):
-    def fake_add_domain_judgment_with_pivotality_tests(*args, **kwargs):
-        return {
-            "sq_answers": {
-                "1.1": {
-                    "answer": "NI",
-                    "quote": "No relevant text found",
-                    "justification": "Packet did not include sequence evidence.",
-                    "support_level": "unsupported",
-                },
-                "1.2": {"answer": "NI", "support_level": "unsupported"},
-                "1.3": {"answer": "NI", "support_level": "unsupported"},
-            },
-            "domain_judgments": {"D1": "Some concerns"},
-            "domain_rationales": {"D1": "Sequence unclear."},
-            "pivotality_tests": {"D1": []},
-            "sq_support_adjudications": {"D1": []},
-        }
-
-    monkeypatch.setattr(
-        "rob2_pipeline.nodes.domain1.add_domain_judgment_with_pivotality_tests",
-        fake_add_domain_judgment_with_pivotality_tests,
-    )
-
-    result = domain1_judge_node(
-        {
-            "outcome": "Adverse Events",
-            "ctgov_design": "Allocation type: RANDOMIZED",
-            "sq_answers": {
-                "1.1": {"answer": "NI", "support_level": "unsupported"},
-                "1.2": {"answer": "NI", "support_level": "unsupported"},
-                "1.3": {"answer": "NI", "support_level": "unsupported"},
-            },
-            "domain_judgments": {},
-            "domain_rationales": {},
-        }
-    )
-
-    assert result["sq_answers"]["1.1"]["answer"] == "Y"
-    assert result["sq_answers"]["1.1"]["d1_randomized_design_guard_applied"] is True
-
-
-def test_d1_judge_uses_blinded_randomized_placebo_as_probable_concealment(
-    monkeypatch,
-):
-    def fake_add_domain_judgment_with_pivotality_tests(*args, **kwargs):
-        return {
-            "sq_answers": {
-                "1.1": {"answer": "Y", "support_level": "strong"},
-                "1.2": {
-                    "answer": "NI",
-                    "quote": "double‑blind placebo-controlled randomized trial",
-                    "justification": "No central randomization details.",
-                    "support_level": "unsupported",
-                },
-                "1.3": {"answer": "NI", "support_level": "unsupported"},
-            },
-            "domain_judgments": {"D1": "Some concerns"},
-            "domain_rationales": {"D1": "Concealment unclear."},
-            "pivotality_tests": {"D1": []},
-            "sq_support_adjudications": {"D1": []},
-        }
-
-    monkeypatch.setattr(
-        "rob2_pipeline.nodes.domain1.add_domain_judgment_with_pivotality_tests",
-        fake_add_domain_judgment_with_pivotality_tests,
-    )
-
-    result = domain1_judge_node(
-        {
-            "outcome": "Progression-Free Survival",
-            "ctgov_design": "Allocation type: RANDOMIZED; Masking: QUADRUPLE",
-            "sq_answers": {
-                "1.1": {"answer": "Y", "support_level": "strong"},
-                "1.2": {"answer": "NI", "support_level": "unsupported"},
-                "1.3": {"answer": "NI", "support_level": "unsupported"},
-            },
-            "domain_judgments": {},
-            "domain_rationales": {},
-        }
-    )
-
-    assert result["sq_answers"]["1.2"]["answer"] == "PY"
-    assert result["sq_answers"]["1.2"]["d1_concealment_guard_applied"] is True
-    assert result["domain_judgments"]["D1"] == "Low"
-
-
-def test_d1_judge_uses_central_randomization_despite_open_label(monkeypatch):
-    def fake_add_domain_judgment_with_pivotality_tests(*args, **kwargs):
-        return {
-            "sq_answers": {
-                "1.1": {"answer": "Y", "support_level": "strong"},
-                "1.2": {
-                    "answer": "NI",
-                    "quote": (
-                        "Eligible patients were centrally randomly assigned "
-                        "in the Alea Clinical Portal."
-                    ),
-                    "justification": "Open-label trial; concealment not stated.",
-                    "support_level": "unsupported",
-                },
-                "1.3": {"answer": "NI", "support_level": "unsupported"},
-            },
-            "domain_judgments": {"D1": "Some concerns"},
-            "domain_rationales": {"D1": "Concealment unclear."},
-            "pivotality_tests": {"D1": []},
-            "sq_support_adjudications": {"D1": []},
-        }
-
-    monkeypatch.setattr(
-        "rob2_pipeline.nodes.domain1.add_domain_judgment_with_pivotality_tests",
-        fake_add_domain_judgment_with_pivotality_tests,
-    )
-
-    result = domain1_judge_node(
-        {
-            "outcome": "Adverse Events",
-            "ctgov_design": "Allocation type: RANDOMIZED; Masking: NONE",
-            "sq_answers": {
-                "1.1": {"answer": "Y", "support_level": "strong"},
-                "1.2": {"answer": "NI", "support_level": "unsupported"},
-                "1.3": {"answer": "NI", "support_level": "unsupported"},
-            },
-            "domain_judgments": {},
-            "domain_rationales": {},
-        }
-    )
-
-    assert result["sq_answers"]["1.2"]["answer"] == "PY"
-    assert result["sq_answers"]["1.2"]["d1_concealment_guard_applied"] is True
-    assert result["domain_judgments"]["D1"] == "Low"
-
-
-def test_d1_judge_rejects_post_randomization_treatment_as_baseline_imbalance(
-    monkeypatch,
-):
-    def fake_add_domain_judgment_with_pivotality_tests(*args, **kwargs):
-        return {
-            "sq_answers": {
-                "1.1": {"answer": "Y", "support_level": "strong"},
-                "1.2": {"answer": "Y", "support_level": "strong"},
-                "1.3": {
-                    "answer": "Y",
-                    "quote": (
-                        "treated by at least one life-prolonging therapy ... "
-                        "subsequently ... next-generation hormonal therapy"
-                    ),
-                    "justification": (
-                        "Post-progression treatment differed between groups."
-                    ),
-                    "support_level": "strong",
-                    "supporting_fact_artifact_ids": ["fact"],
-                },
-            },
-            "domain_judgments": {"D1": "Some concerns"},
-            "domain_rationales": {"D1": "Baseline imbalance concern."},
-            "pivotality_tests": {"D1": []},
-            "sq_support_adjudications": {"D1": []},
-        }
-
-    monkeypatch.setattr(
-        "rob2_pipeline.nodes.domain1.add_domain_judgment_with_pivotality_tests",
-        fake_add_domain_judgment_with_pivotality_tests,
-    )
-
-    result = domain1_judge_node(
-        {
-            "outcome": "Adverse Events",
-            "sq_answers": {
-                "1.1": {"answer": "Y", "support_level": "strong"},
-                "1.2": {"answer": "Y", "support_level": "strong"},
-                "1.3": {"answer": "Y", "support_level": "strong"},
-            },
-            "domain_judgments": {},
-            "domain_rationales": {},
-        }
-    )
-
-    assert result["sq_answers"]["1.3"]["answer"] == "NI"
-    assert result["sq_answers"]["1.3"]["d1_baseline_source_guard_applied"] is True
-    assert result["domain_judgments"]["D1"] == "Low"
+    assert result["sq_answers"]["1.3"]["answer"] == "Y"
+    assert "d1_baseline_balance_guard_applied" not in result["sq_answers"]["1.3"]
+    assert result["domain_judgments"]["D1"] == "Some concerns"
 
 
 def test_d2_judge_reapplies_actual_deviation_guard_after_adjudication(monkeypatch):

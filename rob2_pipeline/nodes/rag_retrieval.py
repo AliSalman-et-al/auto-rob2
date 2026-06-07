@@ -6,7 +6,6 @@ from rob2_pipeline.rag import (
     build_index,
     grade_retrieved_context,
     retrieve_adaptive,
-    retrieve_lexical,
 )
 from rob2_pipeline.rag_queries import domain_queries
 from rob2_pipeline.state import RoB2State
@@ -121,25 +120,13 @@ def rag_retrieval_node(state: RoB2State) -> dict:
                 )
             rag_contexts = _compat_contexts(domain_contexts)
         except Exception as error:  # noqa: BLE001
-            domain_contexts = {}
-            for domain in _DOMAINS:
-                text, metas = retrieve_lexical(
-                    chunks,
-                    domain_queries(domain),
-                    section_keywords=DOMAIN_SECTION_FILTERS.get(domain, []),
-                )
-                domain_contexts[domain] = text
-                rag_chunk_metadata[domain] = [dict(meta) for meta in metas]
-                retrieval_grades[domain] = grade_retrieved_context(
-                    domain, text, rag_chunk_metadata[domain]
-                )
-            fallback_contexts = _sections_fallback(state["evidence"])
-            rag_contexts = _compat_contexts(domain_contexts)
-            for key, fallback_text in fallback_contexts.items():
-                if not rag_contexts.get(key):
-                    rag_contexts[key] = fallback_text
+            rag_contexts = _sections_fallback(state["evidence"])
+            retrieval_grades = {
+                domain: grade_retrieved_context(domain, rag_contexts.get(domain, ""), [])
+                for domain in _DOMAINS
+            }
             retrieval_mode_warning = (
-                "RAG vector retrieval failed; used lexical chunk retrieval fallback: "
+                "RAG retrieval failed; used section evidence fallback: "
                 f"{error}"
             )
             state["evidence"]["warnings"].append(retrieval_mode_warning)
