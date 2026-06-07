@@ -57,7 +57,7 @@ def run_json_sq_classifier(
     stage: str,
     sq_ids: tuple[str, ...],
     node_name: str,
-    artifact_key: str,
+    artifact_key: str | None = None,
     branching: dict | None = None,
     outcome_specific_concerns: list[dict] | None = None,
     postprocess=None,
@@ -94,12 +94,14 @@ def run_json_sq_classifier(
     sq_answers = merge_sq_answers(state, parsed)
     if postprocess is not None:
         sq_answers = postprocess(state, sq_answers)
-    return {
+    update = {
         "sq_answers": sq_answers,
         "llm_call_log": log,
-        artifact_key: artifact,
         "domain_sq_classifier_artifacts": {domain: {stage: artifact}},
     }
+    if artifact_key is not None:
+        update[artifact_key] = artifact
+    return update
 
 
 def has_ready_packets(state: RoB2State, *, domain: str, sq_ids: tuple[str, ...]) -> bool:

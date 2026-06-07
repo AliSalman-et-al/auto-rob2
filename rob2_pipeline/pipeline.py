@@ -374,7 +374,6 @@ def _domain_classifier_artifacts_from_state(
             if isinstance(artifact, dict)
         ]
     keys_by_domain = {
-        "d1": ("d1_sq_classifier_artifact",),
         "d2": (
             "d2_sq12_classifier_artifact",
             "d2_conditional_classifier_artifact",

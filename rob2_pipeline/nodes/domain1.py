@@ -42,7 +42,6 @@ def domain1_sq_node(state: RoB2State) -> RoB2State:
             stage="sq",
             sq_ids=DOMAIN1_STAGE.sq_ids,
             node_name="domain1_sq_json",
-            artifact_key="d1_sq_classifier_artifact",
         )
     return run_domain_sq_stage(state, DOMAIN1_STAGE)
 

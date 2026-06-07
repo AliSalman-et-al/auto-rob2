@@ -92,7 +92,6 @@ def test_domain1_ready_packets_delegate_to_generic_classifier(monkeypatch):
         "stage": "sq",
         "sq_ids": ("1.1", "1.2", "1.3"),
         "node_name": "domain1_sq_json",
-        "artifact_key": "d1_sq_classifier_artifact",
     }
 
 
