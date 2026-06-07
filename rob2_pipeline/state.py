@@ -89,6 +89,7 @@ class RoB2State(TypedDict, total=False):
 
     # === SIGNALING QUESTION ANSWERS ===
     sq_answers: Annotated[dict[str, dict], merge_dicts]
+    domain_sq_classifier_artifacts: Annotated[dict[str, dict[str, dict]], merge_dicts]
 
     # === DOMAIN JUDGMENTS (set by deterministic nodes) ===
     initial_domain_judgments: Annotated[dict[str, str], merge_dicts]

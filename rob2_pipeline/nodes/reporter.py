@@ -136,7 +136,8 @@ def _list_item_text(item) -> str:
 
 def _d1_artifact_report_section(state: RoB2State) -> str:
     artifact = state.get("d1_artifact") or state.get("d1_judgment_artifact") or {}
-    classifier = state.get("d1_sq_classifier_artifact") or {}
+    nested = (state.get("domain_sq_classifier_artifacts") or {}).get("d1") or {}
+    classifier = nested.get("sq") or state.get("d1_sq_classifier_artifact") or {}
     if not artifact and not classifier:
         return ""
 

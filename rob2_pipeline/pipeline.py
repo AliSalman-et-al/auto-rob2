@@ -189,7 +189,7 @@ def _write_workspace_artifacts(
         ),
         model_metadata=_model_metadata_from_state(state),
     )
-    if state.get("d1_sq_classifier_artifact"):
+    if _d1_classifier_artifact_from_state(state):
         write_d1_sq_answer_workspace(
             trial_id=base,
             outcome_id=_outcome_id_from_state(state),
@@ -273,7 +273,7 @@ def _write_workspace_artifacts(
                 rob2_settings=_rob2_settings_from_state(state),
                 judgment_artifact=state[judgment_key],
             )
-    if state.get("d1_sq_classifier_artifact") or state.get("d1_judgment_artifact"):
+    if _d1_classifier_artifact_from_state(state) or state.get("d1_judgment_artifact"):
         write_d1_engineering_diagnostics_workspace(
             trial_id=base,
             outcome_id=_outcome_id_from_state(state),
@@ -398,7 +398,7 @@ def _model_metadata_from_state(state: RoB2State) -> dict:
 
 
 def _d1_sq_answer_artifact_from_state(state: RoB2State) -> dict:
-    classifier_artifact = state["d1_sq_classifier_artifact"]
+    classifier_artifact = _d1_classifier_artifact_from_state(state) or {}
     return {
         "artifact_id": f"d1-sq-answer-set:{_outcome_id_from_state(state)}",
         "schema_version": "d1-sq-answer-set-v1",
@@ -420,7 +420,7 @@ def _d1_contract_metadata_from_state(state: RoB2State) -> dict:
     return {
         "schema_version": "d1-sq-answer-set-v1",
         "classifier_schema_version": log_entry.get("schema_version")
-        or state.get("d1_sq_classifier_artifact", {}).get("schema_version", ""),
+        or (_d1_classifier_artifact_from_state(state) or {}).get("schema_version", ""),
         "classifier_prompt_version": log_entry.get("prompt_version", ""),
         "retry_policy": {"max_attempts": max_attempts},
         "model_affecting_settings": {
@@ -434,6 +434,13 @@ def _domain_classifier_artifacts_from_state(
     state: RoB2State,
     domain: str,
 ) -> list[dict]:
+    nested = (state.get("domain_sq_classifier_artifacts") or {}).get(domain) or {}
+    if nested:
+        return [
+            artifact
+            for _stage, artifact in sorted(nested.items())
+            if isinstance(artifact, dict)
+        ]
     keys_by_domain = {
         "d2": (
             "d2_sq12_classifier_artifact",
@@ -523,7 +530,7 @@ def _d1_sq_answer_upstream_path(
     base: str,
     state: RoB2State,
 ) -> dict[str, Path]:
-    if not state.get("d1_sq_classifier_artifact"):
+    if not _d1_classifier_artifact_from_state(state):
         return {}
     outcome_dir = re.sub(r"[^A-Za-z0-9_.-]+", "_", _outcome_id_from_state(state))
     return {
@@ -532,6 +539,15 @@ def _d1_sq_answer_upstream_path(
         / outcome_dir
         / "d1-sq-answers.json"
     }
+
+
+def _d1_classifier_artifact_from_state(state: RoB2State) -> dict | None:
+    nested = (state.get("domain_sq_classifier_artifacts") or {}).get("d1") or {}
+    artifact = nested.get("sq")
+    if isinstance(artifact, dict):
+        return artifact
+    legacy = state.get("d1_sq_classifier_artifact")
+    return legacy if isinstance(legacy, dict) else None
 
 
 def _domain_sq_answer_upstream_path(

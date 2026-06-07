@@ -507,47 +507,6 @@ class _FakeProvider:
         return LLMResponse(_response_by_node(node_name), "test-model", 1, 1, 1.0)
 
 
-def _d1_contract_result(state, prompt, node_name, **kwargs):
-    del state, prompt, kwargs
-    return {
-        "artifact": {
-            "schema_version": "d1-sq-classifier-v1",
-            "domain": "d1",
-            "answers": [
-                _d1_contract_answer("1.1", "Y", "computer-generated sequence"),
-                _d1_contract_answer("1.2", "Y", "concealed centrally"),
-                _d1_contract_answer("1.3", "N", "baseline balanced"),
-            ],
-        },
-        "log": [
-            {
-                "node": node_name,
-                "validation_status": "validated",
-                "model": "test-model",
-                "prompt_version": "d1-sq-classifier-prompt-v1",
-                "schema_version": "d1-sq-classifier-v1",
-                "attempts": [{"attempt": 1}],
-            }
-        ],
-        "status": "validated",
-    }
-
-
-def _d1_contract_answer(sq_id: str, answer: str, quote: str) -> dict:
-    return {
-        "sq_id": sq_id,
-        "answer": answer,
-        "quote": quote,
-        "justification": "Selected D1 packet evidence supports this answer.",
-        "support_level": "strong",
-        "support_rationale": "Supported by selected packet evidence.",
-        "uncertainty": False,
-        "packet_artifact_id": f"evidence-packet:d1:{sq_id}",
-        "decision_table_artifact_id": f"decision-table:d1:{sq_id}",
-        "supporting_fact_artifact_ids": [],
-    }
-
-
 def _domain_contract_result(state, prompt, node_name, **kwargs):
     del kwargs
     payload = json.loads(prompt.split("\n\n", 1)[1])
@@ -599,6 +558,9 @@ def _domain_contract_result(state, prompt, node_name, **kwargs):
 def _contract_answer_for_sq(state: dict, sq_id: str) -> tuple[str, str]:
     is_pfs = state.get("outcome") == "Progression-Free Survival"
     pfs_answers = {
+        "1.1": ("Y", "computer-generated sequence"),
+        "1.2": ("Y", "concealed centrally"),
+        "1.3": ("N", "baseline balanced"),
         "2.1": ("Y", "Open-label treatment assignment"),
         "2.2": ("Y", "Open-label treatment assignment"),
         "2.3": ("N", "no important protocol deviations"),
@@ -620,6 +582,9 @@ def _contract_answer_for_sq(state: dict, sq_id: str) -> tuple[str, str]:
         "5.3": ("N", "intention-to-treat"),
     }
     os_answers = {
+        "1.1": ("Y", "computer-generated sequence"),
+        "1.2": ("Y", "concealed centrally"),
+        "1.3": ("N", "baseline balanced"),
         "2.1": ("N", "Participants and investigators were blinded"),
         "2.2": ("N", "Participants and investigators were blinded"),
         "2.6": ("Y", "intention-to-treat analysis"),
@@ -774,10 +739,6 @@ def test_graph_happy_path_with_mocked_llm(tmp_path):
     with (
         patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
         patch(
-            "rob2_pipeline.nodes.domain1.call_json_contract_llm",
-            side_effect=_d1_contract_result,
-        ),
-        patch(
             "rob2_pipeline.nodes.domain_classifier.call_json_contract_llm",
             side_effect=_domain_contract_result,
         ),
@@ -814,10 +775,6 @@ def test_graph_finalization_waits_for_all_domain_judges(tmp_path):
         start_trace(trial="trial", outcome="mortality")
         with (
             patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
-            patch(
-                "rob2_pipeline.nodes.domain1.call_json_contract_llm",
-                side_effect=_d1_contract_result,
-            ),
             patch(
                 "rob2_pipeline.nodes.domain_classifier.call_json_contract_llm",
                 side_effect=_domain_contract_result,
@@ -883,10 +840,6 @@ def test_graph_stops_for_non_rct(tmp_path):
         patch("rob2_pipeline.nodes.ingest.call_json_contract_llm", _non_rct_contract),
         patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
         patch(
-            "rob2_pipeline.nodes.domain1.call_json_contract_llm",
-            side_effect=_d1_contract_result,
-        ),
-        patch(
             "rob2_pipeline.nodes.domain_classifier.call_json_contract_llm",
             side_effect=_domain_contract_result,
         ),
@@ -921,10 +874,6 @@ def test_rct_screener_prompt_includes_randomization_context(tmp_path):
         patch("rob2_pipeline.nodes.ingest.call_json_contract_llm", _capture_rct_contract),
         patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
         patch(
-            "rob2_pipeline.nodes.domain1.call_json_contract_llm",
-            side_effect=_d1_contract_result,
-        ),
-        patch(
             "rob2_pipeline.nodes.domain_classifier.call_json_contract_llm",
             side_effect=_domain_contract_result,
         ),
@@ -946,10 +895,6 @@ def test_run_assessment_writes_outputs(tmp_path):
     provider = _FakeProvider()
     with (
         patch("rob2_pipeline.nodes.common.build_provider", return_value=provider),
-        patch(
-            "rob2_pipeline.nodes.domain1.call_json_contract_llm",
-            side_effect=_d1_contract_result,
-        ),
         patch(
             "rob2_pipeline.nodes.domain_classifier.call_json_contract_llm",
             side_effect=_domain_contract_result,

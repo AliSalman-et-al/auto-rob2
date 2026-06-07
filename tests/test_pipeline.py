@@ -226,14 +226,21 @@ def test_workspace_output_writes_d1_sq_answer_artifact(tmp_path):
             "label": "Some concerns",
             "rationale": "Row: Any / NI / N-PN-NI -> Some concerns (concealment unclear)",
         },
-        "d1_sq_classifier_artifact": {
-            "schema_version": "d1-sq-classifier-v1",
-            "domain": "d1",
-            "answers": [
-                _d1_answer("1.1", "Y"),
-                _d1_answer("1.2", "NI", support_level="unsupported"),
-                _d1_answer("1.3", "N"),
-            ],
+        "domain_sq_classifier_artifacts": {
+            "d1": {
+                "sq": {
+                    "schema_version": "d1-sq-classifier-v1",
+                    "domain": "d1",
+                    "stage": "sq",
+                    "branching": {},
+                    "outcome_specific_concerns": [],
+                    "answers": [
+                        _d1_answer("1.1", "Y"),
+                        _d1_answer("1.2", "NI", support_level="unsupported"),
+                        _d1_answer("1.3", "N"),
+                    ],
+                }
+            }
         },
         "llm_call_log": [
             {

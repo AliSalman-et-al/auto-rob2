@@ -34,8 +34,8 @@ class OutcomeSpecificConcernArtifact(BaseModel):
 
 
 class DomainSqClassifierArtifact(BaseModel):
-    schema_version: str = Field(pattern=r"^d[2-5]-sq-classifier-v1$")
-    domain: Literal["d2", "d3", "d4", "d5"]
+    schema_version: str = Field(pattern=r"^d[1-5]-sq-classifier-v1$")
+    domain: Literal["d1", "d2", "d3", "d4", "d5"]
     stage: str = Field(min_length=1)
     branching: dict = Field(default_factory=dict)
     outcome_specific_concerns: list[OutcomeSpecificConcernArtifact] = Field(
@@ -98,6 +98,7 @@ def run_json_sq_classifier(
         "sq_answers": sq_answers,
         "llm_call_log": log,
         artifact_key: artifact,
+        "domain_sq_classifier_artifacts": {domain: {stage: artifact}},
     }
 
 

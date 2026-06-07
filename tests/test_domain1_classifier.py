@@ -122,7 +122,10 @@ def test_domain1_sq_node_classifies_ready_packets_with_json_contract(monkeypatch
             "status": "validated",
         }
 
-    monkeypatch.setattr("rob2_pipeline.nodes.domain1.call_json_contract_llm", fake_contract_call)
+    monkeypatch.setattr(
+        "rob2_pipeline.nodes.domain_classifier.call_json_contract_llm",
+        fake_contract_call,
+    )
 
     result = domain1_sq_node(state)
 
@@ -133,7 +136,10 @@ def test_domain1_sq_node_classifies_ready_packets_with_json_contract(monkeypatch
     assert result["sq_answers"]["1.1"]["support_level"] == "strong"
     assert result["sq_answers"]["1.1"]["uncertainty"] is False
     assert result["sq_answers"]["1.1"]["packet_artifact_id"] == "evidence-packet:d1:1.1"
-    assert result["d1_sq_classifier_artifact"]["answers"][0]["quote"] == "computer-generated sequence"
+    assert (
+        result["domain_sq_classifier_artifacts"]["d1"]["sq"]["answers"][0]["quote"]
+        == "computer-generated sequence"
+    )
     assert result["llm_call_log"] == [{"node": "domain1_sq_json", "validation_status": "validated"}]
 
 
@@ -201,11 +207,105 @@ def test_domain1_json_classifier_rejects_quotes_outside_packet(monkeypatch):
             "status": "validated",
         }
 
-    monkeypatch.setattr("rob2_pipeline.nodes.domain1.call_json_contract_llm", fake_contract_call)
+    monkeypatch.setattr(
+        "rob2_pipeline.nodes.domain_classifier.call_json_contract_llm",
+        fake_contract_call,
+    )
 
     result = domain1_sq_node(state)
 
     assert result["sq_answers"]["1.1"]["answer"] == "NI"
     assert result["sq_answers"]["1.1"]["support_level"] == "unsupported"
     assert result["sq_answers"]["1.1"]["outside_packet_evidence_rejected"] is True
-    assert result["d1_sq_classifier_artifact"]["answers"][0]["quote"] == "No relevant text found"
+    assert (
+        result["domain_sq_classifier_artifacts"]["d1"]["sq"]["answers"][0]["quote"]
+        == "No relevant text found"
+    )
+
+
+def test_domain1_json_classifier_rejects_missing_duplicate_or_extra_sq_ids(monkeypatch):
+    evidence = empty_paper_evidence("test")
+    packet = {
+        "artifact_id": "evidence-packet:d1:1.1",
+        "schema_version": "1.0",
+        "sq_id": "1.1",
+        "domain": "d1",
+        "required_evidence": ["sequence_generation"],
+        "sources": [{"text": "Participants were randomized in blocks.", "section": "Methods"}],
+        "candidate_facts": [],
+        "missing_evidence": [],
+        "negative_flags": [],
+        "decision_table": {
+            "artifact_id": "decision-table:d1:1.1",
+            "schema_version": "1.0",
+            "sq_id": "1.1",
+            "allowed_answers": ["Y", "PY", "PN", "N", "NI"],
+            "rows": [],
+            "default_insufficient_evidence_answer": "NI",
+        },
+        "packet_readiness": {"status": "ready"},
+    }
+    state = {
+        "evidence": evidence,
+        "intervention": "Drug A",
+        "comparator": "Placebo",
+        "outcome": "Overall Survival",
+        "ctgov_design": "",
+        "rag_contexts": {},
+        "rag_chunk_metadata": {},
+        "trial_facts": {},
+        "sq_answers": {},
+        "evidence_packets": {
+            "1.1": packet,
+            "1.2": {**packet, "artifact_id": "evidence-packet:d1:1.2", "sq_id": "1.2"},
+            "1.3": {**packet, "artifact_id": "evidence-packet:d1:1.3", "sq_id": "1.3"},
+        },
+    }
+
+    def invalid_answer(sq_id):
+        return {
+            "sq_id": sq_id,
+            "answer": "Y",
+            "quote": "Participants were randomized in blocks.",
+            "justification": "Uses the packet text.",
+            "support_level": "strong",
+            "support_rationale": "Packet evidence supports the answer.",
+            "uncertainty": False,
+            "packet_artifact_id": f"evidence-packet:d1:{sq_id}",
+            "decision_table_artifact_id": f"decision-table:d1:{sq_id}",
+            "supporting_fact_artifact_ids": [],
+        }
+
+    def fake_contract_call(state, prompt, node_name, **kwargs):
+        return {
+            "artifact": {
+                "schema_version": "d1-sq-classifier-v1",
+                "domain": "d1",
+                "stage": "sq",
+                "branching": {},
+                "outcome_specific_concerns": [],
+                "answers": [
+                    invalid_answer("1.1"),
+                    invalid_answer("1.2"),
+                    invalid_answer("1.2"),
+                    invalid_answer("1.4"),
+                ],
+            },
+            "log": [{"node": node_name, "validation_status": "validated"}],
+            "status": "validated",
+        }
+
+    monkeypatch.setattr(
+        "rob2_pipeline.nodes.domain_classifier.call_json_contract_llm",
+        fake_contract_call,
+    )
+
+    result = domain1_sq_node(state)
+
+    artifact = result["domain_sq_classifier_artifacts"]["d1"]["sq"]
+    assert [answer["sq_id"] for answer in artifact["answers"]] == ["1.1", "1.2", "1.3"]
+    assert {answer["answer"] for answer in artifact["answers"]} == {"NI"}
+    assert all(
+        "did not include each stage SQ exactly once" in answer["support_rationale"]
+        for answer in artifact["answers"]
+    )
