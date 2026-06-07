@@ -1,37 +1,8 @@
 from rob2_pipeline.models import empty_paper_evidence
-from rob2_pipeline.nodes.domain1 import domain1_sq_node
+from rob2_pipeline.nodes.domain1 import build_domain1_prompt
 
 
-def test_domain1_keeps_structured_evidence_when_rag_context_exists(monkeypatch):
-    captured = {}
-
-    def fake_call_node_llm(state, prompt, node_name, parse_fn, parse_sq_ids):
-        captured["prompt"] = prompt
-        parsed = {
-            "1.1": {
-                "answer": "Y",
-                "quote": "central",
-                "justification": "random",
-                "uncertainty_flag": "NORMAL",
-            },
-            "1.2": {
-                "answer": "Y",
-                "quote": "central",
-                "justification": "concealed",
-                "uncertainty_flag": "NORMAL",
-            },
-            "1.3": {
-                "answer": "N",
-                "quote": "balanced",
-                "justification": "balanced",
-                "uncertainty_flag": "NORMAL",
-            },
-        }
-        return "", [], parsed
-
-    monkeypatch.setattr(
-        "rob2_pipeline.nodes.domain_helpers.call_node_llm", fake_call_node_llm
-    )
+def test_domain1_keeps_structured_evidence_when_rag_context_exists():
     evidence = empty_paper_evidence()
     evidence["d1_randomization"]["text"] = (
         "Allocation managed by the ECOG-ACRIN Statistical Center."
@@ -58,14 +29,11 @@ def test_domain1_keeps_structured_evidence_when_rag_context_exists(monkeypatch):
         "sq_answers": {},
     }
 
-    domain1_sq_node(state)
+    prompt = build_domain1_prompt(state)
 
     assert (
-        "Allocation managed by the ECOG-ACRIN Statistical Center" in captured["prompt"]
+        "Allocation managed by the ECOG-ACRIN Statistical Center" in prompt
     )
-    assert "Baseline characteristics were well balanced" in captured["prompt"]
-    assert "Patients were assigned to ADT alone" in captured["prompt"]
-    assert (
-        "SQ 1.1" not in captured["prompt"]
-        or "verified evidence packet" in captured["prompt"]
-    )
+    assert "Baseline characteristics were well balanced" in prompt
+    assert "Patients were assigned to ADT alone" in prompt
+    assert "SQ 1.1" not in prompt or "verified evidence packet" in prompt

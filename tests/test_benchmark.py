@@ -525,7 +525,6 @@ def test_run_benchmark_reuses_trial_artifacts_across_outcomes(tmp_path, monkeypa
         return {
             "full_text": "Trial text",
             "evidence": {"warnings": []},
-            "docling_doc": object(),
             "docling_chunks": [],
             "source_documents": [],
             "supplement_warnings": [],
@@ -1867,6 +1866,62 @@ def test_write_benchmark_report_renders_separate_engineering_report(tmp_path):
     assert "_node_spans" not in engineering_report
 
 
+def test_engineering_report_renders_numeric_packet_quality(tmp_path):
+    results = [
+        {
+            "id": "ARCHES:PFS",
+            "trial": "ARCHES",
+            "outcome": "Progression-Free Survival",
+            "skipped": False,
+            "error": None,
+            "comparison": {
+                "D1": True,
+                "D2": True,
+                "D3": True,
+                "D4": True,
+                "D5": True,
+                "Overall": True,
+            },
+            "reference": {},
+            "pipeline": {},
+            "packet_quality": {
+                "2.3": {
+                    "relevance": 0.65,
+                    "coverage": 1.0,
+                    "missing_evidence": [],
+                    "retry_recommended": False,
+                },
+                "5.1": {
+                    "relevance": 1.0,
+                    "coverage": 1.0,
+                    "missing_evidence": ["protocol_or_registration"],
+                    "retry_recommended": True,
+                },
+            },
+            "timing": {"slowest_nodes": []},
+        }
+    ]
+    summary = summarize_benchmark(results)
+
+    write_benchmark_report(results, summary, tmp_path / "benchmark_report.md")
+
+    benchmark_json = json.loads(
+        (tmp_path / "benchmark_results.json").read_text(encoding="utf-8")
+    )
+    assert benchmark_json["assessments"][0]["diagnostics"]["packet_statuses"] == {
+        "2.3": {"status": "ready", "grade": "moderate"},
+        "5.1": {"status": "needs_retrieval_repair", "grade": "insufficient"},
+    }
+    engineering_report = (tmp_path / "engineering_report.md").read_text(
+        encoding="utf-8"
+    )
+    assert "| ARCHES:PFS | 2.3 | ready | moderate |" in engineering_report
+    assert (
+        "| ARCHES:PFS | 5.1 | needs_retrieval_repair | insufficient |"
+        in engineering_report
+    )
+
+
 def test_write_benchmark_report_renders_audit_caught_mismatch_summary(tmp_path):
     results = [
         {
@@ -2055,9 +2110,39 @@ def test_classify_mismatches_uses_existing_audit_signals_without_diagnosis_agent
         "D4": {"category": "SQ", "signals": ["support_level:weak"]},
         "D5": {"category": "judge", "signals": ["judgment_label_mismatch"]},
         "Overall": {
-            "category": "reference_ambiguity",
-            "signals": ["audit_caught_mismatch"],
+            "category": "judge",
+            "signals": ["audit_caught_mismatch", "judgment_label_mismatch"],
         },
+    }
+
+
+def test_classify_mismatches_reserves_reference_ambiguity_for_inconsistent_reference():
+    result = {
+        "comparison": {"D3": False},
+        "reference": {
+            "D1": "Low",
+            "D2": "Low",
+            "D3": "Some concerns",
+            "D4": "Low",
+            "D5": "Low",
+            "Overall Risk": "Low",
+        },
+        "pipeline": {
+            "sq_answers": {
+                "3.1": {"answer": "Y", "support_level": "strong", "quote": "x"}
+            }
+        },
+        "audit_caught_mismatches": {"D3": True},
+    }
+
+    classifications = classify_mismatches(result)
+
+    assert classifications["D3"] == {
+        "category": "reference_ambiguity",
+        "signals": [
+            "audit_caught_mismatch",
+            "reference_overall_lower_than_domain",
+        ],
     }
 
 
@@ -2237,7 +2322,7 @@ def test_required_supplement_failures_accepts_partial_with_window_warnings():
                 "path": "inputs/benchmark/supplement/TITAN/protocol.pdf",
                 "is_primary": False,
                 "status": "partial",
-                "error": "Supplement page window skipped: std::bad_alloc",
+                "error": "Supplement parser diagnostics recorded a partial parse",
             }
         ],
     )

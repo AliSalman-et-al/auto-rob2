@@ -1,7 +1,6 @@
 from rob2_pipeline.judges.domain2 import judge_domain2, judge_domain2_artifact
 from rob2_pipeline.nodes.common import (
     add_domain_judgment_with_pivotality_tests,
-    call_node_llm,
 )
 from rob2_pipeline.nodes.domain_context import (
     build_domain2_analysis_context,
@@ -64,7 +63,7 @@ def domain2_sq12_node(state: RoB2State) -> RoB2State:
             },
             postprocess=apply_domain2_sq12_control,
         )
-    return run_domain_sq_stage(state, DOMAIN2_SQ12_STAGE, call_fn=call_node_llm)
+    return run_domain_sq_stage(state, DOMAIN2_SQ12_STAGE)
 
 
 d2_needs_conditional = next_domain2_stage
@@ -114,7 +113,7 @@ def domain2_conditional_node(state: RoB2State) -> RoB2State:
             },
             postprocess=apply_domain2_conditional_control,
         )
-    return run_domain_sq_stage(state, DOMAIN2_CONDITIONAL_STAGE, call_fn=call_node_llm)
+    return run_domain_sq_stage(state, DOMAIN2_CONDITIONAL_STAGE)
 
 
 def build_domain2_analysis_prompt(state: RoB2State) -> str:
@@ -164,7 +163,7 @@ def domain2_analysis_node(state: RoB2State) -> RoB2State:
             },
             postprocess=apply_domain2_analysis_control,
         )
-    return run_domain_sq_stage(state, DOMAIN2_ANALYSIS_STAGE, call_fn=call_node_llm)
+    return run_domain_sq_stage(state, DOMAIN2_ANALYSIS_STAGE)
 
 
 def domain2_judge_node(state: RoB2State) -> RoB2State:
@@ -183,6 +182,25 @@ def domain2_judge_node(state: RoB2State) -> RoB2State:
         + DOMAIN2_ANALYSIS_STAGE.sq_ids,
     )
     final_sq_answers = update.get("sq_answers", state["sq_answers"])
+    controlled_answers = apply_domain2_conditional_control(state, final_sq_answers)
+    controlled_answers = apply_domain2_analysis_control(state, controlled_answers)
+    if controlled_answers != final_sq_answers:
+        final_sq_answers = controlled_answers
+        owned_sq_ids = (
+            DOMAIN2_SQ12_STAGE.sq_ids
+            + DOMAIN2_CONDITIONAL_STAGE.sq_ids
+            + DOMAIN2_ANALYSIS_STAGE.sq_ids
+        )
+        update["sq_answers"] = {
+            sq_id: final_sq_answers[sq_id]
+            for sq_id in owned_sq_ids
+            if sq_id in final_sq_answers
+        }
+        final_judgment, final_rationale = judge_domain2(
+            final_sq_answers, effect_of_interest
+        )
+        update["domain_judgments"]["D2"] = final_judgment
+        update["domain_rationales"]["D2"] = final_rationale
     final_judgment = update["domain_judgments"]["D2"]
     final_rationale = update["domain_rationales"]["D2"]
     if final_judgment != judgment or final_rationale != rationale:

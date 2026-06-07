@@ -58,14 +58,12 @@ Studies that are not RCTs include observational studies, cohort studies, case-co
 
 If the study is not randomized, stop the assessment and state that ROBINS-I, not RoB 2, should be used.
 
-Respond in this exact XML format:
-
-<screening>
-  <is_rct>YES or NO</is_rct>
-  <evidence>"[exact quote from text supporting your decision]"</evidence>
-  <study_design>[brief description of the study design as reported]</study_design>
-  <note>[if NO: state that ROBINS-I should be used instead; if YES: leave blank]</note>
-</screening>"""
+Return JSON with these fields:
+- schema_version: "rct-screening-v1"
+- is_rct: true only when participants were randomly assigned to intervention/comparator groups
+- evidence: exact quote or concise evidence supporting the decision
+- study_design: brief reported design
+- note: if is_rct is false, state that ROBINS-I should be used instead; otherwise leave blank"""
 
 PROMPT_PRELIMINARY_INFO = """You are an expert systematic reviewer applying the Cochrane Risk of Bias 2 (RoB 2) tool. Before answering signaling questions, collect the preliminary information required by RoB 2.
 
@@ -95,60 +93,24 @@ Extract the experimental intervention, comparator intervention, outcome being as
 
 For every extracted value, provide the exact quoted text from the available source. Do not paraphrase quotes. If genuinely absent, write "Not reported" for the value and "No relevant text found" for the quote.
 
-<preliminary_info>
-  <experimental_intervention>
-    <value>[name and description of the treatment being tested]</value>
-    <quote>"[exact text]" ([Section])</quote>
-  </experimental_intervention>
-
-  <comparator_intervention>
-    <value>[name and description of the control arm]</value>
-    <quote>"[exact text]" ([Section])</quote>
-  </comparator_intervention>
-
-  <outcome_assessed>
-    <value>[specific outcome; use the primary outcome if user did not specify another]</value>
-    <quote>"[exact text]" ([Section])</quote>
-    <is_primary>YES or NO or UNCLEAR</is_primary>
-  </outcome_assessed>
-
-  <outcome_type>Classify the outcome type using exactly one of these five values:
+Return JSON matching PreliminaryInfoArtifact with these fields:
+- schema_version: "preliminary-info-v1"
+- intervention: name and description of the treatment being tested
+- comparator: name and description of the control arm
+- assessed_outcome: specific outcome; use the primary outcome if user did not specify another
+- outcome_type: classify the outcome type using exactly one of these five values:
   - vital-status: all-cause mortality or disease-specific mortality assessed as a single criterion: death is the only event that counts. Do not use this category for composite endpoints that combine death with non-mortality criteria such as relapse, hospitalisation, or treatment failure, even if death is one component.
   - biomarker: laboratory or imaging measurement with a pre-defined numerical threshold
   - clinician-composite: composite or time-to-event outcome requiring clinical or radiological judgment
   - clinician-graded: outcome assessed using a standardized clinical grading scale that still requires judgment
   - patient-reported: outcome assessed by the participant using a questionnaire or self-report instrument
   Examples: mortality-only endpoint = `vital-status`; composite endpoint combining death with another clinical event = `clinician-composite`; standardized clinician-rated response scale = `clinician-graded`; participant questionnaire = `patient-reported`.
-</outcome_type>
-
-  <numerical_result>
-    <value>[effect estimate with CI, e.g., HR 0.64 (95% CI 0.54-0.77)]</value>
-    <quote>"[exact text]" ([Section])</quote>
-  </numerical_result>
-
-  <n_randomized>
-    <value>[total number randomized, as integer string]</value>
-    <quote>"[exact text]" ([Section])</quote>
-  </n_randomized>
-
-  <trial_registration>
-    <number>[registration number or "Not reported"]</number>
-    <registry>[ClinicalTrials.gov or ISRCTN or other registry or "Not reported"]</registry>
-    <quote>"[exact text]" or "Not reported"</quote>
-  </trial_registration>
-
-  <registered_primary_endpoint>
-    <value>[primary endpoint listed in trial registry or protocol]</value>
-    <quote>"[exact text]" ([Section])</quote>
-  </registered_primary_endpoint>
-
-  <registered_secondary_endpoints>List any secondary or co-primary endpoints from the registration or protocol exactly as stated. Separate multiple endpoints with semicolons. If none found, write "Not reported".</registered_secondary_endpoints>
-
-  <registered_analysis>
-    <value>[pre-specified analysis approach from registry/protocol, e.g., ITT or per-protocol]</value>
-    <quote>"[exact text]" ([Section])</quote>
-  </registered_analysis>
-</preliminary_info>
+- numerical_result: effect estimate with CI, e.g. HR 0.64 (95% CI 0.54-0.77)
+- n_randomized: total number randomized as an integer string, or "Not reported"
+- registration_number: registration number or "Not reported"
+- registered_primary_endpoint: primary endpoint listed in trial registry or protocol
+- registered_secondary_endpoints: secondary or co-primary endpoints separated by semicolons, or "Not reported"
+- registered_analysis: pre-specified analysis approach from registry/protocol, e.g. ITT or per-protocol
 
 RULES:
 - Every quote must be the exact source text, not a paraphrase.
@@ -301,7 +263,7 @@ If 2.3 is N/PN, answer 2.4 and 2.5 as NA. If 2.3 is Y/PY/NI, answer 2.4.
 
 If 2.4 is N/PN/NI/NA, answer 2.5 as NA. If 2.4 is Y/PY, answer 2.5.
 
-For open-label trials, absence of clear reporting about deviations, concomitant interventions, contamination, nonadherence, or protocol departures is not automatically reassuring; do not answer N or PN solely because no deviations are reported. Answer NI when the evidence does not actively support that deviations were absent or unlikely.
+For open-label trials, awareness alone is not a deviation. Answer N or PN for 2.3 when the selected evidence describes ordinary protocol-consistent care, ITT follow-up, or no indication that protocol-inconsistent intervention changes arose because of recruitment, engagement, unblinding, or trial personnel. Use NI only when deviations are actually described but the selected evidence cannot support a reasonable PY or PN judgment about whether they arose because of the trial context.
 """
     + SQ_SUPPORT_METADATA_INSTRUCTION
     + """
@@ -503,6 +465,8 @@ Before answering Q3.1, identify the numerator and denominator for outcome-data c
 
 If ClinicalTrials.gov participant flow data is provided above, use it as supporting participant disposition evidence for Q3.1. Do not assume treatment completion equals outcome-data availability; compare it with paper text about the assessed outcome and missing outcome data.
 
+For time-to-event outcomes such as progression-free survival, do not count observed outcome events (for example progression or death) as missing outcome data. Study-drug discontinuation because progression or death occurred is not itself missing outcome data unless the evidence says outcome follow-up was censored or stopped before the event was observed. Treat early censoring, loss to follow-up, withdrawal, switching, or stopping assigned intervention before outcome ascertainment as the missing-data concern.
+
 If 3.1 is Y/PY, answer 3.2-3.4 as NA.
 
 If 3.2 is Y/PY, answer 3.3-3.4 as NA. If 3.2 is N/PN, answer 3.3.
@@ -660,6 +624,8 @@ Answer Domain 5 signaling questions: Bias in selection of the reported result.
 IMPORTANT: You are assessing Domain 5 for the specific outcome: {outcome}. All three questions concern whether the {outcome} result was selectively reported. Do NOT reason about whether other outcomes were selectively reported or chosen. Each outcome is assessed independently.
 
 If a trial registration number is available, compare the registry/protocol outcomes and analysis intentions against the result being assessed. Focus on whether the numerical result was selected on the basis of the results, not merely whether the assessed outcome was primary or secondary.
+
+For Q5.2 and Q5.3, Y/PY means harmful selective reporting: the reported {outcome} result was chosen on the basis of the observed results from multiple eligible measurements or analyses. If the evidence says the {outcome} result matched the registry/protocol, was the prespecified primary endpoint, was fully reported, or no alternative measurement/analysis is shown, answer N or PN rather than Y/PY.
 """
     + SQ_SUPPORT_METADATA_INSTRUCTION
     + """

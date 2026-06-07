@@ -118,7 +118,13 @@ def build_rob2_graph():
         g.add_edge("evidence_family_mining", domain_start)
 
     g.add_edge("domain1_sq", "domain1_judge")
-    g.add_edge("domain1_judge", "quote_verifier")
+    domain_judges = [
+        "domain1_judge",
+        "domain2_judge",
+        "domain3_judge",
+        "domain4_judge",
+        "domain5_judge",
+    ]
 
     g.add_conditional_edges(
         "domain2_sq12",
@@ -127,16 +133,13 @@ def build_rob2_graph():
     )
     g.add_edge("domain2_conditional", "domain2_analysis")
     g.add_edge("domain2_analysis", "domain2_judge")
-    g.add_edge("domain2_judge", "quote_verifier")
 
     g.add_edge("domain3_sq", "domain3_judge")
-    g.add_edge("domain3_judge", "quote_verifier")
 
     g.add_edge("domain4_sq", "domain4_judge")
-    g.add_edge("domain4_judge", "quote_verifier")
 
     g.add_edge("domain5_sq", "domain5_judge")
-    g.add_edge("domain5_judge", "quote_verifier")
+    g.add_edge(domain_judges, "quote_verifier")
     g.add_edge("quote_verifier", "overall_judge")
     g.add_edge("overall_judge", "report_formatter")
     g.add_edge("report_formatter", END)

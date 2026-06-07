@@ -142,15 +142,12 @@ def test_domain4_prompt_guides_outcome_specific_q44_reasoning():
     assert "mechanical" in result
 
 
-def test_domain2_prompt_does_not_treat_missing_deviation_reporting_as_reassuring():
+def test_domain2_prompt_keeps_ni_as_last_resort_for_trial_context_deviations():
     from rob2_pipeline.prompts import PROMPT_DOMAIN2_CONDITIONAL
 
-    assert "absence of clear reporting" in PROMPT_DOMAIN2_CONDITIONAL
-    assert "is not automatically reassuring" in PROMPT_DOMAIN2_CONDITIONAL
-    assert (
-        "do not answer N or PN solely because no deviations are reported"
-        in PROMPT_DOMAIN2_CONDITIONAL
-    )
+    assert "awareness alone is not a deviation" in PROMPT_DOMAIN2_CONDITIONAL
+    assert "Answer N or PN for 2.3" in PROMPT_DOMAIN2_CONDITIONAL
+    assert "Use NI only when deviations are actually described" in PROMPT_DOMAIN2_CONDITIONAL
 
 
 def test_domain3_prompt_requests_completeness_evidence_without_mechanical_denominator_rule():
@@ -159,6 +156,8 @@ def test_domain3_prompt_requests_completeness_evidence_without_mechanical_denomi
     assert "identify the numerator and denominator" in PROMPT_DOMAIN3
     assert "missing denominator, percentage, or count evidence" in PROMPT_DOMAIN3
     assert "provenance and support concern" in PROMPT_DOMAIN3
+    assert "do not count observed outcome events" in PROMPT_DOMAIN3
+    assert "Study-drug discontinuation because progression or death occurred" in PROMPT_DOMAIN3
     assert "If >= 10% of randomised participants are excluded" not in PROMPT_DOMAIN3
 
 
@@ -282,3 +281,5 @@ def test_domain5_prompt_includes_methodology_and_preserves_outcome_scope():
         "You are assessing Domain 5 for the specific outcome: Composite Clinical Response"
         in result
     )
+    assert "Y/PY means harmful selective reporting" in result
+    assert "answer N or PN rather than Y/PY" in result

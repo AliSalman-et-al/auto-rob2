@@ -1,7 +1,6 @@
 from rob2_pipeline.judges.domain4 import judge_domain4, judge_domain4_artifact
 from rob2_pipeline.nodes.common import (
     add_domain_judgment_with_pivotality_tests,
-    call_node_llm,
 )
 from rob2_pipeline.nodes.domain_context import build_domain4_context
 from rob2_pipeline.nodes.domain_classifier import has_ready_packets, run_json_sq_classifier
@@ -57,7 +56,7 @@ def domain4_sq_node(state: RoB2State) -> RoB2State:
             ],
             postprocess=apply_domain4_control,
         )
-    return run_domain_sq_stage(state, DOMAIN4_STAGE, call_fn=call_node_llm)
+    return run_domain_sq_stage(state, DOMAIN4_STAGE)
 
 
 def domain4_judge_node(state: RoB2State) -> RoB2State:
@@ -69,6 +68,18 @@ def domain4_judge_node(state: RoB2State) -> RoB2State:
         state, "D4", judgment, rationale, judge_domain4, DOMAIN4_STAGE.sq_ids
     )
     final_sq_answers = update.get("sq_answers", state["sq_answers"])
+    d4_adjudications = (update.get("sq_support_adjudications") or {}).get("D4", [])
+    controlled_d4_answers = apply_domain4_control(state, final_sq_answers)
+    if controlled_d4_answers != final_sq_answers:
+        final_sq_answers = controlled_d4_answers
+        update["sq_answers"] = {
+            sq_id: final_sq_answers[sq_id]
+            for sq_id in DOMAIN4_STAGE.sq_ids
+            if sq_id in final_sq_answers
+        }
+        final_judgment, final_rationale = judge_domain4(final_sq_answers)
+        update["domain_judgments"]["D4"] = final_judgment
+        update["domain_rationales"]["D4"] = final_rationale
     final_judgment = update["domain_judgments"]["D4"]
     final_rationale = update["domain_rationales"]["D4"]
     if final_judgment != judgment or final_rationale != rationale:

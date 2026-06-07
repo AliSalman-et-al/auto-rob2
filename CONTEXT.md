@@ -34,7 +34,7 @@ answers, deterministic judgments, verification flags, and output artifacts.
 ### Primary Paper
 
 The main randomized trial report. It stays central. Primary-paper text becomes
-`full_text`, structured `PaperEvidence`, primary Docling chunks, and the primary
+`full_text`, structured `PaperEvidence`, primary retrieval chunks, and the primary
 `SourceDocument`.
 
 ### Supplement
@@ -73,7 +73,7 @@ the quote-grounded source text is authoritative.
 
 ### Quote-Grounded Evidence
 
-Evidence whose claim can be traced to matching text in `full_text`, a Docling
+Evidence whose claim can be traced to matching text in `full_text`, a parser artifact
 chunk, or another provenance-bearing `SourceDocument`. It is the authority used
 to resolve conflicts with unverified extracted evidence.
 
@@ -81,16 +81,32 @@ to resolve conflicts with unverified extracted evidence.
 
 The reusable trial-level ingestion result for a primary paper and its selected
 supplements. It can be shared by multiple outcome-specific Assessments for the
-same trial because primary-paper text, primary-paper evidence, Docling chunks,
+same trial because primary-paper text, primary-paper evidence, retrieval chunks,
 source-document inventory, and supplement warnings do not depend on the assessed
 outcome. If primary-paper evidence extraction becomes outcome-specific, that
 evidence must move out of the trial-level artifact.
 
-### DocumentRepr
+### Parser-Neutral Artifact
 
-The prompt-facing representation of a Docling document. It groups text and
-tables by heading into `DocBlock`s and can render a compact Markdown-like
-document for LLM evidence extraction.
+The ingestion representation produced from page-aware parser output. It carries
+source identity, page text, diagnostics, provenance, and retrieval chunks without
+exposing parser-native document objects.
+
+### Trial Workspace
+
+The trial-level artifact workspace for source identities, parser-neutral
+`ParseArtifact` records, page-aware artifacts, parser diagnostics, and
+EvidenceStore outputs. Trial Workspace artifacts are reusable only when source,
+parser, configuration, and upstream artifact hashes still match.
+
+### Outcome Workspace
+
+The outcome-specific artifact workspace for outcome normalization,
+JSON-contract SQ answers, deterministic domain judgments, support-escalation
+diagnostics, and other artifacts that depend on the assessed outcome or RoB 2
+settings. Outcome Workspace artifacts are invalidated by
+changed outcome definitions, settings, trial-workspace inputs, or contract
+versions.
 
 ### Trial Metadata
 
@@ -164,7 +180,7 @@ source kind, and source path.
 
 ### Trial Retrieval Index
 
-The reusable trial-level vector index built from Docling chunks for a primary
+The reusable trial-level vector index built from parser-neutral retrieval chunks for a primary
 paper and its selected supplements. The index can be shared across
 outcome-specific Assessments for the same trial, but retrieved contexts,
 evidence packets, signaling-question prompts, and judgments remain
@@ -199,6 +215,13 @@ reasoned assessment of support, not a mechanical keyword or denominator check.
 Canonical levels are `strong`, `moderate`, `weak`, and `unsupported`. Support
 level primarily shapes the SQ answer itself; domain judging uses it as an audit
 brake when a weak or unsupported SQ answer is pivotal to the final judgment.
+
+### EvidenceStore
+
+The typed store of quote-grounded Evidence Facts, failed claims, and evidence
+gaps. It validates support status, provenance, family-specific fields, and
+outcome binding before facts are selected for SQ packets or workspace
+artifacts.
 
 ### D3 Completeness Evidence
 
@@ -267,11 +290,11 @@ stage-local post-processing for answer corrections or NA control flow.
 
 ### Signaling Question Answer
 
-The parsed XML answer for one RoB 2 signaling question. It contains an answer
-code (`Y`, `PY`, `PN`, `N`, `NI`, or `NA`), quote, justification, and
-uncertainty flag. Each answer should also carry an Evidence Support Level so
-reviewers can see how strongly the full evidence set supports that SQ answer,
-not just whether one cited fact exists.
+The parsed JSON-contract answer for one RoB 2 signaling question. It contains
+an answer code (`Y`, `PY`, `PN`, `N`, `NI`, or `NA`), quote, justification,
+uncertainty flag, Evidence Support Level, and support rationale so reviewers
+can see how strongly the full evidence set supports that SQ answer, not just
+whether one cited fact exists.
 
 ### Domain Judgment
 
@@ -343,21 +366,18 @@ Some-concerns domains.
   calls the Assessment ingestion module and returns the existing `RoB2State`
   update shape.
 - `rob2_pipeline/ingestion/assessment.py` owns Assessment ingestion behavior:
-  strict primary full-text extraction, primary Docling structural parsing,
-  primary plus supplement chunk assembly, source-document inventory, remote
-  paper-evidence extraction orchestration, and fallback order.
-- `rob2_pipeline/ingestion/docling_extract.py` owns Docling full-text
-  extraction, OCR retry, converter caching, chunk building, and chunk page
-  metadata.
-- `rob2_pipeline/ingestion/document_repr.py` owns `DocumentRepr` and `DocBlock`.
+  strict primary full-text extraction from parser artifacts, primary plus
+  supplement chunk assembly, source-document inventory, and remote
+  paper-evidence extraction orchestration.
+- `rob2_pipeline/ingestion/parse_artifacts.py` owns LiteParse adaptation,
+  parser-neutral page artifacts, page-aware section artifacts, and retrieval
+  chunk conversion.
 - `rob2_pipeline/ingestion/evidence.py` owns paper-evidence extraction,
   structural keyword mapping, section parsing, section capping, CONSORT
   augmentation, and censoring-context extraction.
 - `rob2_pipeline/ingestion/supplements.py` owns supplement classification,
   source-document records, source metadata application, windowed supplement
   parsing, and supplement warnings.
-- `rob2_pipeline/pdf_ingestion.py` is a compatibility facade for ingestion
-  helpers and test-used monkeypatch points.
 
 ### Trial Metadata
 
@@ -408,14 +428,14 @@ Some-concerns domains.
   missing-intervention review priority, and D5 judge.
 - `rob2_pipeline/judges/` owns deterministic D1-D5 and overall decision tables.
 
-### LLM Calls, XML, Providers, Cache, And Trace
+### LLM Calls, JSON Contracts, Providers, Cache, And Trace
 
 - `rob2_pipeline/nodes/common.py` is the shared LLM call module for graph nodes.
-  It handles prompt cache lookup/write, provider invocation, XML parse/repair,
-  trace logging, SQ answer merging, `NA` setting, source labels, and domain
-  judgment insertion.
-- `rob2_pipeline/xml_parser.py` extracts XML fragments, sanitizes stray `<`,
-  normalizes answer codes, parses SQ responses, and validates expected SQ ids.
+  It handles prompt cache lookup/write, provider invocation, JSON-contract
+  parsing and repair, trace logging, SQ answer merging, `NA` setting, source
+  labels, and domain judgment insertion.
+- `rob2_pipeline/llm_contracts.py` validates JSON LLM artifacts against local
+  Pydantic schemas and records contract trace metadata.
 - `rob2_pipeline/prompts.py` owns prompt templates and rendered methodology
   text.
 - `rob2_pipeline/methodology/` owns canonical RoB 2 rule-card data and prompt
@@ -427,6 +447,11 @@ Some-concerns domains.
 - `rob2_pipeline/cache.py` owns optional prompt cache behavior.
 - `rob2_pipeline/trace.py` records LLM calls and graph-node spans for audit and
   timing analysis.
+- `rob2_pipeline/evidence_store.py` defines EvidenceStore schemas and
+  family-typed fact selection for quote-grounded evidence.
+- `rob2_pipeline/trial_workspace.py` writes Trial Workspace and Outcome
+  Workspace manifests and artifacts with source, config, contract, and upstream
+  hash identity.
 
 ### Verification, Output, And Benchmarking
 

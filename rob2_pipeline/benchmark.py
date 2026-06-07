@@ -110,7 +110,6 @@ def _state_ingestion_artifact(state: dict) -> AssessmentIngestionResult:
     return AssessmentIngestionResult(
         full_text=state.get("full_text", ""),
         evidence=state.get("evidence"),
-        docling_doc=state.get("docling_doc"),
         docling_chunks=list(state.get("docling_chunks") or []),
         source_documents=list(state.get("source_documents") or []),
         supplement_warnings=list(state.get("supplement_warnings") or []),
@@ -666,6 +665,28 @@ def _packet_statuses(packet_quality: object) -> dict[str, dict[str, Any]]:
         elif not raw_grade:
             raw_grade = packet_grade
         grade = _strip(raw_grade)
+        relevance = _coerce_float(packet.get("relevance"))
+        coverage = _coerce_float(packet.get("coverage"))
+        missing = packet.get("missing_evidence") or []
+        retry_recommended = bool(packet.get("retry_recommended"))
+        if not status and (
+            relevance or coverage or missing or "retry_recommended" in packet
+        ):
+            status = (
+                "needs_retrieval_repair"
+                if retry_recommended or missing
+                else "ready"
+            )
+        if not grade and (relevance or coverage):
+            score = (relevance + coverage) / 2
+            if retry_recommended or missing:
+                grade = "insufficient"
+            elif score >= 0.9:
+                grade = "strong"
+            elif score >= 0.7:
+                grade = "moderate"
+            else:
+                grade = "limited"
         statuses[_strip(key)] = {
             "status": status or "unknown",
             "grade": grade or "unknown",
@@ -1292,14 +1313,28 @@ def _classify_domain_mismatch(
         return None
 
     audit_caught = result.get("audit_caught_mismatches") or {}
+    audit_signals = ["audit_caught_mismatch"] if audit_caught.get(field) else []
     if audit_caught.get(field):
-        return {
-            "category": "reference_ambiguity",
-            "signals": ["audit_caught_mismatch"],
-        }
+        reference = result.get("reference") or {}
+        domain_refs = [
+            _normalize_judgment(reference.get(domain, "")) for domain in DOMAINS
+        ]
+        field_ref = _normalize_judgment(
+            reference.get("Overall Risk" if field == "Overall" else field, "")
+        )
+        overall_ref = _normalize_judgment(reference.get("Overall Risk", ""))
+        if (
+            overall_ref == "Low"
+            and any(value in {"Some concerns", "High"} for value in domain_refs)
+            and (field == "Overall" or field_ref in {"Some concerns", "High"})
+        ):
+            return {
+                "category": "reference_ambiguity",
+                "signals": audit_signals + ["reference_overall_lower_than_domain"],
+            }
 
     if field in schema_failure_domains:
-        return {"category": "parse", "signals": ["schema_failure"]}
+        return {"category": "parse", "signals": audit_signals + ["schema_failure"]}
 
     packet_signals = _packet_signals((result.get("packet_quality") or {}).get(field))
     if packet_signals:
@@ -1310,15 +1345,18 @@ def _classify_domain_mismatch(
             )
             else "packet"
         )
-        return {"category": category, "signals": packet_signals}
+        return {"category": category, "signals": audit_signals + packet_signals}
 
     sq_signals = _sq_signals_for_domain(result.get("pipeline") or {}, field)
     if any(signal == "quote_missing" for signal in sq_signals):
-        return {"category": "retrieval", "signals": sq_signals}
+        return {"category": "retrieval", "signals": audit_signals + sq_signals}
     if sq_signals:
-        return {"category": "SQ", "signals": sq_signals}
+        return {"category": "SQ", "signals": audit_signals + sq_signals}
 
-    return {"category": "judge", "signals": ["judgment_label_mismatch"]}
+    return {
+        "category": "judge",
+        "signals": audit_signals + ["judgment_label_mismatch"],
+    }
 
 
 def classify_mismatches(result: dict[str, Any]) -> dict[str, dict[str, Any]]:

@@ -8,6 +8,8 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Protocol, TypedDict
 
+from langchain_core.documents import Document
+
 from rob2_pipeline.ingestion.source_catalog import mark_failed, mark_parsed
 from rob2_pipeline.types import SourceDocument
 
@@ -236,6 +238,36 @@ def write_page_aware_artifacts(
     )
 
 
+def full_text_from_parse_artifact(artifact: SourceParseArtifact) -> str:
+    return "\n\n".join(
+        page.get("text", "").strip()
+        for page in artifact.pages
+        if page.get("text", "").strip()
+    ).strip()
+
+
+def documents_from_page_aware_artifacts(
+    artifacts: PageAwareArtifacts,
+    source: SourceDocument,
+) -> list[Document]:
+    return [
+        Document(
+            page_content=chunk.text,
+            metadata={
+                "section": chunk.section_heading,
+                "page_numbers": list(chunk.page_numbers),
+                "document_id": source.get("document_id", ""),
+                "document_name": source.get("document_name", ""),
+                "document_role": source.get("document_role", ""),
+                "source_kind": source.get("source_kind", "rag_chunk"),
+                "source_path": source.get("path", ""),
+            },
+        )
+        for chunk in artifacts.chunks
+        if chunk.text.strip()
+    ]
+
+
 def _build_page_aware_sections(
     artifact: SourceParseArtifact,
     source_id: str,
@@ -301,6 +333,8 @@ __all__ = [
     "SourceParseArtifact",
     "SourceParserAdapter",
     "build_page_aware_artifacts",
+    "documents_from_page_aware_artifacts",
+    "full_text_from_parse_artifact",
     "parse_source_with_adapter",
     "parse_sources",
     "write_page_aware_artifacts",

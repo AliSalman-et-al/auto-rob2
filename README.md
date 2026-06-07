@@ -68,7 +68,7 @@ uv run python benchmark.py \
 
 ## What The Pipeline Uses
 
-- Docling for PDF extraction and document chunking.
+- LiteParse for parser-neutral PDF page artifacts and retrieval chunks.
 - LangGraph for the workflow.
 - LangChain FAISS plus BGE-small embeddings for per-study retrieval.
 - ClinicalTrials.gov API v2 for registry/design/outcome enrichment.
@@ -262,7 +262,7 @@ Supplement statuses in `source_documents`:
 | `missing` | The requested supplement file did not exist                                        |
 
 Windowed parsing avoids losing an entire long protocol or appendix because one
-page triggers a native Docling memory error such as `std::bad_alloc`.
+page triggers a parser error.
 
 ## Configuration
 
@@ -312,6 +312,8 @@ Key files:
 | `rob2_pipeline/nodes/domain_context.py`   | Prompt-ready D1-D5 evidence context              |
 | `rob2_pipeline/nodes/domain_helpers.py`   | Shared `DomainSqStage` SQ-stage runner           |
 | `rob2_pipeline/nodes/evidence_packets.py` | SQ-specific evidence packets                     |
+| `rob2_pipeline/evidence_store.py`         | Typed quote-grounded evidence facts and gaps     |
+| `rob2_pipeline/trial_workspace.py`        | Trial and outcome artifact workspace manifests   |
 | `rob2_pipeline/nodes/verification.py`     | Quote, packet, and support-constraint checks     |
 | `rob2_pipeline/judges/`                   | Deterministic RoB 2 judgment logic               |
 | `rob2_pipeline/providers/`                | LLM provider adapters                            |
@@ -364,7 +366,7 @@ uv run python -m py_compile rob2_pipeline/benchmark.py benchmark.py
 
 | Symptom                     | First places to inspect                                          |
 | --------------------------- | ---------------------------------------------------------------- |
-| LLM XML parse failure       | Trace JSON and `rob2_pipeline/xml_parser.py`                     |
+| LLM JSON contract failure   | Trace JSON and `rob2_pipeline/llm_contracts.py`                  |
 | Early non-RCT stop          | `is_rct`, `rct_screen_evidence`, `errors`                        |
 | Missing evidence            | `evidence`, `rag_sources`, `evidence_packets`                    |
 | Prompt evidence mismatch    | `rob2_pipeline/nodes/domain_context.py` and relevant `DomainSqStage` |

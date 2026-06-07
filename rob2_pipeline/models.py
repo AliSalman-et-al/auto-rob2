@@ -18,7 +18,12 @@ class PaperEvidence(TypedDict):
     d5_registration: SectionEvidence
     consort_flow: SectionEvidence
     baseline_table: SectionEvidence
-    extraction_method: Literal["docling_llm", "docling_struct", "fallback"] | str
+    extraction_method: Literal[
+        "json_contract",
+        "structural_keywords",
+        "parse_artifact",
+        "fallback",
+    ] | str
     warnings: list[str]
 
 

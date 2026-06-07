@@ -1,20 +1,20 @@
 import time
-from inspect import signature
-from typing import Callable, Optional
+from typing import Callable, Literal, Optional
 
 from rob2_pipeline.cache import read_cache, write_cache
 from rob2_pipeline.config import build_provider
+from rob2_pipeline.llm_contracts import JsonContractResult, call_json_contract_llm
 from rob2_pipeline.methodology import METHODOLOGIES
 from rob2_pipeline.methodology.render import render_methodology
 from rob2_pipeline.trace import append_llm_call
 from rob2_pipeline.types import LLMCallLogEntry
-from rob2_pipeline.xml_parser import validate_sq_answers
+from pydantic import BaseModel, ConfigDict, Field
 
 
 SYSTEM_MESSAGE = (
     "You are an expert systematic reviewer applying the Cochrane Risk of Bias 2 "
-    "(RoB 2) tool. Respond only in the XML format specified in the prompt. "
-    "Do not add preamble, explanation, or markdown code fences around your XML."
+    "(RoB 2) tool. Respond only in the format specified in the prompt. "
+    "Do not add preamble, explanation, or markdown code fences."
 )
 VALID_SQ_ANSWERS = ("Y", "PY", "PN", "N", "NI", "NA")
 WEAK_SUPPORT_LEVELS = {"weak", "unsupported"}
@@ -33,6 +33,24 @@ NA_ANSWER = {
     "support_level": "unsupported",
     "support_rationale": "Not applicable",
 }
+
+
+class SqSupportAdjudicationArtifact(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sq_id: str
+    answer: Literal["Y", "PY", "PN", "N", "NI", "NA"]
+    quote: str = Field(min_length=1)
+    justification: str = Field(min_length=1)
+    uncertainty_flag: Literal["NORMAL", "HIGH"]
+    support_level: Literal["strong", "moderate", "weak", "unsupported"]
+    support_rationale: str = Field(min_length=1)
+    residual_uncertainty: str = Field(min_length=1)
+    quote_traceability_status: Literal[
+        "traceable",
+        "untraceable",
+        "traceability_not_assessed",
+    ] = "traceability_not_assessed"
 
 
 def _parse_failure_fallback(parse_sq_ids: list[str]) -> dict[str, dict]:
@@ -63,7 +81,6 @@ def call_node_llm(
         if not (parse_fn and parse_sq_ids):
             return None
         parsed_local = parse_fn(raw, parse_sq_ids)
-        validate_sq_answers(parsed_local, parse_sq_ids)
         return parsed_local
 
     cached = read_cache(node_name, prompt)
@@ -132,7 +149,7 @@ def call_node_llm(
             )
             repair_prompt = (
                 f"Your previous response for {node_name} was invalid: {exc}. "
-                "Return only well-formed XML in exactly the requested schema.\n\n"
+                "Return only the requested structured response.\n\n"
                 f"Original prompt:\n{prompt}"
             )
             repair_start = time.perf_counter()
@@ -229,27 +246,6 @@ def format_chunk_sources(state: dict, domain: str, limit: int = 5) -> list[str]:
     return sources
 
 
-def call_node_llm_with_sources(
-    call_fn: Callable,
-    state: dict,
-    prompt: str,
-    node_name: str,
-    parse_fn: Callable[[str, list[str]], dict[str, dict]],
-    parse_sq_ids: list[str],
-    chunk_sources: list[str],
-) -> tuple[str, list[LLMCallLogEntry], Optional[dict[str, dict]]]:
-    if "chunk_sources" in signature(call_fn).parameters:
-        return call_fn(
-            state,
-            prompt,
-            node_name,
-            parse_fn,
-            parse_sq_ids,
-            chunk_sources=chunk_sources,
-        )
-    return call_fn(state, prompt, node_name, parse_fn, parse_sq_ids)
-
-
 def add_domain_judgment(
     state: dict, domain: str, judgment: str, rationale: str
 ) -> dict:
@@ -288,6 +284,9 @@ def add_domain_judgment_with_pivotality_tests(
     update["initial_domain_rationales"] = initial_domain_rationales
     pivotality_tests = list(state.get("pivotality_tests", {}).get(domain, []))
     new_pivotality_tests_by_sq = {}
+    final_sq_answers_for_tests = {
+        key: dict(value) for key, value in state.get("sq_answers", {}).items()
+    }
 
     for sq_id in sq_ids:
         sq_answer = initial_sq_answers.get(sq_id)
@@ -327,6 +326,85 @@ def add_domain_judgment_with_pivotality_tests(
         pivotality_tests.append(test_record)
         new_pivotality_tests_by_sq[sq_id] = test_record
 
+    final_answers_changed = final_sq_answers_for_tests != initial_sq_answers
+    final_judgment_changed = judgment != initial_judgment
+    if final_answers_changed or final_judgment_changed:
+        for sq_id in sq_ids:
+            sq_answer = final_sq_answers_for_tests.get(sq_id)
+            if not sq_answer:
+                continue
+            support_level = sq_answer.get("support_level", "").lower()
+            constraints = _constraints_for_sq(state, sq_id)
+            if support_level not in WEAK_SUPPORT_LEVELS and not constraints:
+                continue
+
+            conservative_answer, test_judgment = _conservative_pivotality_test(
+                final_sq_answers_for_tests,
+                sq_id,
+                judgment,
+                judge_fn,
+            )
+            pivotal = test_judgment != judgment
+
+            test_record = {
+                "sq_id": sq_id,
+                "original_answer": sq_answer.get("answer", "NI"),
+                "support_level": support_level or "constrained",
+                "conservative_test_answer": conservative_answer,
+                "original_domain_judgment": judgment,
+                "test_domain_judgment": test_judgment,
+                "pivotal": pivotal,
+                "acceptance_status": _acceptance_status(
+                    pivotal,
+                    sq_answer,
+                    state,
+                    domain,
+                    sq_id,
+                ),
+            }
+            if constraints:
+                test_record["constraints"] = constraints
+            pivotality_tests.append(test_record)
+            new_pivotality_tests_by_sq[sq_id] = test_record
+
+    needs_final_adjudication = any(
+        test.get("pivotal")
+        and test.get("acceptance_status") == "needs_adjudication"
+        for test in new_pivotality_tests_by_sq.values()
+    )
+    if needs_final_adjudication:
+        state, judgment, rationale = _adjudicate_pivotal_sq_answers(
+            state,
+            domain,
+            judgment,
+            rationale,
+            judge_fn,
+            sq_ids,
+        )
+        update = add_domain_judgment(state, domain, judgment, rationale)
+        update["initial_domain_judgments"] = initial_domain_judgments
+        update["initial_domain_rationales"] = initial_domain_rationales
+        final_sq_answers_for_tests = {
+            key: dict(value) for key, value in state.get("sq_answers", {}).items()
+        }
+        for test in pivotality_tests:
+            sq_id = test.get("sq_id")
+            final_answer = final_sq_answers_for_tests.get(sq_id)
+            if not final_answer or test.get("original_domain_judgment") != judgment:
+                continue
+            test["original_answer"] = final_answer.get("answer", test.get("original_answer"))
+            test["support_level"] = _support_level(final_answer) or test.get(
+                "support_level",
+                "constrained",
+            )
+            test["acceptance_status"] = _acceptance_status(
+                bool(test.get("pivotal")),
+                final_answer,
+                state,
+                domain,
+                str(sq_id),
+            )
+
     if pivotality_tests:
         all_tests = dict(state.get("pivotality_tests", {}))
         all_tests[domain] = pivotality_tests
@@ -334,12 +412,12 @@ def add_domain_judgment_with_pivotality_tests(
     routing_decisions = [
         _micro_agent_routing_decision(
             sq_id,
-            initial_sq_answers[sq_id],
+            final_sq_answers_for_tests[sq_id],
             _constraints_for_sq(state, sq_id),
             new_pivotality_tests_by_sq.get(sq_id),
         )
         for sq_id in sq_ids
-        if sq_id in initial_sq_answers
+        if sq_id in final_sq_answers_for_tests
     ]
     if routing_decisions:
         all_decisions = dict(state.get("micro_agent_routing_decisions", {}))
@@ -348,7 +426,11 @@ def add_domain_judgment_with_pivotality_tests(
     if state.get("sq_support_adjudications"):
         update["sq_support_adjudications"] = state["sq_support_adjudications"]
     if state.get("sq_answers"):
-        update["sq_answers"] = state["sq_answers"]
+        update["sq_answers"] = {
+            sq_id: state["sq_answers"][sq_id]
+            for sq_id in sq_ids
+            if sq_id in state["sq_answers"]
+        }
     if state.get("_sq_adjudication_llm_call_log"):
         update["llm_call_log"] = state["_sq_adjudication_llm_call_log"]
     return update
@@ -515,6 +597,8 @@ def _adjudicate_pivotal_sq_answers(
             continue
         if sq_answer.get("answer") == "NA":
             continue
+        if _adjudication_for_sq(updated_state, domain, sq_id):
+            continue
         support_level = sq_answer.get("support_level", "").lower()
         constraints = _constraints_for_sq(updated_state, sq_id)
         if support_level not in {"weak", "unsupported"} and not constraints:
@@ -530,8 +614,7 @@ def _adjudicate_pivotal_sq_answers(
             continue
 
         node_name = f"sq_support_adjudication_{domain}_{sq_id.replace('.', '_')}"
-        _response, log, parsed = call_node_llm_with_sources(
-            call_node_llm,
+        contract_result = call_json_contract_llm(
             updated_state,
             _build_sq_support_adjudication_prompt(
                 updated_state,
@@ -543,14 +626,30 @@ def _adjudicate_pivotal_sq_answers(
                 impact["test_domain_judgment"],
             ),
             node_name,
-            updated_state.get("adjudication_parse_fn", state.get("parse_fn", None))
-            or _parse_adjudication_passthrough,
-            [sq_id],
+            schema_model=SqSupportAdjudicationArtifact,
+            schema_version="sq-support-adjudication.v1",
+            prompt_version="sq-support-adjudication-json.v1",
+            fallback_factory=lambda failure_reason, sq_id=sq_id: {
+                "sq_id": sq_id,
+                "answer": sq_answer.get("answer", "NI"),
+                "quote": sq_answer.get("quote", "No relevant text found"),
+                "justification": sq_answer.get("justification", ""),
+                "uncertainty_flag": sq_answer.get("uncertainty_flag", "HIGH"),
+                "support_level": sq_answer.get("support_level", "unsupported"),
+                "support_rationale": sq_answer.get("support_rationale", ""),
+                "residual_uncertainty": failure_reason,
+                "quote_traceability_status": _traceability_status(sq_answer),
+            },
+        )
+        log = _annotate_adjudication_log_sources(
+            contract_result.log,
             format_chunk_sources(updated_state, _source_domain_for(domain)),
         )
         llm_log.extend(log)
-        raw_adjudicated = dict((parsed or {}).get(sq_id, sq_answer))
-        validation_errors = _validate_adjudicated_answer(raw_adjudicated, sq_id)
+        raw_adjudicated = _answer_from_adjudication_artifact(contract_result.artifact)
+        validation_errors = _validate_adjudicated_answer(
+            raw_adjudicated, sq_id, contract_result
+        )
         validation_status = "rejected" if validation_errors else "accepted"
         adjudicated = dict(sq_answer if validation_errors else raw_adjudicated)
         adjudicated.setdefault(
@@ -646,6 +745,12 @@ def _support_level(answer: dict) -> str:
 
 
 def _traceability_status(answer: dict, fallback: dict | None = None) -> str:
+    if (
+        fallback
+        and answer.get("quote_traceability_status") == "traceability_not_assessed"
+        and fallback.get("quote_traceability_status")
+    ):
+        return str(fallback["quote_traceability_status"])
     return str(
         answer.get("quote_traceability_status")
         or (fallback or {}).get("quote_traceability_status")
@@ -675,8 +780,50 @@ _VALID_SUPPORT_LEVELS = {"strong", "moderate", "weak", "unsupported"}
 _VALID_UNCERTAINTY_FLAGS = {"NORMAL", "HIGH"}
 
 
-def _validate_adjudicated_answer(answer: dict, sq_id: str) -> list[str]:
+def _answer_from_adjudication_artifact(artifact: dict) -> dict:
+    return {
+        "answer": artifact.get("answer", "NI"),
+        "quote": artifact.get("quote", "No relevant text found"),
+        "justification": artifact.get("justification", ""),
+        "uncertainty_flag": artifact.get("uncertainty_flag", "HIGH"),
+        "support_level": artifact.get("support_level", "unsupported"),
+        "support_rationale": artifact.get("support_rationale", ""),
+        "residual_uncertainty": artifact.get("residual_uncertainty", ""),
+        "quote_traceability_status": artifact.get(
+            "quote_traceability_status", "traceability_not_assessed"
+        ),
+    }
+
+
+def _annotate_adjudication_log_sources(
+    log: list[LLMCallLogEntry], chunk_sources: list[str]
+) -> list[LLMCallLogEntry]:
+    if not chunk_sources:
+        return log
+    annotated = []
+    for entry in log:
+        copied = dict(entry)
+        copied["chunk_sources"] = chunk_sources
+        annotated.append(copied)
+    return annotated
+
+
+def _validate_adjudicated_answer(
+    answer: dict, sq_id: str, contract_result: JsonContractResult | None = None
+) -> list[str]:
     errors = []
+    if contract_result and contract_result.status != "validated":
+        errors.append(
+            contract_result.failure_reason
+            or "JSON contract validation failed for SQ adjudication output"
+        )
+    artifact_sq_id = (
+        contract_result.artifact.get("sq_id")
+        if contract_result and isinstance(contract_result.artifact, dict)
+        else None
+    )
+    if artifact_sq_id is not None and artifact_sq_id != sq_id:
+        errors.append(f"sq_id: expected {sq_id}")
     extra_keys = sorted(set(answer) - _ADJUDICATION_ALLOWED_KEYS)
     for key in extra_keys:
         errors.append(f"{key}: field is not allowed in SQ adjudication output")
@@ -767,8 +914,10 @@ def _build_sq_support_adjudication_prompt(
         rendered_sources = "No selected packet sources were available."
 
     domain_marker = _prompt_marker_for_adjudication(domain, sq_id)
+    domain_specific_guidance = _adjudication_domain_guidance(domain, state)
 
     return f"""Re-evaluate one RoB 2 signaling-question answer. Do not re-run a full domain.
+Return only JSON matching the adjudication contract. Do not include markdown fences.
 
 <{domain_marker}></{domain_marker}>
 Outcome: {state.get("outcome", "Not reported")}
@@ -776,12 +925,15 @@ Domain: {domain}
 
 {render_methodology(methodology, [sq_id])}
 
+Domain-specific adjudication guidance:
+{domain_specific_guidance}
+
 Original answer metadata:
-<answer>{initial_answer.get("answer", "NI")}</answer>
-<quote>{initial_answer.get("quote", "No relevant text found")}</quote>
-<justification>{initial_answer.get("justification", "")}</justification>
-<support_level>{initial_answer.get("support_level", "unsupported")}</support_level>
-<support_rationale>{initial_answer.get("support_rationale", "")}</support_rationale>
+- answer: {initial_answer.get("answer", "NI")}
+- quote: {initial_answer.get("quote", "No relevant text found")}
+- justification: {initial_answer.get("justification", "")}
+- support_level: {initial_answer.get("support_level", "unsupported")}
+- support_rationale: {initial_answer.get("support_rationale", "")}
 
 Selected evidence packet sources:
 {rendered_sources}
@@ -792,17 +944,32 @@ Quote/provenance warnings:
 Support constraints:
 {_render_support_constraints(_constraints_for_sq(state, sq_id))}
 
-Return one adjudicated answer for SQ {sq_id}. Include answer code, quote, justification, support level, support rationale, and residual uncertainty.
-Respond in this exact XML format:
-<sq_{sq_id.replace(".", "_")}>
-  <answer>Y/PY/PN/N/NI/NA</answer>
-  <quote>exact quote or No relevant text found</quote>
-  <justification>brief rationale</justification>
-  <uncertainty_flag>NORMAL or HIGH</uncertainty_flag>
-  <support_level>strong/moderate/weak/unsupported</support_level>
-  <support_rationale>brief support rationale</support_rationale>
-  <residual_uncertainty>brief residual uncertainty</residual_uncertainty>
-</sq_{sq_id.replace(".", "_")}>"""
+Return one adjudicated answer for SQ {sq_id}. Include answer code, quote, justification, support level, support rationale, residual uncertainty, and quote traceability status.
+JSON fields:
+- sq_id: "{sq_id}"
+- answer: one of "Y", "PY", "PN", "N", "NI", "NA"
+- quote: exact quote or "No relevant text found"
+- justification: brief rationale
+- uncertainty_flag: "NORMAL" or "HIGH"
+- support_level: "strong", "moderate", "weak", or "unsupported"
+- support_rationale: brief support rationale
+- residual_uncertainty: brief residual uncertainty
+- quote_traceability_status: "traceable", "untraceable", or "traceability_not_assessed" """
+
+
+def _adjudication_domain_guidance(domain: str, state: dict) -> str:
+    if domain != "D3":
+        return "No additional domain-specific adjudication guidance."
+    return (
+        "For time-to-event outcomes such as progression-free survival, observed "
+        "progression or death events are not missing outcome data. Study-drug "
+        "discontinuation because progression or death occurred is not itself "
+        "missing outcome data unless the evidence says outcome follow-up was "
+        "censored or stopped before the event was observed. Treat early censoring, "
+        "loss to follow-up, withdrawal, switching, or stopping assigned intervention "
+        "before outcome ascertainment as the missing-data concern for "
+        f"{state.get('outcome', 'the assessed outcome')}."
+    )
 
 
 def _render_support_constraints(constraints: list[dict]) -> str:
@@ -822,12 +989,6 @@ def _render_support_constraints(constraints: list[dict]) -> str:
             parts.append(f"provenance={constraint['provenance']}")
         rendered.append("- " + "; ".join(parts))
     return "\n".join(rendered)
-
-
-def _parse_adjudication_passthrough(raw: str, sq_ids: list[str]) -> dict[str, dict]:
-    from rob2_pipeline.xml_parser import parse_sq_response
-
-    return parse_sq_response(raw, sq_ids)
 
 
 def _prompt_marker_for_adjudication(domain: str, sq_id: str) -> str:

@@ -4,7 +4,15 @@ from .base import LLMProvider, LLMResponse
 
 
 class OpenAIProvider(LLMProvider):
-    def __init__(self, api_key, model, temperature=0, max_tokens=2000):
+    def __init__(
+        self,
+        api_key,
+        model,
+        temperature=0,
+        max_tokens=2000,
+        request_timeout: float = 60,
+        max_retries: int = 2,
+    ):
         from langchain_openai import ChatOpenAI
 
         self._model = model
@@ -13,6 +21,8 @@ class OpenAIProvider(LLMProvider):
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
+            timeout=request_timeout,
+            max_retries=max(0, max_retries - 1),
         )
         self.temperature = temperature
         self.max_tokens = max_tokens

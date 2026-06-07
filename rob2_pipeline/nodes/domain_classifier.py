@@ -147,7 +147,10 @@ def build_classifier_prompt(
             "evidence_packets and their decision_table rows. Do not introduce "
             "or infer evidence outside these packets. Include support_level, "
             "support_rationale, and uncertainty for every non-NA answer. Use "
-            "NI when packet evidence is insufficient for a non-NI answer."
+            "NI when packet evidence is insufficient for a non-NI answer. Quotes "
+            "must be exact contiguous source text whenever possible; if a long "
+            "quote is shortened with ellipses, every retained fragment must appear "
+            "verbatim in the selected packet."
         ),
         "required_output_fields": [
             "sq_id",
@@ -273,11 +276,31 @@ def _answer_quote_is_packet_bound(answer: dict, packet: EvidencePacket) -> bool:
     packet_texts.extend(source.get("text", "") for source in packet.get("sources", []))
     packet_texts.extend(fact.get("quote", "") for fact in packet.get("candidate_facts", []))
     packet_texts.extend(fact.get("claim", "") for fact in packet.get("candidate_facts", []))
-    return any(quote in _normalize_quote(text) for text in packet_texts)
+    normalized_packet_texts = [_normalize_quote(text) for text in packet_texts]
+    if any(quote in text for text in normalized_packet_texts):
+        return True
+    fragments = [
+        fragment
+        for fragment in _quote_fragments(answer.get("quote", ""))
+        if len(fragment) >= 24
+    ]
+    return bool(fragments) and all(
+        any(fragment in text for text in normalized_packet_texts)
+        for fragment in fragments
+    )
 
 
 def _normalize_quote(text: str) -> str:
     return " ".join(str(text).casefold().split())
+
+
+def _quote_fragments(text: str) -> list[str]:
+    normalized = str(text).replace("…", "...")
+    return [
+        _normalize_quote(fragment)
+        for fragment in normalized.split("...")
+        if _normalize_quote(fragment)
+    ]
 
 
 def _classifier_fallback(

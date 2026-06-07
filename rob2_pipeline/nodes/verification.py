@@ -28,6 +28,18 @@ def _source_text(state: RoB2State) -> str:
         if section:
             parts.append(format_evidence(section))
     parts.extend((state.get("rag_contexts") or {}).values())
+    parts.extend(
+        str(state.get(field, ""))
+        for field in (
+            "ctgov_outcomes",
+            "ctgov_design",
+            "ctgov_description",
+            "ctgov_flow",
+        )
+    )
+    for packet in (state.get("evidence_packets") or {}).values():
+        for source in packet.get("sources", []):
+            parts.append(str(source.get("text", "")))
     return _normalize_text("\n\n".join(part for part in parts if part))
 
 
@@ -37,6 +49,22 @@ def quote_is_supported(quote: str, source_text: str) -> bool:
         return True
     if normalized_quote in source_text:
         return True
+    if re.search(r"(?:\.\.\.|…)", quote):
+        fragments = [
+            _normalize_text(fragment)
+            for fragment in re.split(r"(?:\.\.\.|…)", quote)
+            if _normalize_text(fragment)
+        ]
+        substantive_fragments = [
+            fragment
+            for fragment in fragments
+            if fragment not in _BYPASS_QUOTES
+            and len(re.findall(r"[a-z0-9]+", fragment)) >= 2
+        ]
+        if substantive_fragments and all(
+            fragment in source_text for fragment in substantive_fragments
+        ):
+            return True
     words = [
         word for word in re.findall(r"[a-z0-9]+", normalized_quote) if len(word) > 3
     ]
@@ -49,10 +77,14 @@ def quote_is_supported(quote: str, source_text: str) -> bool:
 def _fragile_sq_issue(sq_id: str, answer: dict) -> str | None:
     value = answer.get("answer", "")
     justification = (answer.get("justification") or "").casefold()
+    quote = (answer.get("quote") or "").casefold()
     if (
         sq_id == "3.1"
         and value in ("Y", "PY")
-        and not re.search(r"\d+\s*/\s*\d+|\d+(?:\.\d+)?\s*%", justification)
+        and not re.search(
+            r"\d+\s*/\s*\d+|\d+(?:\.\d+)?\s*%",
+            f"{justification}\n{quote}",
+        )
     ):
         return "D3 completeness answer lacks a denominator or percentage calculation."
     if (
@@ -86,7 +118,10 @@ def verify_sq_evidence(state: RoB2State) -> list[dict]:
 
 def verify_packet_evidence(state: RoB2State) -> list[dict]:
     flags = []
+    sq_answers = state.get("sq_answers") or {}
     for sq_id, packet in sorted((state.get("evidence_packets") or {}).items()):
+        if (sq_answers.get(sq_id) or {}).get("answer") == "NA":
+            continue
         grade = packet.get("packet_grade") or {}
         missing = grade.get("missing_evidence") or packet.get("missing_evidence") or []
         negative_flags = packet.get("negative_flags") or []

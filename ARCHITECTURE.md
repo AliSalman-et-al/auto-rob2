@@ -73,15 +73,12 @@ the main article. Supplement ingestion is best-effort unless benchmark
 | File | Responsibility |
 | --- | --- |
 | `rob2_pipeline/nodes/ingest.py` | Graph adapter for ingestion plus RCT screening node |
-| `rob2_pipeline/ingestion/assessment.py` | Primary plus supplement Assessment ingestion behavior and fallback order |
-| `rob2_pipeline/ingestion/docling_extract.py` | Docling conversion, OCR retry, chunk creation |
-| `rob2_pipeline/ingestion/document_repr.py` | Prompt-facing document block representation |
+| `rob2_pipeline/ingestion/assessment.py` | Primary plus supplement Assessment ingestion from parser-neutral artifacts |
+| `rob2_pipeline/ingestion/parse_artifacts.py` | LiteParse adaptation, page-aware parser artifacts, retrieval chunk creation |
 | `rob2_pipeline/ingestion/evidence.py` | Primary-paper structured evidence extraction |
-| `rob2_pipeline/ingestion/supplements.py` | Supplement classification, windowed parsing, provenance |
 | `rob2_pipeline/ingestion/settings.py` | Ingestion constants and environment controls |
-| `rob2_pipeline/pdf_ingestion.py` | Compatibility facade for ingestion helpers |
 
-`pdf_ingest` produces primary-paper text, primary evidence, Docling chunks, and
+`pdf_ingest` produces primary-paper text, primary evidence, retrieval chunks, and
 optional supplement chunks. Supplement chunks are added to retrieval with
 explicit metadata; supplement text is not appended to `full_text`.
 
@@ -145,6 +142,8 @@ signaling-question-specific inputs.
 | `rob2_pipeline/nodes/evidence_source_selection.py` | Candidate source creation and ranking |
 | `rob2_pipeline/nodes/evidence_packet_grading.py` | Missing-evidence and quality flags |
 | `rob2_pipeline/nodes/evidence_packets.py` | Packet construction and prompt rendering |
+| `rob2_pipeline/evidence_store.py` | Typed quote-grounded evidence facts, failed claims, and gaps |
+| `rob2_pipeline/trial_workspace.py` | Trial Workspace and Outcome Workspace artifact manifests |
 
 Contracts define what each signaling question needs: required labels, matching
 terms, fallback sections, denominator requirements, outcome-binding
@@ -153,6 +152,22 @@ requirements, and prespecification requirements.
 Source ranking is domain-aware. For example, D5 prefers protocol, SAP, and
 registry sources; D3 gives weight to appendix and SAP missing-data evidence;
 D4 values outcome-definition and adjudication sources.
+
+### EvidenceStore And Workspaces
+
+`rob2_pipeline/evidence_store.py` defines the typed EvidenceStore used for
+quote-grounded evidence facts, failed claims, and evidence gaps. It validates
+support status, provenance, family-specific fields, and outcome binding before
+facts are selected for signaling-question packets or persisted as audit
+artifacts.
+
+`rob2_pipeline/trial_workspace.py` separates reusable Trial Workspace artifacts
+from Outcome Workspace artifacts. The Trial Workspace records source identities,
+LiteParse-derived parser-neutral `ParseArtifact` records, page-aware artifacts,
+parser diagnostics, and EvidenceStore outputs with content/config/upstream
+hashes. Outcome Workspaces record outcome normalization, JSON-contract SQ
+answers, deterministic domain judgments, and support-escalation diagnostics
+that depend on the assessed outcome, RoB 2 settings, and contract versions.
 
 ### Domain Prompt Context
 
@@ -181,8 +196,8 @@ post-processing in one place while leaving prompt assembly in
 
 All graph LLM calls go through `call_node_llm()` in
 `rob2_pipeline/nodes/common.py`. That layer handles provider selection, prompt
-caching, XML parsing and repair, trace logging, and error normalization.
-Signaling-question responses are parsed into answer code, quote,
+caching, JSON contract validation and repair, trace logging, and error
+normalization. Signaling-question responses are parsed into answer code, quote,
 justification, uncertainty flag, support level, and support rationale.
 
 | File | Responsibility |
@@ -192,7 +207,7 @@ justification, uncertainty flag, support level, and support rationale.
 | `rob2_pipeline/providers/` | OpenRouter, Anthropic, and OpenAI adapters |
 | `rob2_pipeline/cache.py` | Optional prompt cache |
 | `rob2_pipeline/trace.py` | LLM input/output records and graph-node timing spans |
-| `rob2_pipeline/xml_parser.py` | XML extraction and repair helpers |
+| `rob2_pipeline/llm_contracts.py` | JSON schema validation and repair/fallback helpers |
 
 Avoid direct provider SDK calls inside graph nodes. Keeping calls behind the
 provider abstraction makes traces, caching, retries, and tests consistent.
@@ -211,7 +226,7 @@ implementations. This keeps instrumentation additive as the graph evolves and
 ensures exceptions still close spans before the original error is re-raised.
 
 LLM latency and node duration are intentionally separate. A node span includes
-all work inside the node, including local parsing, retrieval, Docling work, and
+all work inside the node, including local parsing, retrieval, ingestion work, and
 any nested LLM calls. Benchmark summaries use these fields to estimate non-LLM
 time as `max(total_wall_ms - llm_total_ms, 0)`.
 
@@ -249,7 +264,7 @@ Important state groups:
 | Group | Representative keys |
 | --- | --- |
 | Inputs | `pdf_path`, `supplementary_paths`, `precomputed_ingestion` |
-| Primary ingestion | `full_text`, `evidence`, `docling_doc`, `docling_chunks` |
+| Primary ingestion | `full_text`, `evidence`, page-aware parser artifacts, `parse_artifacts` |
 | Source inventory | `source_documents`, `supplement_warnings` |
 | Trial metadata | `intervention`, `comparator`, `outcome`, `registration_number` |
 | Outcome resolution | `outcome_type`, `outcome_properties`, `outcome_classification_support` |
@@ -350,7 +365,7 @@ is supplied.
 Benchmark orchestration caches trial-level ingestion artifacts and retrieval
 indexes by primary PDF identity plus selected supplement identities. If the
 same trial is assessed for multiple outcomes in one run, later outcomes reuse
-the cached primary text, evidence, Docling chunks, source inventory, supplement
+the cached primary text, evidence, retrieval chunks, source inventory, supplement
 warnings, and FAISS indexes. Outcome resolution, retrieved contexts, evidence
 packets, SQ answers, support audit, and judgments remain outcome-specific.
 
@@ -427,13 +442,13 @@ Common failure modes:
 
 | Problem | First check |
 | --- | --- |
-| XML parse failure | Trace JSON and `xml_parser.py` |
+| JSON contract failure | Trace JSON and `llm_contracts.py` |
 | RCT stops early | `is_rct`, `rct_screen_evidence`, `errors` |
 | Missing randomization or masking evidence | D1/D2 packets and RAG sources |
 | Missing-data uncertainty | D3 packets, denominator flags, appendix/SAP sources |
 | Selective-reporting uncertainty | D5 packets, CT.gov fields, protocol/SAP sources |
 | Supplement parse issue | `source_documents`, `supplement_warnings` |
-| `std::bad_alloc` from Docling | Supplement window warnings; reduce page-window size |
+| Parser failure | Source document diagnostics and parser provenance |
 | Empty RAG output | embedding availability and primary evidence warnings |
 | Unexpected final-vs-initial label | `pivotality_tests`, `sq_support_adjudications`, and adjudication LLM trace |
 | Slow benchmark run | `benchmark_report.md` Timing Summary, per-result `timing`, and trace `node_spans` |
@@ -473,8 +488,8 @@ deliberately redesigned.
 ### Add A New LLM Node
 
 Use `call_node_llm()` from `nodes/common.py`. This keeps provider calls,
-caching, XML parsing, trace logging, and error handling consistent across the
-graph.
+caching, JSON contract validation, trace logging, and error handling
+consistent across the graph.
 
 ## Production Notes
 

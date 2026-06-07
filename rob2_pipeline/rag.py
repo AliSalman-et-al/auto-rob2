@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from langchain_community.vectorstores import FAISS
@@ -146,6 +147,42 @@ def retrieve_adaptive(
     return "\n\n".join(texts), metas
 
 
+def retrieve_lexical(
+    chunks: list[Document],
+    queries: list[str],
+    *,
+    token_budget: int = 1200,
+    candidate_k: int = 12,
+    section_keywords: list[str] | None = None,
+) -> tuple[str, list[ChunkMeta]]:
+    """Dependency-light retrieval fallback used when vector retrieval is unavailable."""
+    if not chunks:
+        return "", []
+    query_terms = _query_terms(queries)
+    lowered_section_keywords = [keyword.lower() for keyword in section_keywords or []]
+    scored: list[tuple[float, int, Document]] = []
+    for index, chunk in enumerate(chunks):
+        text = chunk.page_content or ""
+        lowered = text.casefold()
+        section = str(chunk.metadata.get("section", "")).casefold()
+        term_hits = sum(1 for term in query_terms if term in lowered)
+        section_hits = sum(1 for term in lowered_section_keywords if term in section)
+        role_boost = 0.0
+        role = str(chunk.metadata.get("document_role", "")).casefold()
+        if role in {"protocol", "sap", "registry"}:
+            role_boost = 0.75
+        score = float(term_hits) + (0.5 * section_hits) + role_boost
+        if score > 0:
+            scored.append((score, index, chunk))
+    if not scored:
+        scored = [(0.0, index, chunk) for index, chunk in enumerate(chunks[:candidate_k])]
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return _materialize_ranked_documents(
+        [(chunk, 1.0 / (score + 1.0)) for score, _, chunk in scored[:candidate_k]],
+        token_budget=token_budget,
+    )
+
+
 def grade_retrieved_context(domain: str, text: str, metas: list[ChunkMeta]) -> dict:
     lowered = (text or "").lower()
     required = DOMAIN_REQUIRED_TERMS.get(domain, [])
@@ -162,6 +199,51 @@ def grade_retrieved_context(domain: str, text: str, metas: list[ChunkMeta]) -> d
         "missing_evidence": missing,
         "retry_recommended": relevance < 0.4 or coverage < 0.5,
     }
+
+
+def _materialize_ranked_documents(
+    ranked_docs: list[tuple[Document, float]], *, token_budget: int
+) -> tuple[str, list[ChunkMeta]]:
+    texts: list[str] = []
+    metas: list[ChunkMeta] = []
+    total_tokens = 0
+    for doc, score in ranked_docs:
+        chunk_tokens = max(1, len(doc.page_content) // 4)
+        if total_tokens + chunk_tokens > token_budget:
+            if texts:
+                break
+            allowed_chars = max(1, token_budget * 4)
+            page_content = doc.page_content[:allowed_chars].rstrip()
+            chunk_tokens = max(1, len(page_content) // 4)
+        else:
+            page_content = doc.page_content
+        total_tokens += chunk_tokens
+        texts.append(page_content)
+        metas.append(
+            ChunkMeta(
+                text=page_content,
+                section=doc.metadata.get("section", ""),
+                page_numbers=list(doc.metadata.get("page_numbers") or []),
+                score=score,
+                document_id=doc.metadata.get("document_id", ""),
+                document_name=doc.metadata.get("document_name", ""),
+                document_role=doc.metadata.get("document_role", ""),
+                source_kind=doc.metadata.get("source_kind", "rag_chunk"),
+                source_path=doc.metadata.get("source_path", ""),
+            )
+        )
+    return "\n\n".join(texts), metas
+
+
+def _query_terms(queries: list[str]) -> tuple[str, ...]:
+    terms: list[str] = []
+    for query in queries:
+        terms.extend(
+            term
+            for term in re.findall(r"[a-z0-9-]+", query.casefold())
+            if len(term) >= 5
+        )
+    return tuple(dict.fromkeys(terms))
 
 
 def _doc_key(doc: Document) -> str:
