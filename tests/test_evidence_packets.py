@@ -9,6 +9,16 @@ from rob2_pipeline.nodes.evidence_packet_grading import packet_readiness
 from rob2_pipeline.nodes.evidence_packet_grading import resolve_source_conflict
 
 
+class _RecordingSupplementIndex:
+    def __init__(self, segments: list[dict]):
+        self.segments = segments
+        self.calls: list[dict] = []
+
+    def retrieve(self, query: str, *, domain: str, top_k: int = 5) -> dict:
+        self.calls.append({"query": query, "domain": domain, "top_k": top_k})
+        return {"segments": self.segments[:top_k], "best_score": 0.7}
+
+
 def test_evidence_packets_module_keeps_stable_public_api():
     from rob2_pipeline.nodes import evidence_packets
 
@@ -56,6 +66,95 @@ def test_builds_sq_specific_packet_for_allocation_concealment():
     assert "conceal" not in packet["missing_evidence"]
     assert packet["sources"][0]["page_numbers"] == [3]
     assert packet["retrieval_confidence"] > 0
+
+
+def test_packet_builder_retrieves_supplement_candidates_from_contract_terms():
+    evidence = empty_paper_evidence("test")
+    supplement_index = _RecordingSupplementIndex(
+        [
+            {
+                "text": "The protocol used a central web allocation system before enrolment.",
+                "section": "Allocation",
+                "page_numbers": [11],
+                "score": 0.7,
+                "source_kind": "supplement_segment",
+                "document_id": "supplement:protocol",
+                "document_name": "protocol.pdf",
+                "document_role": "protocol",
+                "source_path": "protocol.pdf",
+            }
+        ]
+    )
+    state = {
+        "outcome": "Overall Survival",
+        "evidence": evidence,
+        "rag_chunk_metadata": {"d1": [], "d2": [], "d3": [], "d4": [], "d5": []},
+        "supplement_indexes": {"supplement:protocol": supplement_index},
+        "retrieval_grades": {},
+    }
+
+    result = build_evidence_packets(state)
+
+    packet = result["evidence_packets"]["1.2"]
+    assert packet["sources"][0]["source_kind"] == "supplement_segment"
+    assert packet["sources"][0]["document_name"] == "protocol.pdf"
+    d1_calls = [call for call in supplement_index.calls if call["domain"] == "d1"]
+    assert d1_calls
+    allocation_query = next(
+        call["query"] for call in d1_calls if "allocation_concealment" in call["query"]
+    )
+    assert "allocation_concealment" in allocation_query
+    assert "enrolment_timing" in allocation_query
+    assert "conceal" in allocation_query
+    assert "allocation concealment" not in allocation_query
+
+
+def test_d5_packet_merges_supplement_registry_and_section_text_with_provenance():
+    evidence = empty_paper_evidence("test")
+    evidence["d5_registration"]["text"] = (
+        "The primary report states overall survival was the primary endpoint."
+    )
+    supplement_index = _RecordingSupplementIndex(
+        [
+            {
+                "text": (
+                    "The statistical analysis plan prespecified overall survival "
+                    "and the Cox proportional hazards analysis."
+                ),
+                "section": "SAP Analysis",
+                "page_numbers": [17],
+                "score": 0.8,
+                "source_kind": "supplement_segment",
+                "document_id": "supplement:sap",
+                "document_name": "sap.pdf",
+                "document_role": "sap",
+                "source_path": "sap.pdf",
+            }
+        ]
+    )
+    state = {
+        "outcome": "Overall Survival",
+        "evidence": evidence,
+        "registered_endpoint": "Overall Survival",
+        "registered_analysis": "Cox proportional hazards model",
+        "ctgov_outcomes": "Primary Outcome: Overall Survival.",
+        "rag_chunk_metadata": {"d1": [], "d2": [], "d3": [], "d4": [], "d5": []},
+        "supplement_indexes": {"supplement:sap": supplement_index},
+        "retrieval_grades": {},
+    }
+
+    result = build_evidence_packets(state)
+
+    packet = result["evidence_packets"]["5.1"]
+    source_kinds = {source.get("source_kind") for source in packet["sources"]}
+    assert {"supplement_segment", "ctgov", "section_text"}.issubset(source_kinds)
+    assert packet["sources"][0]["document_role"] == "sap"
+    assert "results_without_prespecification" not in packet["negative_flags"]
+
+    block = packet_block_for_domain(result["evidence_packets"], "d5")
+    assert "sap (sap.pdf), page 17, SAP Analysis" in block
+    assert "registry (ClinicalTrials.gov), no page, ClinicalTrials.gov" in block
+    assert "primary (Primary paper evidence), no page, d5_registration" in block
 
 
 def test_packet_readiness_separates_mechanical_completeness_from_semantic_adequacy():
