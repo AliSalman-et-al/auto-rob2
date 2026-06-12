@@ -32,7 +32,6 @@ def candidate_sources(
 ) -> list[PacketSource]:
     raw_sources = []
     raw_sources.extend(supplement_sources(state, contract))
-    raw_sources.extend((state.get("rag_chunk_metadata") or {}).get(contract.domain, []))
     # Section-text sources are belt-and-suspenders supplementary context for the
     # LLM and run unconditionally alongside supplement and registry hits. They
     # carry a source_kind="section_text" tag so downstream code can distinguish

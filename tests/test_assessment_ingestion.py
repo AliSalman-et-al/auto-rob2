@@ -52,7 +52,6 @@ def test_assessment_ingestion_result_to_state_update_omits_empty_llm_log():
     assert result.to_state_update() == {
         "full_text": "Primary text",
         "evidence": evidence,
-        "docling_chunks": [],
         "source_documents": [],
         "parse_artifacts": [],
         "supplement_warnings": [],

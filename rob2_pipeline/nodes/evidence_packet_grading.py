@@ -51,10 +51,11 @@ def negative_flags(
         state.get("outcome", ""), text
     ):
         flags.append("possible_wrong_outcome_context")
-    # Only real RAG chunks need page numbers. Structured sources such as
-    # section text and ClinicalTrials.gov have no page metadata by design.
+    # Retrieved supplement segments should carry page provenance when the parser
+    # provides it. Structured sources such as section text and ClinicalTrials.gov
+    # have no page metadata by design.
     if any(
-        source.get("source_kind", "rag_chunk") == "rag_chunk"
+        source.get("source_kind") == "supplement_segment"
         and not source.get("page_numbers")
         for source in selected
     ):

@@ -31,18 +31,21 @@ def _state_with_chunks(
     domain: str, chunks: list[dict], outcome: str = "Progression-Free Survival"
 ) -> dict:
     evidence = empty_paper_evidence("test")
+    supplement_chunks = [
+        {
+            "source_kind": "supplement_segment",
+            "document_id": chunk.get("document_id", "supplement:test"),
+            "document_name": chunk.get("document_name", "supplement.pdf"),
+            "document_role": chunk.get("document_role", "protocol"),
+            "source_path": chunk.get("source_path", "supplement.pdf"),
+            **chunk,
+        }
+        for chunk in chunks
+    ]
     return {
         "outcome": outcome,
         "evidence": evidence,
-        "rag_chunk_metadata": {
-            "d1": [],
-            "d2": [],
-            "d3": [],
-            "d4": [],
-            "d5": [],
-            domain: chunks,
-        },
-        "retrieval_grades": {},
+        "supplement_indexes": {"supplement:test": _RecordingSupplementIndex(supplement_chunks)},
     }
 
 
@@ -88,9 +91,7 @@ def test_packet_builder_retrieves_supplement_candidates_from_contract_terms():
     state = {
         "outcome": "Overall Survival",
         "evidence": evidence,
-        "rag_chunk_metadata": {"d1": [], "d2": [], "d3": [], "d4": [], "d5": []},
         "supplement_indexes": {"supplement:protocol": supplement_index},
-        "retrieval_grades": {},
     }
 
     result = build_evidence_packets(state)
@@ -138,9 +139,7 @@ def test_d5_packet_merges_supplement_registry_and_section_text_with_provenance()
         "registered_endpoint": "Overall Survival",
         "registered_analysis": "Cox proportional hazards model",
         "ctgov_outcomes": "Primary Outcome: Overall Survival.",
-        "rag_chunk_metadata": {"d1": [], "d2": [], "d3": [], "d4": [], "d5": []},
         "supplement_indexes": {"supplement:sap": supplement_index},
-        "retrieval_grades": {},
     }
 
     result = build_evidence_packets(state)
@@ -849,79 +848,69 @@ def test_verifier_does_not_flag_section_text_for_missing_page_numbers():
     evidence["d1_randomization"]["text"] = (
         "Patients were randomized 1:1 using a centralized interactive web response system."
     )
-    state = {
-        "outcome": "Overall Survival",
-        "evidence": evidence,
-        "rag_chunk_metadata": {
-            "d1": [
-                {
-                    "text": "Randomization used permuted blocks stratified by site.",
-                    "section": "Methods",
-                    "page_numbers": [4],
-                    "score": 0.1,
-                }
-            ],
-            "d2": [],
-            "d3": [],
-            "d4": [],
-            "d5": [],
-        },
-        "retrieval_grades": {},
-    }
+    state = _state_with_chunks(
+        "d1",
+        [
+            {
+                "text": "Randomization used permuted blocks stratified by site.",
+                "section": "Methods",
+                "page_numbers": [4],
+                "score": 0.1,
+            }
+        ],
+        outcome="Overall Survival",
+    )
+    state["evidence"] = evidence
 
     result = build_evidence_packets(state)
 
-    # At least one SQ in d1 should have both a chunk source (with pages) and a
-    # section-text source (without pages). missing_page_source must not fire.
+    # At least one SQ in d1 should have both a supplement segment with pages and
+    # a section-text source without pages. missing_page_source must not fire.
     for sq_id in ("1.1", "1.2", "1.3"):
         packet = result["evidence_packets"][sq_id]
         kinds = {s.get("source_kind") for s in packet["sources"]}
-        if {"rag_chunk", "section_text"}.issubset(kinds):
+        if {"supplement_segment", "section_text"}.issubset(kinds):
             assert "missing_page_source" not in packet["negative_flags"], (
                 f"SQ {sq_id} should not be flagged missing_page_source: the "
                 f"only source with empty page_numbers is a section-text source"
             )
             return
     raise AssertionError(
-        "test setup did not produce any packet with both rag_chunk and "
+        "test setup did not produce any packet with both supplement_segment and "
         "section_text sources"
     )
 
 
-def test_verifier_still_flags_chunk_source_with_empty_page_numbers():
-    """A real RAG chunk that is missing page numbers is still a defect and
+def test_verifier_still_flags_supplement_segment_with_empty_page_numbers():
+    """A retrieved supplement segment missing page numbers is still a defect and
     must still trigger missing_page_source. Only section-text sources get a
     pass."""
     evidence = empty_paper_evidence("test")
-    state = {
-        "outcome": "Overall Survival",
-        "evidence": evidence,
-        "rag_chunk_metadata": {
-            "d1": [
-                {
-                    "text": "Randomization used permuted blocks stratified by site.",
-                    "section": "Methods",
-                    "page_numbers": [],
-                    "score": 0.1,
-                }
-            ],
-            "d2": [],
-            "d3": [],
-            "d4": [],
-            "d5": [],
-        },
-        "retrieval_grades": {},
-    }
+    state = _state_with_chunks(
+        "d1",
+        [
+            {
+                "text": "Randomization used permuted blocks stratified by site.",
+                "section": "Methods",
+                "page_numbers": [],
+                "score": 0.1,
+            }
+        ],
+        outcome="Overall Survival",
+    )
+    state["evidence"] = evidence
 
     result = build_evidence_packets(state)
 
     packet = result["evidence_packets"]["1.1"]
-    rag_sources = [s for s in packet["sources"] if s.get("source_kind") == "rag_chunk"]
-    assert rag_sources, "expected at least one RAG chunk source"
-    assert any(not s.get("page_numbers") for s in rag_sources), (
-        "test setup should have a chunk source with empty page_numbers"
+    supplement_sources = [
+        s for s in packet["sources"] if s.get("source_kind") == "supplement_segment"
+    ]
+    assert supplement_sources, "expected at least one supplement segment source"
+    assert any(not s.get("page_numbers") for s in supplement_sources), (
+        "test setup should have a supplement segment source with empty page_numbers"
     )
     assert "missing_page_source" in packet["negative_flags"], (
-        "missing_page_source should still fire for a real RAG chunk that "
+        "missing_page_source should still fire for a supplement segment that "
         "has empty page_numbers"
     )

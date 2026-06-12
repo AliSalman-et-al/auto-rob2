@@ -525,10 +525,11 @@ def test_run_benchmark_reuses_trial_artifacts_across_outcomes(tmp_path, monkeypa
         return {
             "full_text": "Trial text",
             "evidence": {"warnings": []},
-            "docling_chunks": [],
             "source_documents": [],
             "supplement_warnings": [],
-            "trial_retrieval_indexes": {"index": object(), "filtered": {}},
+            "supplement_segments": [],
+            "supplement_retrieval_grades": {},
+            "parse_artifacts": [],
         }
 
     monkeypatch.setattr("rob2_pipeline.benchmark.run_assessment", fake_run_assessment)
@@ -544,9 +545,9 @@ def test_run_benchmark_reuses_trial_artifacts_across_outcomes(tmp_path, monkeypa
     )
 
     assert calls[0]["precomputed_ingestion"] is None
-    assert calls[0]["trial_retrieval_indexes"] is None
     assert calls[1]["precomputed_ingestion"] is not None
-    assert calls[1]["trial_retrieval_indexes"]
+    assert "trial_retrieval_indexes" not in calls[0]
+    assert "trial_retrieval_indexes" not in calls[1]
 
 
 def test_run_benchmark_scores_gold_evidence_fixtures_when_present(
@@ -592,20 +593,6 @@ def test_run_benchmark_scores_gold_evidence_fixtures_when_present(
                         "D5": "Low",
                     },
                     "overall_judgment": "Low",
-                    "rag_sources": {
-                        "D1": [
-                            {
-                                "page_numbers": [3],
-                                "text": "Trial participants were randomized centrally.",
-                            }
-                        ],
-                        "D3": [
-                            {
-                                "page_numbers": [8],
-                                "text": "Outcome data were available for most participants.",
-                            }
-                        ],
-                    },
                     "evidence_packets": {
                         "1.1": {
                             "sources": [
@@ -643,9 +630,9 @@ def test_run_benchmark_scores_gold_evidence_fixtures_when_present(
 
     assert results[0]["gold_evidence"]["fixture_found"] is True
     assert results[0]["gold_evidence"]["retrieval_recall"] == {
-        "matched": 2,
-        "total": 3,
-        "rate": 2 / 3,
+        "matched": 0,
+        "total": 0,
+        "rate": None,
     }
     assert results[0]["gold_evidence"]["packet_evidence_recall"] == {
         "matched": 1,
@@ -654,9 +641,9 @@ def test_run_benchmark_scores_gold_evidence_fixtures_when_present(
     }
     assert results[1]["skipped"] is True
     assert summary["gold_evidence"]["retrieval_recall"] == {
-        "matched": 2,
-        "total": 3,
-        "rate": 2 / 3,
+        "matched": 0,
+        "total": 0,
+        "rate": None,
     }
     assert benchmark_json["assessments"][0]["gold_evidence"][
         "packet_evidence_recall"
@@ -664,7 +651,7 @@ def test_run_benchmark_scores_gold_evidence_fixtures_when_present(
     assert benchmark_json["aggregate"]["gold_evidence"]["fixtures_evaluated"] == 1
     report = (tmp_path / "out" / "benchmark_report.md").read_text(encoding="utf-8")
     assert "## Gold Evidence Recall" in report
-    assert "| Retrieval | 66.7% (2/3) |" in report
+    assert "| Retrieval | 0.0% (0/0) |" in report
     assert "| Packet evidence | 33.3% (1/3) |" in report
 
 

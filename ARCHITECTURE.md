@@ -35,7 +35,6 @@ pdf_ingest
   -> preliminary_info
   -> outcome_resolver
   -> trial_facts
-  -> rag_retrieval
   -> evidence_packet_builder
   -> D1-D5 signaling-question nodes
   -> support audit and deterministic domain judges
@@ -108,33 +107,35 @@ source with `source_kind="ctgov"` and `document_role="registry"`.
 
 ### Retrieval
 
-Retrieval is per study, not global. Each run builds a FAISS index from that
-study's primary and supplement chunks.
+Evidence packet construction is the retrieval boundary. The primary paper stays
+available as structured `PaperEvidence` section text; optional supplements are
+retrieved through BM25S-backed `SupplementIndex` artifacts.
 
 | File | Responsibility |
 | --- | --- |
-| `rob2_pipeline/rag.py` | Embeddings, FAISS indexes, adaptive retrieval, grading |
-| `rob2_pipeline/rag_queries.py` | Domain and signaling-question query sets |
-| `rob2_pipeline/nodes/rag_retrieval.py` | Graph node that emits RAG context and metadata |
+| `rob2_pipeline/supplement_retrieval.py` | BM25S supplement indexes over SupplementSegments |
+| `rob2_pipeline/nodes/evidence_contracts.py` | SQ-specific evidence contracts and retrieval terms |
+| `rob2_pipeline/nodes/evidence_source_selection.py` | Supplement, registry, and section-text packet candidates |
+| `rob2_pipeline/nodes/evidence_packets.py` | Evidence packet orchestration and prompt rendering |
 
-The retrieval node runs domain-specific query sets, deduplicates results, keeps
-chunks within a token budget, and writes both prompt-facing text
-(`rag_contexts`) and JSON-facing metadata (`rag_chunk_metadata`, emitted as
-`rag_sources`).
+Evidence packets are the only prompt-facing retrieval product. JSON output
+exposes `supplement_segments`, `supplement_retrieval_grades`, `evidence_packets`,
+and packet diagnostics; it does not emit legacy `rag_sources`, `rag_contexts`,
+or generic `retrieval_grades`.
 
-`rag_retrieval_node` stores built indexes in `trial_retrieval_indexes` so
-benchmark runs can reuse the same trial-level FAISS indexes across multiple
-outcomes for the same primary PDF and supplements. Retrieved contexts and
-evidence packets are still rebuilt per assessed outcome.
+`SupplementIndex` instances are rebuilt in memory for each run. Trial-level
+ingestion artifacts such as source documents, parse artifacts, and supplement
+segments can still be reused across outcomes for the same primary PDF and
+supplements.
 
-If vector retrieval fails, downstream nodes still receive deterministic
-fallback sections extracted from the primary paper.
+If no supplements are supplied, downstream nodes still receive Evidence Packets
+built from registry fields and deterministic primary-paper fallback sections.
 
 ### Evidence Packets
 
 Evidence packets are the main protection against context overload. They combine
-RAG chunks, ClinicalTrials.gov fields, and primary-paper fallback sections into
-signaling-question-specific inputs.
+supplement segments, ClinicalTrials.gov fields, and primary-paper fallback
+sections into signaling-question-specific inputs.
 
 | File | Responsibility |
 | --- | --- |
@@ -275,8 +276,8 @@ Important state groups:
 | Trial metadata | `intervention`, `comparator`, `outcome`, `registration_number` |
 | Outcome resolution | `outcome_type`, `outcome_properties`, `outcome_classification_support` |
 | Registry enrichment | `registered_endpoint`, `ctgov_outcomes`, `ctgov_design`, `ctgov_flow` |
-| Retrieval | `rag_contexts`, `rag_chunk_metadata`, `retrieval_grades`, `trial_retrieval_indexes` |
-| Packets | `evidence_packets`, `evidence_facts`, `packet_grades` |
+| Supplement retrieval | `supplement_segments`, `supplement_indexes`, `supplement_retrieval_grades` |
+| Packets | `evidence_packets`, `evidence_facts`, `packet_grades`, `packet_readiness` |
 | Prompt context | Derived in `domain_context.py`; not persisted in state |
 | Judgments | `sq_answers`, `domain_sq_classifier_artifacts`, `initial_domain_judgments`, `domain_judgments`, `overall_judgment` |
 | Support audit | `pivotality_tests`, `sq_support_adjudications`, `support_constraints` |
@@ -368,12 +369,12 @@ Primary PDFs resolve from `inputs/benchmark/<TRIAL>.pdf`. When
 `inputs/benchmark/supplement/<TRIAL>/*.pdf` unless another supplement directory
 is supplied.
 
-Benchmark orchestration caches trial-level ingestion artifacts and retrieval
-indexes by primary PDF identity plus selected supplement identities. If the
-same trial is assessed for multiple outcomes in one run, later outcomes reuse
-the cached primary text, evidence, retrieval chunks, source inventory, supplement
-warnings, and FAISS indexes. Outcome resolution, retrieved contexts, evidence
-packets, SQ answers, support audit, and judgments remain outcome-specific.
+Benchmark orchestration caches trial-level ingestion artifacts by primary PDF
+identity plus selected supplement identities. If the same trial is assessed for
+multiple outcomes in one run, later outcomes reuse the cached primary text,
+evidence, parse artifacts, source inventory, supplement segments, and supplement
+warnings. Outcome resolution, Evidence Packets, SQ answers, support audit, and
+judgments remain outcome-specific.
 
 Benchmark results include the reference row, pipeline judgments, agreement
 comparisons, supplement counts, errors, aggregate confusion matrices, timing
@@ -432,9 +433,8 @@ For a wrong judgment, inspect in this order:
 3. relevant `sq_answers`
 4. relevant `evidence_packets`
 5. relevant `DomainEvidenceContext` builder in `nodes/domain_context.py`
-6. domain `rag_sources`
-7. `retrieval_grades` and `packet_grades`
-8. `support_constraints`, `evidence_validation_flags`, and `verification_actions`
+6. `packet_grades`, `packet_readiness`, and supplement retrieval diagnostics
+7. `support_constraints`, `evidence_validation_flags`, and `verification_actions`
 
 For ingestion problems, inspect:
 
@@ -455,7 +455,7 @@ Common failure modes:
 | Selective-reporting uncertainty | D5 packets, CT.gov fields, protocol/SAP sources |
 | Supplement parse issue | `source_documents`, `supplement_warnings` |
 | Parser failure | Source document diagnostics and parser provenance |
-| Empty RAG output | embedding availability and primary evidence warnings |
+| Empty packet evidence | `evidence_packets`, `packet_grades`, `packet_readiness`, and supplement warnings |
 | Unexpected final-vs-initial label | `pivotality_tests`, `sq_support_adjudications`, and adjudication LLM trace |
 | Slow benchmark run | `benchmark_report.md` Timing Summary, per-result `timing`, and trace `node_spans` |
 
@@ -465,14 +465,13 @@ Common failure modes:
 
 1. Update the relevant RoB 2 methodology card under `rob2_pipeline/methodology/`.
 2. Update prompt templates in `rob2_pipeline/prompts.py`.
-3. Add or adjust query text in `rob2_pipeline/rag_queries.py`.
-4. Update the evidence contract in `nodes/evidence_contracts.py`.
-5. Update packet selection or grading if the evidence requirements changed.
-6. Update `nodes/domain_context.py` if prompt evidence fields change.
-7. Update the relevant `DomainSqStage` prompt builder, SQ IDs, or
+3. Update the evidence contract in `nodes/evidence_contracts.py`.
+4. Update packet selection or grading if the evidence requirements changed.
+5. Update `nodes/domain_context.py` if prompt evidence fields change.
+6. Update the relevant `DomainSqStage` prompt builder, SQ IDs, or
    stage-local control flow in the domain node.
-8. Update the deterministic judge if final-label behavior changes.
-9. Update support-audit expectations if the SQ can be pivotal when weak or
+7. Update the deterministic judge if final-label behavior changes.
+8. Update support-audit expectations if the SQ can be pivotal when weak or
    unsupported.
 10. Add tests for stage behavior, context, parsing, packets, pivotality, and
     judge behavior.

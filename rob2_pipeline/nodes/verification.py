@@ -27,7 +27,6 @@ def _source_text(state: RoB2State) -> str:
         section = evidence.get(field) if evidence else None
         if section:
             parts.append(format_evidence(section))
-    parts.extend((state.get("rag_contexts") or {}).values())
     parts.extend(
         str(state.get(field, ""))
         for field in (

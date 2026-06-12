@@ -18,6 +18,7 @@ skip/NA logic.
 
 from rob2_pipeline.models import empty_paper_evidence
 from rob2_pipeline.nodes.evidence_packets import build_evidence_packets
+from tests.test_evidence_packets import _RecordingSupplementIndex
 
 
 # Real CHAARTED d5 'Statistical Analysis' chunk: the load-bearing reported-methods
@@ -88,11 +89,21 @@ REGISTERED_OUTCOMES_CHUNK = {
 
 
 def _d5_state(chunks: list[dict]) -> dict:
+    supplement_chunks = [
+        {
+            "source_kind": "supplement_segment",
+            "document_id": chunk.get("document_id", "supplement:d5"),
+            "document_name": chunk.get("document_name", "supplement.pdf"),
+            "document_role": chunk.get("document_role", "protocol"),
+            "source_path": chunk.get("source_path", "supplement.pdf"),
+            **chunk,
+        }
+        for chunk in chunks
+    ]
     return {
         "outcome": "Overall Survival",
         "evidence": empty_paper_evidence("test"),
-        "rag_chunk_metadata": {"d1": [], "d2": [], "d3": [], "d4": [], "d5": chunks},
-        "retrieval_grades": {},
+        "supplement_indexes": {"supplement:d5": _RecordingSupplementIndex(supplement_chunks)},
     }
 
 

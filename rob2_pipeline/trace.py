@@ -1,10 +1,8 @@
 """Per-run trace collector for diagnostic analysis (Option C: LLM I/O only).
 
 Captures full LLM system/user prompts and responses so failures can be
-categorized as RAG-miss vs LLM-miss without re-running the pipeline.
-Chunk retrieval data lives in Ali's rag_chunk_metadata state channel
-(emitted as rag_sources in the per-trial JSON output) and is read from
-there at categorization time, so we do not duplicate it here.
+categorized without re-running the pipeline. Evidence packet sources live in
+the per-trial JSON output, so we do not duplicate retrieval artifacts here.
 
 Uses a module-level current-trace global because the pipeline runs
 sequentially in a single process; threading a trace object through every
@@ -38,8 +36,8 @@ class LlmNodeTrace:
     parsed_answers: dict[str, Any] | None
     is_repair: bool = False
     # Chain-of-thought from providers that emit it (e.g. gpt-oss via OpenRouter).
-    # Used at categorization time to tell whether the model reasoned over the
-    # retrieved chunks or ignored them. None when the provider does not emit one.
+    # Used at categorization time to inspect model reasoning when the provider
+    # emits it. None when the provider does not emit one.
     reasoning_content: str | None = None
     prompt_version: str | None = None
     schema_version: str | None = None

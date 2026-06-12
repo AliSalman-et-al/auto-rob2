@@ -54,7 +54,6 @@ class AssessmentIngestionResult:
         update = {
             "full_text": self.full_text,
             "evidence": self.evidence,
-            "docling_chunks": self.docling_chunks,
             "source_documents": self.source_documents,
             "parse_artifacts": self.parse_artifacts,
             "supplement_warnings": self.supplement_warnings,

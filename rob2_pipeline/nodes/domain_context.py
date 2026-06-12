@@ -84,7 +84,6 @@ def _packet_text(state: RoB2State, domain: str) -> str:
 
 def build_domain1_context(state: RoB2State) -> Domain1Context:
     evidence = state["evidence"]
-    rag_contexts = state.get("rag_contexts", {})
     trial_facts = state.get("trial_facts", {})
     trial_level_text = _join_nonempty(
         [
@@ -103,7 +102,7 @@ def build_domain1_context(state: RoB2State) -> Domain1Context:
         ),
         baseline_text=format_evidence(evidence["baseline_table"]),
         consort_text=format_evidence(evidence["consort_flow"]),
-        rag_text=_join_nonempty([packet_text, rag_contexts.get("d1", "")]),
+        rag_text=packet_text,
         ctgov_design=state.get(
             "ctgov_design", "(No ClinicalTrials.gov design metadata available)"
         ),
@@ -112,7 +111,6 @@ def build_domain1_context(state: RoB2State) -> Domain1Context:
 
 def build_domain2_sq12_context(state: RoB2State) -> Domain2Sq12Context:
     evidence = state["evidence"]
-    rag_contexts = state.get("rag_contexts", {})
     trial_facts = state.get("trial_facts", {})
     packet_text = _packet_text(state, "d2")
     return Domain2Sq12Context(
@@ -123,7 +121,7 @@ def build_domain2_sq12_context(state: RoB2State) -> Domain2Sq12Context:
             ]
         ),
         methods_text=format_evidence(evidence["methods"]),
-        rag_text=_join_nonempty([packet_text, rag_contexts.get("d2_blinding", "")]),
+        rag_text=packet_text,
         ctgov_design=state.get(
             "ctgov_design", "(No ClinicalTrials.gov design metadata available)"
         ),
@@ -134,7 +132,6 @@ def build_domain2_conditional_context(
     state: RoB2State,
 ) -> Domain2ConditionalContext:
     evidence = state["evidence"]
-    rag_contexts = state.get("rag_contexts", {})
     trial_facts = state.get("trial_facts", {})
     packet_text = _packet_text(state, "d2")
     sq = state["sq_answers"]
@@ -151,13 +148,12 @@ def build_domain2_conditional_context(
             separator="\n",
         ),
         concomitant_text=format_evidence(evidence["methods"]),
-        rag_text=_join_nonempty([packet_text, rag_contexts.get("d2_deviations", "")]),
+        rag_text=packet_text,
     )
 
 
 def build_domain2_analysis_context(state: RoB2State) -> Domain2AnalysisContext:
     evidence = state["evidence"]
-    rag_contexts = state.get("rag_contexts", {})
     trial_facts = state.get("trial_facts", {})
     packet_text = _packet_text(state, "d2")
     return Domain2AnalysisContext(
@@ -169,13 +165,12 @@ def build_domain2_analysis_context(state: RoB2State) -> Domain2AnalysisContext:
                 trial_facts.get("analysis_populations", ""),
             ]
         ),
-        rag_text=_join_nonempty([packet_text, rag_contexts.get("d2_analysis", "")]),
+        rag_text=packet_text,
     )
 
 
 def build_domain3_context(state: RoB2State) -> Domain3Context:
     evidence = state["evidence"]
-    rag_contexts = state.get("rag_contexts", {})
     packet_text = _packet_text(state, "d3")
     missing_data_text = format_evidence(evidence["d3_missing_data"]) or format_evidence(
         evidence["results"]
@@ -185,7 +180,7 @@ def build_domain3_context(state: RoB2State) -> Domain3Context:
         consort_text=format_evidence(evidence["consort_flow"]),
         missing_data_text=missing_data_text,
         sensitivity_text=format_evidence(evidence["d4_outcome_meas"]),
-        rag_text=_join_nonempty([packet_text, rag_contexts.get("d3", "")]),
+        rag_text=packet_text,
         ctgov_flow=state.get(
             "ctgov_flow", "(No ClinicalTrials.gov participant flow available)"
         ),
@@ -194,7 +189,6 @@ def build_domain3_context(state: RoB2State) -> Domain3Context:
 
 def build_domain4_context(state: RoB2State) -> Domain4Context:
     evidence = state["evidence"]
-    rag_contexts = state.get("rag_contexts", {})
     packet_text = _packet_text(state, "d4")
     return Domain4Context(
         outcome_type=state.get("outcome_type", "clinician-composite"),
@@ -202,19 +196,12 @@ def build_domain4_context(state: RoB2State) -> Domain4Context:
         outcome_measurement_text=format_evidence(evidence["d4_outcome_meas"])
         or format_evidence(evidence["methods"]),
         blinding_text=format_evidence(evidence["d2_blinding"]),
-        rag_text=_join_nonempty(
-            [
-                packet_text,
-                rag_contexts.get("d4_measurement", ""),
-                rag_contexts.get("d4_assessor", ""),
-            ]
-        ),
+        rag_text=packet_text,
     )
 
 
 def build_domain5_context(state: RoB2State) -> Domain5Context:
     evidence = state["evidence"]
-    rag_contexts = state.get("rag_contexts", {})
     packet_text = _packet_text(state, "d5")
     return Domain5Context(
         outcome_type=state.get("outcome_type", "clinician-composite"),
@@ -232,5 +219,5 @@ def build_domain5_context(state: RoB2State) -> Domain5Context:
         registration_text=format_evidence(evidence["d5_registration"]),
         sap_text=format_evidence(evidence["d4_outcome_meas"]),
         results_text=format_evidence(evidence["results"]),
-        rag_text=_join_nonempty([packet_text, rag_contexts.get("d5", "")]),
+        rag_text=packet_text,
     )
