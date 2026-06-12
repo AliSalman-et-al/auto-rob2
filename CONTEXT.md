@@ -387,9 +387,9 @@ Some-concerns domains.
   strict primary full-text extraction from parser artifacts, primary plus
   supplement chunk assembly, source-document inventory, and remote
   paper-evidence extraction orchestration.
-- `rob2_pipeline/ingestion/parse_artifacts.py` owns LiteParse adaptation,
-  parser-neutral page artifacts, page-aware section artifacts, and retrieval
-  chunk conversion.
+- `rob2_pipeline/ingestion/parse_artifacts.py` owns PyMuPDF/PyMuPDF4LLM
+  adaptation, parser-neutral page artifacts, raw character streams,
+  page-aware section artifacts, and retrieval chunk conversion.
 - `rob2_pipeline/ingestion/evidence.py` owns paper-evidence extraction,
   structural keyword mapping, section parsing, section capping, CONSORT
   augmentation, and censoring-context extraction.

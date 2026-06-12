@@ -21,6 +21,27 @@ def _make_doc(text: str, section: str = "", pages: list[int] | None = None) -> D
     )
 
 
+def test_retrieval_metadata_preserves_original_heading():
+    from rob2_pipeline.rag import retrieve_lexical
+
+    chunks = [
+        Document(
+            page_content="Participants were randomly assigned in the study design.",
+            metadata={
+                "section": "METHODS",
+                "original_heading": "Study Design",
+                "page_numbers": [4],
+            },
+        )
+    ]
+
+    _, metas = retrieve_lexical(chunks, ["randomly assigned"], section_keywords=["method"])
+
+    assert metas[0]["section"] == "METHODS"
+    assert metas[0]["original_heading"] == "Study Design"
+    assert metas[0]["page_numbers"] == [4]
+
+
 def test_doc_key_includes_document_id():
     left = Document(
         page_content="Same text",

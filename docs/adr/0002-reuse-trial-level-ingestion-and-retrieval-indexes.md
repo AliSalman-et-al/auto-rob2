@@ -73,11 +73,11 @@ outcome of the same trial.
 
 ## Superseded implementation note
 
-This ADR was accepted before the LiteParse cleanup. The current implementation
-fulfills the reuse decision through LiteParse-derived, parser-neutral
-`ParseArtifact` records and page-aware retrieval chunks. Downstream code should
-depend on those artifacts and JSON contracts rather than parser-native objects
-or legacy cache and parser-specific APIs.
+This ADR was accepted before the parser-boundary cleanup. The current
+implementation fulfills the reuse decision through PyMuPDF-derived,
+parser-neutral `ParseArtifact` records and page-aware retrieval chunks.
+Downstream code should depend on those artifacts and JSON contracts rather than
+parser-native objects or legacy cache and parser-specific APIs.
 
 The public single-assessment behavior can remain unchanged while benchmark
 orchestration passes precomputed trial-level artifacts into the internal

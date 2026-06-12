@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 from rob2_pipeline.ingestion.parse_artifacts import (
-    LiteParseSourceParser,
     SourceParserAdapter,
     parse_sources,
 )
@@ -86,7 +85,6 @@ def main(argv: list[str] | None = None) -> int:
             workspace_dir=args.workspace_dir,
             supplement_pdfs=args.supplement,
             trial_id=args.trial_id,
-            parser=LiteParseSourceParser(),
         )
         print(
             json.dumps(

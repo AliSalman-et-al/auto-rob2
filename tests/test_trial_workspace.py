@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from rob2_pipeline.ingestion.parse_artifacts import PARSE_ARTIFACT_SCHEMA_VERSION
 from rob2_pipeline.trial_workspace import (
     TRIAL_WORKSPACE_MANIFEST_SCHEMA_VERSION,
     ArtifactIdentity,
@@ -39,10 +40,10 @@ def test_manifest_records_source_artifact_versions_and_hash_metadata(tmp_path):
         ],
         artifacts=[
             artifact_identity(
-                artifact_id="liteparse_document",
-                schema_version="liteparse-document-v1",
-                producer="liteparse",
-                producer_version="2.0.4",
+                artifact_id="primary:parse-artifact",
+                schema_version=PARSE_ARTIFACT_SCHEMA_VERSION,
+                producer="pymupdf+pymupdf4llm",
+                producer_version="pymupdf=1.26.0; pymupdf4llm=0.0.27",
                 config_hash="config-a",
                 upstream_artifact_hashes={"source:primary": file_sha256(primary)},
                 content_hash="artifact-a",
@@ -63,11 +64,14 @@ def test_manifest_records_source_artifact_versions_and_hash_metadata(tmp_path):
         "path": str(primary),
         "content_hash": file_sha256(primary),
     }
-    assert payload["artifacts"][0]["artifact_id"] == "liteparse_document"
+    assert payload["artifacts"][0]["artifact_id"] == "primary:parse-artifact"
     assert payload["artifacts"][0]["status"] == "fresh"
-    assert payload["artifacts"][0]["schema_version"] == "liteparse-document-v1"
-    assert payload["artifacts"][0]["producer"] == "liteparse"
-    assert payload["artifacts"][0]["producer_version"] == "2.0.4"
+    assert payload["artifacts"][0]["schema_version"] == PARSE_ARTIFACT_SCHEMA_VERSION
+    assert payload["artifacts"][0]["producer"] == "pymupdf+pymupdf4llm"
+    assert (
+        payload["artifacts"][0]["producer_version"]
+        == "pymupdf=1.26.0; pymupdf4llm=0.0.27"
+    )
     assert payload["artifacts"][0]["config_hash"] == "config-a"
     assert payload["artifacts"][0]["upstream_artifact_hashes"] == {
         "source:primary": file_sha256(primary)
@@ -81,10 +85,10 @@ def test_unchanged_artifact_identity_is_reusable(tmp_path):
         sources=[],
         artifacts=[
             ArtifactIdentity(
-                artifact_id="liteparse_document",
-                schema_version="liteparse-document-v1",
-                producer="liteparse",
-                producer_version="2.0.4",
+                artifact_id="primary:parse-artifact",
+                schema_version=PARSE_ARTIFACT_SCHEMA_VERSION,
+                producer="pymupdf+pymupdf4llm",
+                producer_version="pymupdf=1.26.0; pymupdf4llm=0.0.27",
                 config_hash="config-a",
                 upstream_artifact_hashes={"source:primary": "source-a"},
                 content_hash="artifact-a",
@@ -96,10 +100,10 @@ def test_unchanged_artifact_identity_is_reusable(tmp_path):
     status = evaluate_artifact_status(
         manifest,
         artifact_identity(
-            artifact_id="liteparse_document",
-            schema_version="liteparse-document-v1",
-            producer="liteparse",
-            producer_version="2.0.4",
+            artifact_id="primary:parse-artifact",
+            schema_version=PARSE_ARTIFACT_SCHEMA_VERSION,
+            producer="pymupdf+pymupdf4llm",
+            producer_version="pymupdf=1.26.0; pymupdf4llm=0.0.27",
             config_hash="config-a",
             upstream_artifact_hashes={"source:primary": "source-a"},
             content_hash="artifact-a",
@@ -115,10 +119,10 @@ def test_content_hash_change_marks_artifact_stale():
         sources=[],
         artifacts=[
             ArtifactIdentity(
-                artifact_id="liteparse_document",
-                schema_version="liteparse-document-v1",
-                producer="liteparse",
-                producer_version="2.0.4",
+                artifact_id="primary:parse-artifact",
+                schema_version=PARSE_ARTIFACT_SCHEMA_VERSION,
+                producer="pymupdf+pymupdf4llm",
+                producer_version="pymupdf=1.26.0; pymupdf4llm=0.0.27",
                 config_hash="config-a",
                 upstream_artifact_hashes={"source:primary": "source-a"},
                 content_hash="artifact-a",
@@ -130,10 +134,10 @@ def test_content_hash_change_marks_artifact_stale():
     status = evaluate_artifact_status(
         manifest,
         artifact_identity(
-            artifact_id="liteparse_document",
-            schema_version="liteparse-document-v1",
-            producer="liteparse",
-            producer_version="2.0.4",
+            artifact_id="primary:parse-artifact",
+            schema_version=PARSE_ARTIFACT_SCHEMA_VERSION,
+            producer="pymupdf+pymupdf4llm",
+            producer_version="pymupdf=1.26.0; pymupdf4llm=0.0.27",
             config_hash="config-a",
             upstream_artifact_hashes={"source:primary": "source-b"},
             content_hash="artifact-a",
@@ -149,10 +153,10 @@ def test_schema_version_change_marks_artifact_stale():
         sources=[],
         artifacts=[
             ArtifactIdentity(
-                artifact_id="liteparse_document",
-                schema_version="liteparse-document-v1",
-                producer="liteparse",
-                producer_version="2.0.4",
+                artifact_id="primary:parse-artifact",
+                schema_version=PARSE_ARTIFACT_SCHEMA_VERSION,
+                producer="pymupdf+pymupdf4llm",
+                producer_version="pymupdf=1.26.0; pymupdf4llm=0.0.27",
                 config_hash="config-a",
                 upstream_artifact_hashes={"source:primary": "source-a"},
                 content_hash="artifact-a",
@@ -164,10 +168,10 @@ def test_schema_version_change_marks_artifact_stale():
     status = evaluate_artifact_status(
         manifest,
         artifact_identity(
-            artifact_id="liteparse_document",
-            schema_version="liteparse-document-v2",
-            producer="liteparse",
-            producer_version="2.0.4",
+            artifact_id="primary:parse-artifact",
+            schema_version="parse-artifact-v3",
+            producer="pymupdf+pymupdf4llm",
+            producer_version="pymupdf=1.26.0; pymupdf4llm=0.0.27",
             config_hash="config-a",
             upstream_artifact_hashes={"source:primary": "source-a"},
             content_hash="artifact-a",
@@ -183,10 +187,10 @@ def test_config_hash_change_marks_artifact_stale():
         sources=[],
         artifacts=[
             ArtifactIdentity(
-                artifact_id="liteparse_document",
-                schema_version="liteparse-document-v1",
-                producer="liteparse",
-                producer_version="2.0.4",
+                artifact_id="primary:parse-artifact",
+                schema_version=PARSE_ARTIFACT_SCHEMA_VERSION,
+                producer="pymupdf+pymupdf4llm",
+                producer_version="pymupdf=1.26.0; pymupdf4llm=0.0.27",
                 config_hash="config-a",
                 upstream_artifact_hashes={"source:primary": "source-a"},
                 content_hash="artifact-a",
@@ -198,10 +202,10 @@ def test_config_hash_change_marks_artifact_stale():
     status = evaluate_artifact_status(
         manifest,
         artifact_identity(
-            artifact_id="liteparse_document",
-            schema_version="liteparse-document-v1",
-            producer="liteparse",
-            producer_version="2.0.4",
+            artifact_id="primary:parse-artifact",
+            schema_version=PARSE_ARTIFACT_SCHEMA_VERSION,
+            producer="pymupdf+pymupdf4llm",
+            producer_version="pymupdf=1.26.0; pymupdf4llm=0.0.27",
             config_hash="config-b",
             upstream_artifact_hashes={"source:primary": "source-a"},
             content_hash="artifact-a",
@@ -235,11 +239,14 @@ def test_parse_trial_workspace_persists_loadable_artifacts_and_diagnostics(tmp_p
         "diagnostics": [],
         "parse_time_ms": 17,
         "provenance": {
-            "parser_name": "liteparse",
-            "parser_version": "2.0.4",
-            "adapter_name": "liteparse",
-            "artifact_schema_version": "parse-artifact-v1",
-            "config": {"ocr_enabled": False},
+            "parser_name": "pymupdf+pymupdf4llm",
+            "parser_version": "pymupdf=1.26.0; pymupdf4llm=0.0.27",
+            "adapter_name": "pymupdf-sectionmap",
+            "artifact_schema_version": PARSE_ARTIFACT_SCHEMA_VERSION,
+            "config": {
+                "layout_text_engine": "pymupdf4llm",
+                "raw_character_stream_engine": "pymupdf",
+            },
         },
     }
 
@@ -255,7 +262,18 @@ def test_parse_trial_workspace_persists_loadable_artifacts_and_diagnostics(tmp_p
 
     assert (tmp_path / "workspace" / "sources" / "primary.json").exists()
     assert loaded["parse_artifacts"]["primary"] == parse_artifact
-    assert loaded["page_artifacts"]["primary"]["sections"][0]["heading"] == "Methods"
+    assert (
+        loaded["page_artifacts"]["primary"]["sections"][0]["canonical_label"]
+        == "METHODS"
+    )
+    assert (
+        loaded["page_artifacts"]["primary"]["sections"][0]["original_heading"]
+        == "Methods"
+    )
+    assert (
+        loaded["page_artifacts"]["primary"]["chunks"][0]["original_heading"]
+        == "Methods"
+    )
     assert loaded["page_artifacts"]["primary"]["chunks"][0]["source_id"] == "primary"
     assert diagnostic == {
         "source_id": "primary",
@@ -263,9 +281,10 @@ def test_parse_trial_workspace_persists_loadable_artifacts_and_diagnostics(tmp_p
         "page_count": 1,
         "text_character_count": 51,
         "parser": {
-            "name": "liteparse",
-            "version": "2.0.4",
-            "adapter": "liteparse",
+            "name": "pymupdf+pymupdf4llm",
+            "version": "pymupdf=1.26.0; pymupdf4llm=0.0.27",
+            "adapter": "pymupdf-sectionmap",
+            "artifact_schema_version": PARSE_ARTIFACT_SCHEMA_VERSION,
         },
         "diagnostics": [],
     }
@@ -387,12 +406,7 @@ def test_load_parse_trial_workspace_reuses_valid_existing_artifacts(tmp_path):
     loaded = load_parse_trial_workspace(
         workspace_dir=workspace_dir,
         source_documents=[source_document],
-        parser_metadata={
-            "parser_name": "liteparse",
-            "parser_version": "2.0.4",
-            "artifact_schema_version": "parse-artifact-v1",
-            "config": {"ocr_enabled": False},
-        },
+        parser_metadata=_parser_metadata(),
     )
 
     assert loaded.artifact_statuses == {
@@ -453,13 +467,44 @@ def test_load_parse_trial_workspace_marks_parser_metadata_change_stale(tmp_path)
         source_documents=[source_document],
         parser_metadata={
             **_parser_metadata(),
-            "parser_version": "2.0.5",
+            "parser_version": "pymupdf=1.26.1; pymupdf4llm=0.0.27",
         },
     )
 
     assert loaded.artifact_statuses["primary:parse-artifact"] == "stale"
     assert loaded.artifact_statuses["primary:page-aware-artifacts"] == "stale"
     assert loaded.artifact_statuses["primary:parser-diagnostics"] == "stale"
+
+
+def test_load_parse_trial_workspace_marks_legacy_v1_schema_stale_for_v2_parser(tmp_path):
+    primary = tmp_path / "trial.pdf"
+    primary.write_bytes(b"primary trial report")
+    source_document = _source_document(primary)
+    workspace_dir = tmp_path / "workspace"
+    legacy_parse_artifact = _parse_artifact(primary)
+    legacy_parse_artifact["provenance"] = {
+        **legacy_parse_artifact["provenance"],
+        "artifact_schema_version": "parse-artifact-v1",
+    }
+    write_parse_trial_workspace(
+        trial_id="trial-001",
+        workspace_dir=workspace_dir,
+        source_documents=[source_document],
+        parse_artifacts=[legacy_parse_artifact],
+    )
+
+    loaded = load_parse_trial_workspace(
+        workspace_dir=workspace_dir,
+        source_documents=[source_document],
+        parser_metadata=_parser_metadata(),
+    )
+
+    assert loaded.artifact_statuses == {
+        "primary:parse-artifact": "stale",
+        "primary:page-aware-artifacts": "stale",
+        "primary:parser-diagnostics": "stale",
+    }
+    assert loaded.reusable_artifacts["parse_artifacts"] == {}
 
 
 def test_load_parse_trial_workspace_reuses_only_unaffected_artifacts(tmp_path):
@@ -1116,14 +1161,17 @@ def _parse_artifact(path, *, document_id="primary", document_role="primary"):
         ],
         "diagnostics": [],
         "parse_time_ms": 17,
-        "provenance": {**_parser_metadata(), "adapter_name": "liteparse"},
+        "provenance": {**_parser_metadata(), "adapter_name": "pymupdf-sectionmap"},
     }
 
 
 def _parser_metadata():
     return {
-        "parser_name": "liteparse",
-        "parser_version": "2.0.4",
-        "artifact_schema_version": "parse-artifact-v1",
-        "config": {"ocr_enabled": False},
+        "parser_name": "pymupdf+pymupdf4llm",
+        "parser_version": "pymupdf=1.26.0; pymupdf4llm=0.0.27",
+        "artifact_schema_version": PARSE_ARTIFACT_SCHEMA_VERSION,
+        "config": {
+            "layout_text_engine": "pymupdf4llm",
+            "raw_character_stream_engine": "pymupdf",
+        },
     }

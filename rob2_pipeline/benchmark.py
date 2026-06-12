@@ -696,12 +696,14 @@ def _packet_statuses(packet_quality: object) -> dict[str, dict[str, Any]]:
 
 def _quote_traceability_diagnostics(support_constraints: object) -> dict[str, Any]:
     traceability_types = {
+        "quote_raw_pdf_only",
         "quote_untraceable",
         "semantic_support_conflict",
         "missing_required_evidence",
         "wrong_outcome_context",
     }
     counts = {
+        "quote_raw_pdf_only": 0,
         "quote_untraceable": 0,
         "semantic_support_conflict": 0,
     }
@@ -800,6 +802,7 @@ def _summarize_engineering_diagnostics(results: list[dict[str, Any]]) -> dict[st
     packet_status_counts: dict[str, int] = {}
     packet_grade_counts: dict[str, int] = {}
     quote_traceability = {
+        "quote_raw_pdf_only": 0,
         "quote_untraceable": 0,
         "semantic_support_conflict": 0,
         "failure_count": 0,
@@ -828,6 +831,9 @@ def _summarize_engineering_diagnostics(results: list[dict[str, Any]]) -> dict[st
 
         traceability = _quote_traceability_diagnostics(
             result.get("support_constraints")
+        )
+        quote_traceability["quote_raw_pdf_only"] += _coerce_int_ms(
+            traceability.get("quote_raw_pdf_only")
         )
         quote_traceability["quote_untraceable"] += _coerce_int_ms(
             traceability.get("quote_untraceable")

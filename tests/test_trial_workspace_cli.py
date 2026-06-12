@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from rob2_pipeline.ingestion.parse_artifacts import (
+    PARSE_ARTIFACT_SCHEMA_VERSION,
     ParserProvenance,
     SourceParseArtifact,
 )
@@ -13,7 +14,7 @@ from rob2_pipeline.trial_workspace_cli import build_workspace, inspect_workspace
 class FakeParser:
     producer = "fake-parser"
     producer_version = "1.2.3"
-    config = {"ocr_enabled": False}
+    config = {"layout_text_engine": "fake-layout", "raw_character_stream_engine": "fake-raw"}
 
     def parse(self, path):
         pdf_path = Path(path)
@@ -32,7 +33,7 @@ class FakeParser:
                 parser_name=self.producer,
                 parser_version=self.producer_version,
                 adapter_name="fake",
-                artifact_schema_version="parse-artifact-v1",
+                artifact_schema_version=PARSE_ARTIFACT_SCHEMA_VERSION,
                 config=dict(self.config),
             ),
         )

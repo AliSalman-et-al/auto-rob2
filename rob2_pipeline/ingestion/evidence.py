@@ -1,4 +1,3 @@
-import logging
 import re
 from typing import Protocol, cast
 

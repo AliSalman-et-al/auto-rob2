@@ -68,7 +68,8 @@ uv run python benchmark.py \
 
 ## What The Pipeline Uses
 
-- LiteParse for parser-neutral PDF page artifacts and retrieval chunks.
+- PyMuPDF4LLM and PyMuPDF for parser-neutral PDF page artifacts, raw character
+  streams, and retrieval chunks.
 - LangGraph for the workflow.
 - LangChain FAISS plus BGE-small embeddings for per-study retrieval.
 - ClinicalTrials.gov API v2 for registry/design/outcome enrichment.

@@ -613,10 +613,10 @@ def _patch_ingest_dependencies():
                 pages=[{"page_number": 1, "text": _pdf_text()}],
                 diagnostics=[],
                 provenance=ParserProvenance(
-                    parser_name="fake-liteparse",
+                    parser_name="fake-pymupdf",
                     parser_version="1.0.0",
                     adapter_name="fake",
-                    artifact_schema_version="parse-artifact-v1",
+                    artifact_schema_version="parse-artifact-v2",
                     config={},
                 ),
             )

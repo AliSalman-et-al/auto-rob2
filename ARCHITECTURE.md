@@ -74,7 +74,7 @@ the main article. Supplement ingestion is best-effort unless benchmark
 | --- | --- |
 | `rob2_pipeline/nodes/ingest.py` | Graph adapter for ingestion plus RCT screening node |
 | `rob2_pipeline/ingestion/assessment.py` | Primary plus supplement Assessment ingestion from parser-neutral artifacts |
-| `rob2_pipeline/ingestion/parse_artifacts.py` | LiteParse adaptation, page-aware parser artifacts, retrieval chunk creation |
+| `rob2_pipeline/ingestion/parse_artifacts.py` | PyMuPDF/PyMuPDF4LLM adaptation, page-aware parser artifacts, retrieval chunk creation |
 | `rob2_pipeline/ingestion/evidence.py` | Primary-paper structured evidence extraction |
 | `rob2_pipeline/ingestion/settings.py` | Ingestion constants and environment controls |
 
@@ -163,7 +163,7 @@ artifacts.
 
 `rob2_pipeline/trial_workspace.py` separates reusable Trial Workspace artifacts
 from Outcome Workspace artifacts. The Trial Workspace records source identities,
-LiteParse-derived parser-neutral `ParseArtifact` records, page-aware artifacts,
+PyMuPDF-derived parser-neutral `ParseArtifact` records, page-aware artifacts,
 parser diagnostics, and EvidenceStore outputs with content/config/upstream
 hashes. Outcome Workspaces record outcome normalization, JSON-contract SQ
 answers, deterministic domain judgments, and support-escalation diagnostics

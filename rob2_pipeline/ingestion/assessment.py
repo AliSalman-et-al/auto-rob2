@@ -102,7 +102,7 @@ def _ingest_from_parse_artifacts(
     supplement_warnings = [
         source.get("error", "")
         for source in source_documents[1:]
-        if source.get("status") in {"failed", "missing", "partial"}
+        if source.get("status") in {"failed", "missing", "partial", "degraded"}
         and source.get("error")
     ]
     sections = parse_sections(primary_text)

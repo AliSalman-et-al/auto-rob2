@@ -971,6 +971,7 @@ def _parser_diagnostic_summary(parse_artifact: dict) -> dict:
             "name": provenance["parser_name"],
             "version": provenance["parser_version"],
             "adapter": provenance["adapter_name"],
+            "artifact_schema_version": provenance["artifact_schema_version"],
         },
         "diagnostics": parse_artifact.get("diagnostics", []),
     }

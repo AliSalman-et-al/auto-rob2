@@ -43,6 +43,17 @@ def _source_text(state: RoB2State) -> str:
     return _normalize_text("\n\n".join(part for part in parts if part))
 
 
+def _raw_character_stream_text(state: RoB2State) -> str:
+    parts = []
+    for artifact in state.get("parse_artifacts") or []:
+        if not isinstance(artifact, dict):
+            continue
+        raw_stream = artifact.get("raw_character_stream", "")
+        if raw_stream:
+            parts.append(str(raw_stream))
+    return _normalize_text("\n\n".join(parts))
+
+
 def quote_is_supported(quote: str, source_text: str) -> bool:
     normalized_quote = _normalize_text(quote)
     if normalized_quote in _BYPASS_QUOTES:
@@ -98,17 +109,17 @@ def _fragile_sq_issue(sq_id: str, answer: dict) -> str | None:
 
 def verify_sq_evidence(state: RoB2State) -> list[dict]:
     source = _source_text(state)
+    raw_character_stream = _raw_character_stream_text(state)
     flags = []
     for sq_id, answer in sorted((state.get("sq_answers") or {}).items()):
         quote = answer.get("quote", "")
         if not quote_is_supported(quote, source):
-            flags.append(
-                {
-                    "sq_id": sq_id,
-                    "issue": "quote_not_found_in_source_context",
-                    "quote": quote,
-                }
+            issue = (
+                "quote_found_only_in_raw_character_stream"
+                if quote_is_supported(quote, raw_character_stream)
+                else "quote_not_found_in_source_context"
             )
+            flags.append({"sq_id": sq_id, "issue": issue, "quote": quote})
         fragile_issue = _fragile_sq_issue(sq_id, answer)
         if fragile_issue:
             flags.append({"sq_id": sq_id, "issue": fragile_issue, "quote": quote})
@@ -213,6 +224,18 @@ def support_constraints_from_verification(
                     {"source": "quote_verifier"},
                 )
             )
+        elif issue == "quote_found_only_in_raw_character_stream":
+            add(
+                _constraint(
+                    "quote_raw_pdf_only",
+                    sq_id,
+                    claim,
+                    "quote",
+                    quote,
+                    issue,
+                    {"source": "quote_verifier", "fallback": "raw_character_stream"},
+                )
+            )
         elif "lacks a denominator or percentage" in issue:
             add(
                 _constraint(
@@ -315,6 +338,14 @@ def _verification_actions_from_flags(flags: list[dict]) -> list[dict]:
                 {
                     "sq_id": flag.get("sq_id", ""),
                     "action": "retry_sq_with_verified_packet",
+                    "reason": issue,
+                }
+            )
+        elif flag.get("issue") == "quote_found_only_in_raw_character_stream":
+            actions.append(
+                {
+                    "sq_id": flag.get("sq_id", ""),
+                    "action": "review_raw_pdf_only_traceability",
                     "reason": issue,
                 }
             )
