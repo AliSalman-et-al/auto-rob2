@@ -110,9 +110,14 @@ def _state_ingestion_artifact(state: dict) -> AssessmentIngestionResult:
     return AssessmentIngestionResult(
         full_text=state.get("full_text", ""),
         evidence=state.get("evidence"),
-        docling_chunks=list(state.get("docling_chunks") or []),
+        docling_chunks=[],
         source_documents=list(state.get("source_documents") or []),
         supplement_warnings=list(state.get("supplement_warnings") or []),
+        supplement_segments=list(state.get("supplement_segments") or []),
+        supplement_retrieval_grades=dict(
+            state.get("supplement_retrieval_grades") or {}
+        ),
+        parse_artifacts=list(state.get("parse_artifacts") or []),
     )
 
 
@@ -243,26 +248,6 @@ def _source_matches_gold(source: dict[str, Any], gold: dict[str, Any]) -> bool:
     return snippet in source_text if source_text else False
 
 
-def _flatten_retrieval_sources(rag_sources: object) -> list[dict[str, Any]]:
-    if isinstance(rag_sources, list):
-        return [
-            cast(dict[str, Any], source)
-            for source in rag_sources
-            if isinstance(source, dict)
-        ]
-    if not isinstance(rag_sources, dict):
-        return []
-    sources: list[dict[str, Any]] = []
-    for items in rag_sources.values():
-        if isinstance(items, list):
-            sources.extend(
-                cast(dict[str, Any], source)
-                for source in items
-                if isinstance(source, dict)
-            )
-    return sources
-
-
 def _flatten_packet_sources(evidence_packets: object) -> list[dict[str, Any]]:
     if not isinstance(evidence_packets, dict):
         return []
@@ -321,25 +306,19 @@ def _gold_evidence_metrics(
             "packet_evidence_recall": _empty_gold_recall(),
             "by_sq": {},
         }
-    retrieval = _score_gold_recall(
-        gold_fixture,
-        _flatten_retrieval_sources(pipeline_output.get("rag_sources")),
-    )
     packet = _score_gold_recall(
         gold_fixture,
         _flatten_packet_sources(pipeline_output.get("evidence_packets")),
     )
     return {
         "fixture_found": True,
-        "retrieval_recall": {
-            key: retrieval[key] for key in ("matched", "total", "rate")
-        },
+            "retrieval_recall": _empty_gold_recall(),
         "packet_evidence_recall": {
             key: packet[key] for key in ("matched", "total", "rate")
         },
         "by_sq": {
             sq_id: {
-                "retrieval_recall": retrieval["by_sq"].get(sq_id, _empty_gold_recall()),
+                "retrieval_recall": _empty_gold_recall(),
                 "packet_evidence_recall": packet["by_sq"].get(
                     sq_id, _empty_gold_recall()
                 ),
@@ -1515,13 +1494,11 @@ def run_benchmark(
                 output_dir=str(assessment_output_dir),
                 supplementary_paths=[str(path) for path in supplement_paths],
                 precomputed_ingestion=cached_artifacts.get("ingestion"),
-                trial_retrieval_indexes=cached_artifacts.get("retrieval_indexes"),
                 **run_kwargs,
             )
             if state is not None and cache_key not in ingestion_cache:
                 ingestion_cache[cache_key] = {
                     "ingestion": _state_ingestion_artifact(state),
-                    "retrieval_indexes": state.get("trial_retrieval_indexes") or {},
                 }
         except Exception as exc:  # noqa: BLE001
             run_error = exc

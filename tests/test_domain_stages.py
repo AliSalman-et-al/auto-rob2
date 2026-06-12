@@ -54,8 +54,11 @@ def test_domain_sq_stage_runs_llm_and_postprocesses_answers():
     state = {
         "outcome": "Overall Survival",
         "sq_answers": {"existing": {"answer": "N"}},
-        "rag_chunk_metadata": {
-            "d9": [{"section": "Methods", "page_numbers": [4]}],
+        "evidence_packets": {
+            "9.1": {
+                "domain": "d9",
+                "sources": [{"section": "Methods", "page_numbers": [4]}],
+            }
         },
     }
     stage = DomainSqStage(
@@ -116,7 +119,6 @@ def test_domain_sq_stage_blocks_classifier_when_packet_needs_repair():
     state = {
         "outcome": "Overall Survival",
         "sq_answers": {},
-        "rag_chunk_metadata": {"d3": []},
         "packet_readiness": {
             "3.1": {
                 "status": "needs_retrieval_repair",
@@ -167,7 +169,6 @@ def test_domain_sq_stage_still_classifies_unblocked_sqs_in_mixed_stage():
     state = {
         "outcome": "Progression-Free Survival",
         "sq_answers": {},
-        "rag_chunk_metadata": {"d4": []},
         "packet_readiness": {
             "4.1": {
                 "status": "needs_quote_adjudication",
@@ -202,7 +203,7 @@ def test_domain_sq_stage_uses_deterministic_json_fallback_when_contract_fails():
         )
 
     result = run_domain_sq_stage(
-        {"sq_answers": {}, "rag_chunk_metadata": {"d3": []}},
+        {"sq_answers": {}},
         DomainSqStage(
             node_name="domain3_sq",
             sq_ids=("3.1",),

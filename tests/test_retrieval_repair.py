@@ -4,6 +4,7 @@ from rob2_pipeline.nodes.retrieval_repair import (
     RetrievalRepairArtifactRecord,
     retrieval_repair_node,
 )
+from tests.test_evidence_packets import _RecordingSupplementIndex
 
 
 def _packet(*, status="ready", missing=None, confidence=0.8, sources=None):
@@ -129,7 +130,9 @@ def test_retrieval_repair_updates_one_packet_and_records_source_changes():
     result = retrieval_repair_node(
         {
             "outcome": "Overall survival",
-            "rag_chunk_metadata": {"d3": [repaired_source]},
+            "supplement_indexes": {
+                "supplement:repair": _RecordingSupplementIndex([repaired_source])
+            },
             "evidence_packets": {
                 "3.1": _packet(
                     status="needs_retrieval_repair",

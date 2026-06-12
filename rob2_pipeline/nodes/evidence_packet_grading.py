@@ -51,14 +51,6 @@ def negative_flags(
         state.get("outcome", ""), text
     ):
         flags.append("possible_wrong_outcome_context")
-    # Only real RAG chunks need page numbers. Structured sources such as
-    # section text and ClinicalTrials.gov have no page metadata by design.
-    if any(
-        source.get("source_kind", "rag_chunk") == "rag_chunk"
-        and not source.get("page_numbers")
-        for source in selected
-    ):
-        flags.append("missing_page_source")
     lowered = text.casefold()
     if (
         contract.domain == "d5"
@@ -69,6 +61,17 @@ def negative_flags(
     if text and not selected:
         flags.append("generic_background_only")
     return list(dict.fromkeys(flags))
+
+
+def provenance_warnings(selected: list[PacketSource]) -> list[str]:
+    warnings: list[str] = []
+    if any(
+        source.get("source_kind") == "supplement_segment"
+        and not source.get("page_numbers")
+        for source in selected
+    ):
+        warnings.append("missing_supplement_page_numbers")
+    return warnings
 
 
 def confidence(
@@ -136,7 +139,7 @@ def packet_readiness(
     elif contradictions:
         status = "needs_contradiction_resolution"
         blocking_reason = "Selected packet sources contain unresolved contradictory claims."
-    elif any(flag in {"missing_page_source", "quote_untraceable"} for flag in flags):
+    elif "quote_untraceable" in flags:
         status = "needs_quote_adjudication"
         blocking_reason = "Selected packet sources need quote or provenance adjudication."
     elif flags:
@@ -165,7 +168,7 @@ def source_to_fact(
         "document_id": source.get("document_id", "primary"),
         "document_name": source.get("document_name", "Primary paper"),
         "document_role": source.get("document_role", "primary"),
-        "source_kind": source.get("source_kind", "rag_chunk"),
+        "source_kind": source.get("source_kind") or "unknown",
         "source_path": source.get("source_path", ""),
         "source_section": source.get("section", ""),
         "page_numbers": source.get("page_numbers", []),

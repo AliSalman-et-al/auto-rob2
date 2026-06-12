@@ -626,57 +626,6 @@ def _patch_ingest_dependencies():
     return (patch("rob2_pipeline.ingestion.assessment.parse_sources", parse_sources),)
 
 
-def _fast_rag_retrieval_node(state):
-    text = (
-        state.get("evidence", {})
-        .get("methods", {})
-        .get("text", "Participants were randomized and blinded.")
-    )
-    metadata = {
-        domain: [
-            {
-                "text": text,
-                "section": "Methods",
-                "page_numbers": [1],
-                "score": 0.01,
-                "document_id": "primary",
-                "document_name": "Primary paper",
-                "document_role": "primary",
-                "source_kind": "rag_chunk",
-                "source_path": state.get("pdf_path", ""),
-            }
-        ]
-        for domain in ("d1", "d2", "d3", "d4", "d5")
-    }
-    return {
-        "rag_contexts": {
-            "d1": text,
-            "d2_blinding": text,
-            "d2_deviations": text,
-            "d2_analysis": text,
-            "d3": text,
-            "d4_measurement": text,
-            "d4_assessor": text,
-            "d5": text,
-        },
-        "rag_chunk_metadata": metadata,
-        "retrieval_grades": {
-            domain: {
-                "relevance": 1.0,
-                "coverage": 1.0,
-                "missing_evidence": [],
-                "retry_recommended": False,
-            }
-            for domain in ("d1", "d2", "d3", "d4", "d5")
-        },
-        "trial_retrieval_indexes": {"index": "test-index", "filtered": {}},
-    }
-
-
-def _patch_fast_rag():
-    return patch("rob2_pipeline.graph.rag_retrieval_node", _fast_rag_retrieval_node)
-
-
 def test_timed_node_records_ok_span_and_returns_result():
     try:
         start_trace(trial="T", outcome="OS")
@@ -731,6 +680,15 @@ def test_timed_node_records_error_span_and_reraises():
         end_trace()
 
 
+def test_graph_wires_trial_facts_directly_to_evidence_packet_builder():
+    graph = build_rob2_graph().get_graph()
+
+    assert "rag_retrieval" not in graph.nodes
+    assert ("trial_facts", "evidence_packet_builder") in {
+        (edge.source, edge.target) for edge in graph.edges
+    }
+
+
 def test_graph_happy_path_with_mocked_llm(tmp_path):
     pdf_path = tmp_path / "trial.pdf"
     _make_pdf(pdf_path)
@@ -744,7 +702,6 @@ def test_graph_happy_path_with_mocked_llm(tmp_path):
         ),
         patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
         _patch_ingest_dependencies()[0],
-        _patch_fast_rag(),
     ):
         state = build_rob2_graph().invoke(_initial_state(str(pdf_path)))
 
@@ -781,7 +738,6 @@ def test_graph_finalization_waits_for_all_domain_judges(tmp_path):
             ),
             patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
             _patch_ingest_dependencies()[0],
-            _patch_fast_rag(),
         ):
             state = build_rob2_graph().invoke(_initial_state(str(pdf_path)))
 
@@ -879,7 +835,6 @@ def test_rct_screener_prompt_includes_randomization_context(tmp_path):
         ),
         patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
         _patch_ingest_dependencies()[0],
-        _patch_fast_rag(),
     ):
         build_rob2_graph().invoke(_initial_state(str(pdf_path)))
 
@@ -901,7 +856,6 @@ def test_run_assessment_writes_outputs(tmp_path):
         ),
         patch("rob2_pipeline.registration_api.fetch_registration", return_value=None),
         _patch_ingest_dependencies()[0],
-        _patch_fast_rag(),
     ):
         state = run_assessment(str(pdf_path), output_dir=str(output_dir))
 
@@ -922,13 +876,16 @@ def test_run_assessment_writes_outputs(tmp_path):
     data = json.loads((output_dir / "trial_rob2_data.json").read_text(encoding="utf-8"))
     assert data["evidence"]["extraction_method"] == "json_contract"
     assert "computer-generated sequence" in data["evidence"]["d1_randomization"]["text"]
-    assert "rag_sources" in data
     assert "outcome_properties" in data
     assert "trial_facts" in data
     assert "evidence_packets" in data
     assert "packet_grades" in data
     assert "evidence_facts" in data
-    assert "retrieval_grades" in data
+    assert "rag_sources" not in data
+    assert "rag_contexts" not in data
+    assert "retrieval_grades" not in data
+    assert "supplement_segments" in data
+    assert "supplement_retrieval_grades" in data
     assert "evidence_validation_flags" in data
     assert data["overall_policy"] == "official_rob2"
 

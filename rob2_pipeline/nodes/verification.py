@@ -27,7 +27,6 @@ def _source_text(state: RoB2State) -> str:
         section = evidence.get(field) if evidence else None
         if section:
             parts.append(format_evidence(section))
-    parts.extend((state.get("rag_contexts") or {}).values())
     parts.extend(
         str(state.get(field, ""))
         for field in (
@@ -136,6 +135,7 @@ def verify_packet_evidence(state: RoB2State) -> list[dict]:
         grade = packet.get("packet_grade") or {}
         missing = grade.get("missing_evidence") or packet.get("missing_evidence") or []
         negative_flags = packet.get("negative_flags") or []
+        provenance_warnings = packet.get("provenance_warnings") or []
         if grade.get("retry_recommended") or missing or negative_flags:
             details = []
             if missing:
@@ -147,6 +147,15 @@ def verify_packet_evidence(state: RoB2State) -> list[dict]:
                     "sq_id": sq_id,
                     "issue": "packet_verification_failed"
                     + (f" ({'; '.join(details)})" if details else ""),
+                    "quote": "",
+                }
+            )
+        if provenance_warnings:
+            flags.append(
+                {
+                    "sq_id": sq_id,
+                    "issue": "packet_provenance_warning"
+                    + f" (warnings: {', '.join(provenance_warnings)})",
                     "quote": "",
                 }
             )

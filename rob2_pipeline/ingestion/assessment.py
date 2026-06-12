@@ -25,8 +25,17 @@ from rob2_pipeline.ingestion.source_catalog import (
     primary_source_document,
     supplement_source_document,
 )
+from rob2_pipeline.ingestion.supplement_segments import (
+    build_supplement_ingestion_artifacts,
+    supplement_segment_artifacts,
+)
 from rob2_pipeline.models import PaperEvidence
-from rob2_pipeline.types import LLMCallLogEntry, SourceDocument
+from rob2_pipeline.supplement_retrieval import SupplementIndex, SupplementSegment
+from rob2_pipeline.types import (
+    LLMCallLogEntry,
+    SourceDocument,
+    SupplementSegmentArtifact,
+)
 
 
 @dataclass(frozen=True)
@@ -36,21 +45,47 @@ class AssessmentIngestionResult:
     docling_chunks: list[Document]
     source_documents: list[SourceDocument]
     supplement_warnings: list[str]
+    supplement_segments: list[SupplementSegmentArtifact] = field(default_factory=list)
+    supplement_indexes: dict = field(default_factory=dict)
+    supplement_retrieval_grades: dict = field(default_factory=dict)
     parse_artifacts: list[dict] = field(default_factory=list)
     llm_call_log: list[LLMCallLogEntry] = field(default_factory=list)
 
     def to_state_update(self, include_llm_call_log: bool = True) -> dict:
+        supplement_indexes = (
+            self.supplement_indexes
+            if self.supplement_indexes
+            else _supplement_indexes_from_segment_artifacts(self.supplement_segments)
+        )
         update = {
             "full_text": self.full_text,
             "evidence": self.evidence,
-            "docling_chunks": self.docling_chunks,
             "source_documents": self.source_documents,
             "parse_artifacts": self.parse_artifacts,
             "supplement_warnings": self.supplement_warnings,
+            "supplement_segments": self.supplement_segments,
+            "supplement_indexes": supplement_indexes,
+            "supplement_retrieval_grades": self.supplement_retrieval_grades,
         }
         if include_llm_call_log and self.llm_call_log:
             update["llm_call_log"] = self.llm_call_log
         return update
+
+
+def _supplement_indexes_from_segment_artifacts(
+    segment_artifacts: list[SupplementSegmentArtifact],
+) -> dict[str, SupplementIndex]:
+    segments_by_document: dict[str, list[SupplementSegment]] = {}
+    for artifact in segment_artifacts:
+        segment = SupplementSegment(**artifact)
+        if not segment.document_id:
+            continue
+        segments_by_document.setdefault(segment.document_id, []).append(segment)
+    return {
+        document_id: SupplementIndex.from_segments(segments)
+        for document_id, segments in segments_by_document.items()
+        if segments
+    }
 
 
 def ingest_assessment_documents(
@@ -92,7 +127,24 @@ def _ingest_from_parse_artifacts(
     ):
         return None
 
-    source_documents = [artifact.source_identity for artifact in artifacts]
+    supplement_ingestion = [
+        build_supplement_ingestion_artifacts(artifact)
+        for artifact in artifacts[1:]
+        if artifact.source_identity.get("status") == "parsed"
+    ]
+    supplement_sources_by_id = {
+        result.source_document.get("document_id"): result.source_document
+        for result in supplement_ingestion
+    }
+    source_documents = [
+        artifacts[0].source_identity,
+        *[
+            supplement_sources_by_id.get(
+                artifact.source_identity.get("document_id"), artifact.source_identity
+            )
+            for artifact in artifacts[1:]
+        ],
+    ]
     page_artifacts = [build_page_aware_artifacts(artifact) for artifact in artifacts]
     docling_chunks = [
         chunk
@@ -105,6 +157,19 @@ def _ingest_from_parse_artifacts(
         if source.get("status") in {"failed", "missing", "partial", "degraded"}
         and source.get("error")
     ]
+    supplement_warnings.extend(
+        warning for result in supplement_ingestion for warning in result.warnings
+    )
+    supplement_segments = [
+        segment
+        for result in supplement_ingestion
+        for segment in supplement_segment_artifacts(result.segments)
+    ]
+    supplement_indexes = {
+        result.source_document.get("document_id", ""): result.index
+        for result in supplement_ingestion
+        if result.index is not None
+    }
     sections = parse_sections(primary_text)
     evidence = paper_evidence_from_sections(
         sections,
@@ -125,6 +190,8 @@ def _ingest_from_parse_artifacts(
             source_documents=source_documents,
             parse_artifacts=parse_artifacts,
             supplement_warnings=supplement_warnings,
+            supplement_segments=supplement_segments,
+            supplement_indexes=supplement_indexes,
         )
 
     if not appears_rct_candidate(primary_text):
@@ -138,6 +205,8 @@ def _ingest_from_parse_artifacts(
             source_documents=source_documents,
             parse_artifacts=parse_artifacts,
             supplement_warnings=supplement_warnings,
+            supplement_segments=supplement_segments,
+            supplement_indexes=supplement_indexes,
         )
 
     doc_repr = _ParseArtifactDocumentRepr(primary_text)
@@ -150,6 +219,8 @@ def _ingest_from_parse_artifacts(
             source_documents=source_documents,
             parse_artifacts=parse_artifacts,
             supplement_warnings=supplement_warnings,
+            supplement_segments=supplement_segments,
+            supplement_indexes=supplement_indexes,
             llm_call_log=log,
         )
     except Exception as error:  # noqa: BLE001
@@ -162,6 +233,8 @@ def _ingest_from_parse_artifacts(
         source_documents=source_documents,
         parse_artifacts=parse_artifacts,
         supplement_warnings=supplement_warnings,
+        supplement_segments=supplement_segments,
+        supplement_indexes=supplement_indexes,
     )
 
 

@@ -140,6 +140,36 @@ def test_openrouter_uses_shared_rate_limiter(monkeypatch):
     assert fake_client_calls == [("sys", "msg")]
 
 
+def test_openrouter_degrades_structured_user_blocks_to_text(monkeypatch):
+    from rob2_pipeline.providers.openrouter import OpenRouterProvider
+
+    fake_client_calls: list[tuple[str, str]] = []
+
+    def fake_post(self, system, user):
+        fake_client_calls.append((system, user))
+        return {
+            "choices": [{"message": {"content": "ok"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }
+
+    monkeypatch.setattr(OpenRouterProvider, "_post_chat_completion", fake_post)
+
+    blocks = [
+        {
+            "type": "text",
+            "text": "Protocol document preamble",
+            "cache_control": {"type": "ephemeral"},
+        },
+        {"type": "text", "text": "Annotate this segment."},
+    ]
+    provider = OpenRouterProvider(api_key="x", model="test/model")
+    provider.complete(system="sys", user=blocks)
+
+    assert fake_client_calls == [
+        ("sys", "Protocol document preamble\n\nAnnotate this segment.")
+    ]
+
+
 def test_openrouter_retry_classifier_only_retries_transient_errors():
     from rob2_pipeline.providers.openrouter import _is_retryable_openrouter_error
 
@@ -212,3 +242,75 @@ def test_anthropic_provider_estimates_and_waits(monkeypatch):
     response = provider.complete(system="abc", user="defghi")
     assert response.content == "ok"
     assert fake_client.invoked_with is not None
+
+
+def test_anthropic_provider_passes_structured_user_blocks(monkeypatch):
+    class FakeMessage:
+        content = "ok"
+        response_metadata = {"usage": {"input_tokens": 12, "output_tokens": 7}}
+        additional_kwargs = {}
+
+    class FakeClient:
+        def __init__(self):
+            self.invoked_with = None
+
+        def invoke(self, messages):
+            self.invoked_with = messages
+            return FakeMessage()
+
+    fake_client = FakeClient()
+    monkeypatch.setattr(
+        "langchain_anthropic.ChatAnthropic",
+        lambda **_: fake_client,
+    )
+
+    from rob2_pipeline.providers.anthropic import AnthropicProvider
+
+    blocks = [
+        {
+            "type": "text",
+            "text": "Protocol document preamble",
+            "cache_control": {"type": "ephemeral"},
+        },
+        {"type": "text", "text": "Annotate this segment."},
+    ]
+    provider = AnthropicProvider(api_key="x", model="claude-test")
+    provider.complete(system="sys", user=blocks)
+
+    human_message = fake_client.invoked_with[1]
+    assert human_message.content == blocks
+
+
+def test_openai_provider_degrades_structured_user_blocks_to_text(monkeypatch):
+    class FakeMessage:
+        content = "ok"
+        usage_metadata = {"input_tokens": 12, "output_tokens": 7}
+
+    class FakeClient:
+        def __init__(self):
+            self.invoked_with = None
+
+        def invoke(self, messages):
+            self.invoked_with = messages
+            return FakeMessage()
+
+    fake_client = FakeClient()
+    monkeypatch.setattr("langchain_openai.ChatOpenAI", lambda **_: fake_client)
+
+    from rob2_pipeline.providers.openai import OpenAIProvider
+
+    blocks = [
+        {
+            "type": "text",
+            "text": "Protocol document preamble",
+            "cache_control": {"type": "ephemeral"},
+        },
+        {"type": "text", "text": "Annotate this segment."},
+    ]
+    provider = OpenAIProvider(api_key="x", model="gpt-test")
+    provider.complete(system="sys", user=blocks)
+
+    human_message = fake_client.invoked_with[1]
+    assert human_message.content == (
+        "Protocol document preamble\n\nAnnotate this segment."
+    )

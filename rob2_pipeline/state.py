@@ -18,6 +18,7 @@ from rob2_pipeline.types import (
     SourceDocument,
     SqSupportAdjudication,
     MicroAgentRoutingDecision,
+    SupplementSegmentArtifact,
     SupportConstraint,
     TrialFacts,
     VerifierTraceEntry,
@@ -39,16 +40,14 @@ class RoB2State(TypedDict, total=False):
     pdf_path: Annotated[str, take_latest]
     full_text: Annotated[str, take_latest]
     evidence: Annotated[PaperEvidence, take_latest]
-    docling_chunks: Annotated[list, take_latest]
     precomputed_ingestion: Annotated[Any, take_latest]
-    trial_retrieval_indexes: Annotated[dict, take_latest]
     supplementary_paths: Annotated[list[str], take_latest]
     source_documents: Annotated[list[SourceDocument], take_latest]
     parse_artifacts: Annotated[list[ParseArtifact], take_latest]
     supplement_warnings: Annotated[list[str], take_latest]
-    rag_contexts: Annotated[dict[str, str], take_latest]
-    rag_chunk_metadata: Annotated[dict, merge_dicts]
-    retrieval_grades: Annotated[dict[str, RetrievalGrade], merge_dicts]
+    supplement_segments: Annotated[list[SupplementSegmentArtifact], take_latest]
+    supplement_indexes: Annotated[dict, take_latest]
+    supplement_retrieval_grades: Annotated[dict[str, RetrievalGrade], merge_dicts]
     evidence_packets: Annotated[dict[str, EvidencePacket], merge_dicts]
     evidence_facts: Annotated[dict[str, list[EvidenceFact]], merge_dicts]
     selected_evidence_facts: Annotated[dict, merge_dicts]

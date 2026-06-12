@@ -19,7 +19,6 @@ from rob2_pipeline.nodes.ingest import pdf_ingest_node, rct_screener_node
 from rob2_pipeline.nodes.overall import overall_judge_node
 from rob2_pipeline.nodes.outcome_resolver import outcome_resolver_node
 from rob2_pipeline.nodes.preliminary import preliminary_info_node
-from rob2_pipeline.nodes.rag_retrieval import rag_retrieval_node
 from rob2_pipeline.nodes.reporter import report_formatter_node
 from rob2_pipeline.nodes.retrieval_repair import retrieval_repair_node
 from rob2_pipeline.nodes.trial_facts import trial_facts_node
@@ -59,7 +58,6 @@ def build_rob2_graph():
         "outcome_resolver", timed_node("outcome_resolver", outcome_resolver_node)
     )
     g.add_node("trial_facts", timed_node("trial_facts", trial_facts_node))
-    g.add_node("rag_retrieval", timed_node("rag_retrieval", rag_retrieval_node))
     g.add_node(
         "evidence_packet_builder",
         timed_node("evidence_packet_builder", evidence_packet_builder_node),
@@ -110,8 +108,7 @@ def build_rob2_graph():
     )
     g.add_edge("preliminary_info", "outcome_resolver")
     g.add_edge("outcome_resolver", "trial_facts")
-    g.add_edge("trial_facts", "rag_retrieval")
-    g.add_edge("rag_retrieval", "evidence_packet_builder")
+    g.add_edge("trial_facts", "evidence_packet_builder")
     g.add_edge("evidence_packet_builder", "retrieval_repair")
     g.add_edge("retrieval_repair", "evidence_family_mining")
     for domain_start in DOMAIN_START_NODES:

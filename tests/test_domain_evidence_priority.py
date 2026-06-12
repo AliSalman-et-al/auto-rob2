@@ -35,5 +35,5 @@ def test_domain1_keeps_structured_evidence_when_rag_context_exists():
         "Allocation managed by the ECOG-ACRIN Statistical Center" in prompt
     )
     assert "Baseline characteristics were well balanced" in prompt
-    assert "Patients were assigned to ADT alone" in prompt
+    assert "Patients were assigned to ADT alone" not in prompt
     assert "SQ 1.1" not in prompt or "verified evidence packet" in prompt

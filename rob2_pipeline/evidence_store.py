@@ -300,6 +300,7 @@ class EvidencePacketRecord(BaseModel):
     retrieval_confidence: float = Field(ge=0.0, le=1.0)
     missing_evidence: list[str] = Field(default_factory=list)
     negative_flags: list[str] = Field(default_factory=list)
+    provenance_warnings: list[str] = Field(default_factory=list)
     packet_grade: dict
 
     @model_validator(mode="after")
@@ -644,7 +645,7 @@ def _selected_zones(packet: dict, max_sources: int) -> list[dict]:
                     "document_id": source.get("document_id", "primary"),
                     "document_name": source.get("document_name", "Primary paper"),
                     "document_role": source.get("document_role", "primary"),
-                    "source_kind": source.get("source_kind", "rag_chunk"),
+                    "source_kind": source.get("source_kind") or "unknown",
                     "source_path": source.get("source_path") or "unknown",
                     "source_section": source.get("section") or "Unknown",
                     "page_numbers": source.get("page_numbers", []),

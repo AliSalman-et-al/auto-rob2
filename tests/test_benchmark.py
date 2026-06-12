@@ -525,10 +525,11 @@ def test_run_benchmark_reuses_trial_artifacts_across_outcomes(tmp_path, monkeypa
         return {
             "full_text": "Trial text",
             "evidence": {"warnings": []},
-            "docling_chunks": [],
             "source_documents": [],
             "supplement_warnings": [],
-            "trial_retrieval_indexes": {"index": object(), "filtered": {}},
+            "supplement_segments": [],
+            "supplement_retrieval_grades": {},
+            "parse_artifacts": [],
         }
 
     monkeypatch.setattr("rob2_pipeline.benchmark.run_assessment", fake_run_assessment)
@@ -544,9 +545,93 @@ def test_run_benchmark_reuses_trial_artifacts_across_outcomes(tmp_path, monkeypa
     )
 
     assert calls[0]["precomputed_ingestion"] is None
-    assert calls[0]["trial_retrieval_indexes"] is None
     assert calls[1]["precomputed_ingestion"] is not None
-    assert calls[1]["trial_retrieval_indexes"]
+    assert "trial_retrieval_indexes" not in calls[0]
+    assert "trial_retrieval_indexes" not in calls[1]
+
+
+def test_run_benchmark_reuses_supplement_segments_without_cached_indexes(
+    tmp_path, monkeypatch
+):
+    pdf_dir = tmp_path / "benchmark"
+    pdf_dir.mkdir()
+    (pdf_dir / "TITAN.pdf").write_bytes(b"pdf")
+    reference_csv = tmp_path / "ref.csv"
+    reference_csv.write_text(
+        "Trial,D1,D2,D3,D4,D5,Overall Risk\nTITAN,Low,Low,Low,Low,Low,Low\n",
+        encoding="utf-8",
+    )
+    supplement_segment = {
+        "segment_id": "supplement:001:segment:0001",
+        "document_id": "supplement:001",
+        "document_name": "protocol.pdf",
+        "document_role": "protocol",
+        "source_path": "protocol.pdf",
+        "heading": "Protocol",
+        "page_numbers": [1],
+        "domain_tags": ["D1"],
+        "annotation": "Central allocation evidence.",
+        "text": "Central allocation concealment was used.",
+    }
+    calls = []
+
+    class LegacyIndex:
+        pass
+
+    def fake_run_assessment(**kwargs):
+        calls.append(kwargs)
+        assessment_dir = Path(kwargs["output_dir"])
+        assessment_dir.mkdir(parents=True)
+        (assessment_dir / "TITAN_rob2_data.json").write_text(
+            json.dumps(
+                {
+                    "domain_judgments": {
+                        "D1": "Low",
+                        "D2": "Low",
+                        "D3": "Low",
+                        "D4": "Low",
+                        "D5": "Low",
+                    },
+                    "overall_judgment": "Low",
+                    "source_documents": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        precomputed = kwargs["precomputed_ingestion"]
+        if precomputed is not None:
+            assert precomputed.supplement_segments == [supplement_segment]
+            assert precomputed.supplement_indexes == {}
+        return {
+            "full_text": "Trial text",
+            "evidence": {"warnings": []},
+            "source_documents": [],
+            "supplement_warnings": [],
+            "supplement_segments": [supplement_segment],
+            "supplement_indexes": {"supplement:001": LegacyIndex()},
+            "supplement_retrieval_grades": {},
+            "parse_artifacts": [],
+            "rag_contexts": {"D1": "legacy context"},
+            "rag_chunk_metadata": {"D1": [{"text": "legacy"}]},
+            "retrieval_grades": {"D1": {"legacy": True}},
+        }
+
+    monkeypatch.setattr("rob2_pipeline.benchmark.run_assessment", fake_run_assessment)
+
+    run_benchmark(
+        pdf_dir=pdf_dir,
+        reference_csvs={"OS": reference_csv, "PFS": reference_csv},
+        outcome_map=[
+            {"trial": "TITAN", "outcome_code": "OS"},
+            {"trial": "TITAN", "outcome_code": "PFS"},
+        ],
+        output_dir=tmp_path / "out",
+    )
+
+    assert calls[1]["precomputed_ingestion"].supplement_segments == [
+        supplement_segment
+    ]
+    assert calls[1]["precomputed_ingestion"].supplement_indexes == {}
 
 
 def test_run_benchmark_scores_gold_evidence_fixtures_when_present(
@@ -592,20 +677,6 @@ def test_run_benchmark_scores_gold_evidence_fixtures_when_present(
                         "D5": "Low",
                     },
                     "overall_judgment": "Low",
-                    "rag_sources": {
-                        "D1": [
-                            {
-                                "page_numbers": [3],
-                                "text": "Trial participants were randomized centrally.",
-                            }
-                        ],
-                        "D3": [
-                            {
-                                "page_numbers": [8],
-                                "text": "Outcome data were available for most participants.",
-                            }
-                        ],
-                    },
                     "evidence_packets": {
                         "1.1": {
                             "sources": [
@@ -643,9 +714,9 @@ def test_run_benchmark_scores_gold_evidence_fixtures_when_present(
 
     assert results[0]["gold_evidence"]["fixture_found"] is True
     assert results[0]["gold_evidence"]["retrieval_recall"] == {
-        "matched": 2,
-        "total": 3,
-        "rate": 2 / 3,
+        "matched": 0,
+        "total": 0,
+        "rate": None,
     }
     assert results[0]["gold_evidence"]["packet_evidence_recall"] == {
         "matched": 1,
@@ -654,9 +725,9 @@ def test_run_benchmark_scores_gold_evidence_fixtures_when_present(
     }
     assert results[1]["skipped"] is True
     assert summary["gold_evidence"]["retrieval_recall"] == {
-        "matched": 2,
-        "total": 3,
-        "rate": 2 / 3,
+        "matched": 0,
+        "total": 0,
+        "rate": None,
     }
     assert benchmark_json["assessments"][0]["gold_evidence"][
         "packet_evidence_recall"
@@ -664,7 +735,7 @@ def test_run_benchmark_scores_gold_evidence_fixtures_when_present(
     assert benchmark_json["aggregate"]["gold_evidence"]["fixtures_evaluated"] == 1
     report = (tmp_path / "out" / "benchmark_report.md").read_text(encoding="utf-8")
     assert "## Gold Evidence Recall" in report
-    assert "| Retrieval | 66.7% (2/3) |" in report
+    assert "| Retrieval | 0.0% (0/0) |" in report
     assert "| Packet evidence | 33.3% (1/3) |" in report
 
 

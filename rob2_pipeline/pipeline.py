@@ -41,9 +41,9 @@ JSON_OUTPUT_KEYS = (
     "source_documents",
     "parse_artifacts",
     "supplement_warnings",
+    "supplement_segments",
+    "supplement_retrieval_grades",
     "evidence",
-    "rag_sources",
-    "retrieval_grades",
     "evidence_packets",
     "packet_grades",
     "packet_readiness",
@@ -84,9 +84,7 @@ JSON_OUTPUT_KEYS = (
 
 
 def _assessment_json(state: RoB2State) -> dict:
-    data = {key: state.get(key) for key in JSON_OUTPUT_KEYS}
-    data["rag_sources"] = state.get("rag_chunk_metadata", {})
-    return data
+    return {key: state.get(key) for key in JSON_OUTPUT_KEYS}
 
 
 def run_assessment(
@@ -96,15 +94,13 @@ def run_assessment(
     output_dir: str = "outputs/",
     supplementary_paths: list[str] | None = None,
     precomputed_ingestion=None,
-    trial_retrieval_indexes: dict | None = None,
 ) -> RoB2State:
     """
     Main entry point. Returns the completed state dict.
     Also writes: {output_dir}/{pdf_basename}_rob2_report.md
                  {output_dir}/{pdf_basename}_rob2_data.json
                  {output_dir}/{pdf_basename}_trace.json (LLM I/O for the
-                     diagnostic categorizer; chunks come from rag_sources
-                     in the rob2_data.json).
+                     diagnostic categorizer).
     """
     base = Path(pdf_path).stem
     start_trace(trial=base, outcome=outcome)
@@ -118,7 +114,6 @@ def run_assessment(
                 effect_of_interest,
                 supplementary_paths=supplementary_paths or [],
                 precomputed_ingestion=precomputed_ingestion,
-                trial_retrieval_indexes=trial_retrieval_indexes or {},
             )
         )
 

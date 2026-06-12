@@ -14,9 +14,9 @@ modules.
 
 1. **The primary paper stays central.** Supplements and registries enrich the
    evidence base, but they do not replace the study report.
-2. **Context is selected before prompting.** Long PDFs and supplements are
-   parsed into chunks, retrieved, and packaged so domain prompts receive
-   targeted evidence rather than whole documents.
+2. **Context is selected before prompting.** Primary-paper evidence is
+   structured, supplement sections are retrieved, and evidence packets package
+   targeted sources so domain prompts do not receive whole documents.
 3. **LLMs do not make final labels directly.** LLMs answer structured RoB 2
    signaling questions and rate evidence support. Domain judge nodes audit
    pivotal weak or constrained answers before deterministic judges produce
@@ -35,7 +35,6 @@ pdf_ingest
   -> preliminary_info
   -> outcome_resolver
   -> trial_facts
-  -> rag_retrieval
   -> evidence_packet_builder
   -> D1-D5 signaling-question nodes
   -> support audit and deterministic domain judges
@@ -74,13 +73,13 @@ the main article. Supplement ingestion is best-effort unless benchmark
 | --- | --- |
 | `rob2_pipeline/nodes/ingest.py` | Graph adapter for ingestion plus RCT screening node |
 | `rob2_pipeline/ingestion/assessment.py` | Primary plus supplement Assessment ingestion from parser-neutral artifacts |
-| `rob2_pipeline/ingestion/parse_artifacts.py` | PyMuPDF/PyMuPDF4LLM adaptation, page-aware parser artifacts, retrieval chunk creation |
+| `rob2_pipeline/ingestion/parse_artifacts.py` | PyMuPDF/PyMuPDF4LLM adaptation, page-aware parser artifacts, and raw character streams |
 | `rob2_pipeline/ingestion/evidence.py` | Primary-paper structured evidence extraction |
 | `rob2_pipeline/ingestion/settings.py` | Ingestion constants and environment controls |
 
-`pdf_ingest` produces primary-paper text, primary evidence, retrieval chunks, and
-optional supplement chunks. Supplement chunks are added to retrieval with
-explicit metadata; supplement text is not appended to `full_text`.
+`pdf_ingest` produces primary-paper text, structured primary-paper evidence,
+parser artifacts, source documents, optional `SupplementSegment` artifacts, and
+supplement warnings. Supplement text is not appended to `full_text`.
 
 Benchmark runs can pass `precomputed_ingestion` back into the ingestion node
 when the primary PDF and selected supplements match a previous outcome run.
@@ -108,33 +107,44 @@ source with `source_kind="ctgov"` and `document_role="registry"`.
 
 ### Retrieval
 
-Retrieval is per study, not global. Each run builds a FAISS index from that
-study's primary and supplement chunks.
+Evidence packet construction is the retrieval boundary. The primary paper stays
+available as structured `PaperEvidence` section text; optional supplements are
+retrieved through BM25S-backed `SupplementIndex` artifacts.
+
+The primary-paper evidence is not BM25S-indexed. It enters evidence packets and
+prompt context through structured evidence, parser artifacts, trial facts,
+registry evidence, and primary-paper `section_text` fallbacks. These
+section_text fallbacks stay outside BM25S; BM25S is reserved for supplement
+retrieval.
 
 | File | Responsibility |
 | --- | --- |
-| `rob2_pipeline/rag.py` | Embeddings, FAISS indexes, adaptive retrieval, grading |
-| `rob2_pipeline/rag_queries.py` | Domain and signaling-question query sets |
-| `rob2_pipeline/nodes/rag_retrieval.py` | Graph node that emits RAG context and metadata |
+| `rob2_pipeline/supplement_retrieval.py` | BM25S supplement indexes over SupplementSegments |
+| `rob2_pipeline/nodes/evidence_contracts.py` | SQ-specific evidence contracts and retrieval terms |
+| `rob2_pipeline/nodes/evidence_source_selection.py` | Supplement, registry, and section-text packet candidates |
+| `rob2_pipeline/nodes/evidence_packets.py` | Evidence packet orchestration and prompt rendering |
 
-The retrieval node runs domain-specific query sets, deduplicates results, keeps
-chunks within a token budget, and writes both prompt-facing text
-(`rag_contexts`) and JSON-facing metadata (`rag_chunk_metadata`, emitted as
-`rag_sources`).
+Evidence packets are the only prompt-facing retrieval product. JSON output
+exposes `supplement_segments`, `supplement_retrieval_grades`, `evidence_packets`,
+and packet diagnostics; it does not emit legacy `rag_sources`, `rag_contexts`,
+or generic `retrieval_grades`.
 
-`rag_retrieval_node` stores built indexes in `trial_retrieval_indexes` so
-benchmark runs can reuse the same trial-level FAISS indexes across multiple
-outcomes for the same primary PDF and supplements. Retrieved contexts and
-evidence packets are still rebuilt per assessed outcome.
+`SupplementIndex` instances are rebuilt in memory for each run. Trial-level
+ingestion artifacts such as source documents, parse artifacts, and supplement
+segments can still be reused across outcomes for the same primary PDF and
+supplements.
 
-If vector retrieval fails, downstream nodes still receive deterministic
-fallback sections extracted from the primary paper.
+ADR-0002's vector-index reuse detail is superseded by the BM25S supplement
+retrieval design, while trial-level ingestion artifact reuse remains valid.
+
+If no supplements are supplied, downstream nodes still receive Evidence Packets
+built from registry fields and deterministic primary-paper fallback sections.
 
 ### Evidence Packets
 
 Evidence packets are the main protection against context overload. They combine
-RAG chunks, ClinicalTrials.gov fields, and primary-paper fallback sections into
-signaling-question-specific inputs.
+supplement segments, ClinicalTrials.gov fields, and primary-paper fallback
+sections into signaling-question-specific inputs.
 
 | File | Responsibility |
 | --- | --- |
@@ -173,8 +183,8 @@ that depend on the assessed outcome, RoB 2 settings, and contract versions.
 
 `rob2_pipeline/nodes/domain_context.py` owns prompt-ready evidence context for
 D1-D5 and for each Domain 2 prompt stage. It combines primary-paper evidence,
-evidence-packet blocks, RAG compatibility text, trial facts, and registry
-fields into dataclass values consumed by the domain SQ nodes.
+evidence-packet blocks, trial facts, and registry fields into dataclass values
+consumed by the domain SQ nodes.
 
 Domain prompt context is intentionally not responsible for source selection,
 retrieval, signaling-question branching, NA control logic, support audit, or
@@ -275,8 +285,8 @@ Important state groups:
 | Trial metadata | `intervention`, `comparator`, `outcome`, `registration_number` |
 | Outcome resolution | `outcome_type`, `outcome_properties`, `outcome_classification_support` |
 | Registry enrichment | `registered_endpoint`, `ctgov_outcomes`, `ctgov_design`, `ctgov_flow` |
-| Retrieval | `rag_contexts`, `rag_chunk_metadata`, `retrieval_grades`, `trial_retrieval_indexes` |
-| Packets | `evidence_packets`, `evidence_facts`, `packet_grades` |
+| Supplement retrieval | `supplement_segments`, `supplement_indexes`, `supplement_retrieval_grades` |
+| Packets | `evidence_packets`, `evidence_facts`, `packet_grades`, `packet_readiness` |
 | Prompt context | Derived in `domain_context.py`; not persisted in state |
 | Judgments | `sq_answers`, `domain_sq_classifier_artifacts`, `initial_domain_judgments`, `domain_judgments`, `overall_judgment` |
 | Support audit | `pivotality_tests`, `sq_support_adjudications`, `support_constraints` |
@@ -303,10 +313,13 @@ commonly includes:
 Common `document_role` values are `primary`, `protocol`, `sap`, `appendix`,
 `disclosure`, `data_sharing`, `unknown_supplement`, and `registry`.
 
-Common `source_kind` values are `rag_chunk`, `section_text`, and `ctgov`.
+Common `source_kind` values are `supplement_segment`, `section_text`, and
+`ctgov`.
 
-Only real `rag_chunk` sources require page numbers. Structured fallbacks such
-as `ctgov` and `section_text` are exempt from missing-page validation.
+`supplement_segment` sources should carry page numbers when the parser provides
+them. Missing page numbers on supplement segments are provenance warnings rather
+than fatal packet defects. Structured fallbacks such as `ctgov` and
+`section_text` are exempt from missing-page validation.
 
 ## Supplement Ingestion
 
@@ -316,12 +329,20 @@ Key behavior:
 
 - Supplements are optional by default.
 - Supplements never replace `full_text` or primary-paper `evidence`.
-- Filename heuristics classify roles such as `protocol`, `sap`, `appendix`,
-  `disclosure`, and `data_sharing`.
+- Content-based document type detection is authoritative for `protocol`, `sap`,
+  and `appendix` when it can identify the role; filename heuristics remain a
+  fallback for roles such as `protocol`, `sap`, `appendix`, `disclosure`, and
+  `data_sharing`.
 - Long supplements are parsed in page windows.
 - Failed windows are recorded and skipped; later windows continue.
 - Empty windows do not stop scanning.
-- Usable supplement chunks join the same per-study RAG index as primary chunks.
+- Parsed content is segmented into `SupplementSegment` artifacts with headings,
+  page ranges, document roles, domain tags, annotations, and raw text.
+- Annotated `SupplementSegment` artifacts feed in-memory BM25S
+  `SupplementIndex` objects stored in state under `supplement_indexes`.
+- Selected supplement packet sources use `source_kind="supplement_segment"`.
+- Output JSON exposes serializable `supplement_segments` and
+  `supplement_retrieval_grades`; BM25S index internals are not serialized.
 
 Runtime controls:
 
@@ -368,12 +389,12 @@ Primary PDFs resolve from `inputs/benchmark/<TRIAL>.pdf`. When
 `inputs/benchmark/supplement/<TRIAL>/*.pdf` unless another supplement directory
 is supplied.
 
-Benchmark orchestration caches trial-level ingestion artifacts and retrieval
-indexes by primary PDF identity plus selected supplement identities. If the
-same trial is assessed for multiple outcomes in one run, later outcomes reuse
-the cached primary text, evidence, retrieval chunks, source inventory, supplement
-warnings, and FAISS indexes. Outcome resolution, retrieved contexts, evidence
-packets, SQ answers, support audit, and judgments remain outcome-specific.
+Benchmark orchestration caches trial-level ingestion artifacts by primary PDF
+identity plus selected supplement identities. If the same trial is assessed for
+multiple outcomes in one run, later outcomes reuse the cached primary text,
+evidence, parse artifacts, source inventory, supplement segments, and supplement
+warnings. Outcome resolution, Evidence Packets, SQ answers, support audit, and
+judgments remain outcome-specific.
 
 Benchmark results include the reference row, pipeline judgments, agreement
 comparisons, supplement counts, errors, aggregate confusion matrices, timing
@@ -432,9 +453,8 @@ For a wrong judgment, inspect in this order:
 3. relevant `sq_answers`
 4. relevant `evidence_packets`
 5. relevant `DomainEvidenceContext` builder in `nodes/domain_context.py`
-6. domain `rag_sources`
-7. `retrieval_grades` and `packet_grades`
-8. `support_constraints`, `evidence_validation_flags`, and `verification_actions`
+6. `packet_grades`, `packet_readiness`, and supplement retrieval diagnostics
+7. `support_constraints`, `evidence_validation_flags`, and `verification_actions`
 
 For ingestion problems, inspect:
 
@@ -450,12 +470,12 @@ Common failure modes:
 | --- | --- |
 | JSON contract failure | Trace JSON and `llm_contracts.py` |
 | RCT stops early | `is_rct`, `rct_screen_evidence`, `errors` |
-| Missing randomization or masking evidence | D1/D2 packets and RAG sources |
+| Missing randomization or masking evidence | D1/D2 packets and selected packet sources |
 | Missing-data uncertainty | D3 packets, denominator flags, appendix/SAP sources |
 | Selective-reporting uncertainty | D5 packets, CT.gov fields, protocol/SAP sources |
 | Supplement parse issue | `source_documents`, `supplement_warnings` |
 | Parser failure | Source document diagnostics and parser provenance |
-| Empty RAG output | embedding availability and primary evidence warnings |
+| Empty packet evidence | `evidence_packets`, `packet_grades`, `packet_readiness`, and supplement warnings |
 | Unexpected final-vs-initial label | `pivotality_tests`, `sq_support_adjudications`, and adjudication LLM trace |
 | Slow benchmark run | `benchmark_report.md` Timing Summary, per-result `timing`, and trace `node_spans` |
 
@@ -465,14 +485,13 @@ Common failure modes:
 
 1. Update the relevant RoB 2 methodology card under `rob2_pipeline/methodology/`.
 2. Update prompt templates in `rob2_pipeline/prompts.py`.
-3. Add or adjust query text in `rob2_pipeline/rag_queries.py`.
-4. Update the evidence contract in `nodes/evidence_contracts.py`.
-5. Update packet selection or grading if the evidence requirements changed.
-6. Update `nodes/domain_context.py` if prompt evidence fields change.
-7. Update the relevant `DomainSqStage` prompt builder, SQ IDs, or
+3. Update the evidence contract in `nodes/evidence_contracts.py`.
+4. Update packet selection or grading if the evidence requirements changed.
+5. Update `nodes/domain_context.py` if prompt evidence fields change.
+6. Update the relevant `DomainSqStage` prompt builder, SQ IDs, or
    stage-local control flow in the domain node.
-8. Update the deterministic judge if final-label behavior changes.
-9. Update support-audit expectations if the SQ can be pivotal when weak or
+7. Update the deterministic judge if final-label behavior changes.
+8. Update support-audit expectations if the SQ can be pivotal when weak or
    unsupported.
 10. Add tests for stage behavior, context, parsing, packets, pivotality, and
     judge behavior.
@@ -486,10 +505,10 @@ publication itself.
 
 ### Change Prompt Evidence Assembly
 
-Start in `nodes/domain_context.py`. Keep retrieval and packet selection in the
-RAG/evidence-packet modules, and keep SQ branching and NA control logic in the
-domain node's `DomainSqStage` post-processing unless the behavior is being
-deliberately redesigned.
+Start in `nodes/domain_context.py`. Keep supplement retrieval and packet
+selection in the SupplementIndex/evidence-packet modules, and keep SQ branching
+and NA control logic in the domain node's `DomainSqStage` post-processing unless
+the behavior is being deliberately redesigned.
 
 ### Add A New LLM Node
 

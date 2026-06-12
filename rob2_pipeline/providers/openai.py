@@ -1,6 +1,6 @@
 import time
 
-from .base import LLMProvider, LLMResponse
+from .base import LLMProvider, LLMResponse, UserContent, user_content_to_text
 
 
 class OpenAIProvider(LLMProvider):
@@ -31,12 +31,13 @@ class OpenAIProvider(LLMProvider):
     def model_id(self):
         return self._model
 
-    def complete(self, system, user):
+    def complete(self, system: str, user: UserContent) -> LLMResponse:
         from langchain_core.messages import HumanMessage, SystemMessage
 
+        user_text = user_content_to_text(user)
         start = time.time()
         r = self.client.invoke(
-            [SystemMessage(content=system), HumanMessage(content=user)]
+            [SystemMessage(content=system), HumanMessage(content=user_text)]
         )
         usage = r.usage_metadata or {}
         return LLMResponse(

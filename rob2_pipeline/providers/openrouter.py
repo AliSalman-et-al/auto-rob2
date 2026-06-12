@@ -13,7 +13,7 @@ from tenacity import (
 )
 
 from ._rate_limiter import SlidingWindowRateLimiter
-from .base import LLMProvider, LLMResponse
+from .base import LLMProvider, LLMResponse, UserContent, user_content_to_text
 
 OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -83,8 +83,9 @@ class OpenRouterProvider(LLMProvider):
     def model_id(self):
         return self._model
 
-    def complete(self, system: str, user: str) -> LLMResponse:
+    def complete(self, system: str, user: UserContent) -> LLMResponse:
         self._rate_limiter.wait_for_slot()
+        user_text = user_content_to_text(user)
         start = time.perf_counter()
         retryer = Retrying(
             wait=wait_exponential(multiplier=2, min=2, max=10),
@@ -92,7 +93,7 @@ class OpenRouterProvider(LLMProvider):
             retry=retry_if_exception(_is_retryable_openrouter_error),
             reraise=True,
         )
-        payload = retryer(lambda: self._post_chat_completion(system, user))
+        payload = retryer(lambda: self._post_chat_completion(system, user_text))
         latency_ms = (time.perf_counter() - start) * 1000
         choice = (payload.get("choices") or [{}])[0]
         message = choice.get("message") or {}
@@ -136,9 +137,7 @@ class OpenRouterProvider(LLMProvider):
                 raw = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             body_text = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(
-                f"OpenRouter HTTP {exc.code}: {body_text}"
-            ) from exc
+            raise RuntimeError(f"OpenRouter HTTP {exc.code}: {body_text}") from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(f"OpenRouter request failed: {exc}") from exc
         except (

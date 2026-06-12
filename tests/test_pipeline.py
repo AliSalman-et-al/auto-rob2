@@ -2,6 +2,7 @@ import json
 
 from rob2_pipeline.pipeline import _assessment_json, _write_workspace_artifacts
 from rob2_pipeline.ingestion.parse_artifacts import PARSE_ARTIFACT_SCHEMA_VERSION
+from rob2_pipeline.state_factory import create_initial_state
 from rob2_pipeline.trial_workspace import file_sha256
 
 
@@ -39,6 +40,8 @@ def test_assessment_json_includes_supplement_fields():
             }
         ],
         "supplement_warnings": [],
+        "supplement_segments": [],
+        "supplement_retrieval_grades": {},
         "rag_chunk_metadata": {},
     }
 
@@ -55,6 +58,23 @@ def test_assessment_json_includes_supplement_fields():
         == PARSE_ARTIFACT_SCHEMA_VERSION
     )
     assert data["supplement_warnings"] == []
+    assert data["supplement_segments"] == []
+    assert data["supplement_retrieval_grades"] == {}
+
+
+def test_initial_state_omits_legacy_rag_fields_and_keeps_supplement_outputs():
+    state = create_initial_state("paper.pdf")
+
+    for key in (
+        "rag_contexts",
+        "rag_chunk_metadata",
+        "trial_retrieval_indexes",
+        "docling_chunks",
+        "retrieval_grades",
+    ):
+        assert key not in state
+    assert state["supplement_segments"] == []
+    assert state["supplement_retrieval_grades"] == {}
 
 
 def test_assessment_json_preserves_sq_support_metadata():

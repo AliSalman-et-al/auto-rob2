@@ -283,6 +283,44 @@ def test_quote_verifier_surfaces_packet_support_constraints():
     )
 
 
+def test_quote_verifier_reports_packet_provenance_warnings_without_retry_action():
+    state = {
+        "full_text": "Participants were randomly assigned using permuted blocks.",
+        "evidence": empty_paper_evidence(),
+        "rag_contexts": {},
+        "sq_answers": {},
+        "evidence_packets": {
+            "1.1": {
+                "sq_id": "1.1",
+                "packet_grade": {
+                    "relevance": 0.8,
+                    "coverage": 1.0,
+                    "missing_evidence": [],
+                    "retry_recommended": False,
+                },
+                "negative_flags": [],
+                "provenance_warnings": ["missing_supplement_page_numbers"],
+            }
+        },
+        "verifier_trace": [],
+    }
+
+    result = quote_verifier_node(state)
+
+    assert result["evidence_validation_flags"] == [
+        {
+            "sq_id": "1.1",
+            "issue": (
+                "packet_provenance_warning "
+                "(warnings: missing_supplement_page_numbers)"
+            ),
+            "quote": "",
+        }
+    ]
+    assert result["support_constraints"] == []
+    assert result["verification_actions"] == []
+
+
 def test_quote_verifier_ignores_not_applicable_packet_failures():
     state = {
         "full_text": "",

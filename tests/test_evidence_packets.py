@@ -9,6 +9,16 @@ from rob2_pipeline.nodes.evidence_packet_grading import packet_readiness
 from rob2_pipeline.nodes.evidence_packet_grading import resolve_source_conflict
 
 
+class _RecordingSupplementIndex:
+    def __init__(self, segments: list[dict]):
+        self.segments = segments
+        self.calls: list[dict] = []
+
+    def retrieve(self, query: str, *, domain: str, top_k: int = 5) -> dict:
+        self.calls.append({"query": query, "domain": domain, "top_k": top_k})
+        return {"segments": self.segments[:top_k], "best_score": 0.7}
+
+
 def test_evidence_packets_module_keeps_stable_public_api():
     from rob2_pipeline.nodes import evidence_packets
 
@@ -21,18 +31,21 @@ def _state_with_chunks(
     domain: str, chunks: list[dict], outcome: str = "Progression-Free Survival"
 ) -> dict:
     evidence = empty_paper_evidence("test")
+    supplement_chunks = [
+        {
+            "source_kind": "supplement_segment",
+            "document_id": chunk.get("document_id", "supplement:test"),
+            "document_name": chunk.get("document_name", "supplement.pdf"),
+            "document_role": chunk.get("document_role", "protocol"),
+            "source_path": chunk.get("source_path", "supplement.pdf"),
+            **chunk,
+        }
+        for chunk in chunks
+    ]
     return {
         "outcome": outcome,
         "evidence": evidence,
-        "rag_chunk_metadata": {
-            "d1": [],
-            "d2": [],
-            "d3": [],
-            "d4": [],
-            "d5": [],
-            domain: chunks,
-        },
-        "retrieval_grades": {},
+        "supplement_indexes": {"supplement:test": _RecordingSupplementIndex(supplement_chunks)},
     }
 
 
@@ -56,6 +69,91 @@ def test_builds_sq_specific_packet_for_allocation_concealment():
     assert "conceal" not in packet["missing_evidence"]
     assert packet["sources"][0]["page_numbers"] == [3]
     assert packet["retrieval_confidence"] > 0
+
+
+def test_packet_builder_retrieves_supplement_candidates_from_contract_terms():
+    evidence = empty_paper_evidence("test")
+    supplement_index = _RecordingSupplementIndex(
+        [
+            {
+                "text": "The protocol used a central web allocation system before enrolment.",
+                "section": "Allocation",
+                "page_numbers": [11],
+                "score": 0.7,
+                "source_kind": "supplement_segment",
+                "document_id": "supplement:protocol",
+                "document_name": "protocol.pdf",
+                "document_role": "protocol",
+                "source_path": "protocol.pdf",
+            }
+        ]
+    )
+    state = {
+        "outcome": "Overall Survival",
+        "evidence": evidence,
+        "supplement_indexes": {"supplement:protocol": supplement_index},
+    }
+
+    result = build_evidence_packets(state)
+
+    packet = result["evidence_packets"]["1.2"]
+    assert packet["sources"][0]["source_kind"] == "supplement_segment"
+    assert packet["sources"][0]["document_name"] == "protocol.pdf"
+    d1_calls = [call for call in supplement_index.calls if call["domain"] == "d1"]
+    assert d1_calls
+    allocation_query = next(
+        call["query"] for call in d1_calls if "allocation_concealment" in call["query"]
+    )
+    assert "allocation_concealment" in allocation_query
+    assert "enrolment_timing" in allocation_query
+    assert "conceal" in allocation_query
+    assert "allocation concealment" not in allocation_query
+
+
+def test_d5_packet_merges_supplement_registry_and_section_text_with_provenance():
+    evidence = empty_paper_evidence("test")
+    evidence["d5_registration"]["text"] = (
+        "The primary report states overall survival was the primary endpoint."
+    )
+    supplement_index = _RecordingSupplementIndex(
+        [
+            {
+                "text": (
+                    "The statistical analysis plan prespecified overall survival "
+                    "and the Cox proportional hazards analysis."
+                ),
+                "section": "SAP Analysis",
+                "page_numbers": [17],
+                "score": 0.8,
+                "source_kind": "supplement_segment",
+                "document_id": "supplement:sap",
+                "document_name": "sap.pdf",
+                "document_role": "sap",
+                "source_path": "sap.pdf",
+            }
+        ]
+    )
+    state = {
+        "outcome": "Overall Survival",
+        "evidence": evidence,
+        "registered_endpoint": "Overall Survival",
+        "registered_analysis": "Cox proportional hazards model",
+        "ctgov_outcomes": "Primary Outcome: Overall Survival.",
+        "supplement_indexes": {"supplement:sap": supplement_index},
+    }
+
+    result = build_evidence_packets(state)
+
+    packet = result["evidence_packets"]["5.1"]
+    source_kinds = {source.get("source_kind") for source in packet["sources"]}
+    assert {"supplement_segment", "ctgov", "section_text"}.issubset(source_kinds)
+    assert packet["sources"][0]["document_role"] == "sap"
+    assert "results_without_prespecification" not in packet["negative_flags"]
+
+    block = packet_block_for_domain(result["evidence_packets"], "d5")
+    assert "sap (sap.pdf), page 17, SAP Analysis" in block
+    assert "registry (ClinicalTrials.gov), no page, ClinicalTrials.gov" in block
+    assert "primary (Primary paper evidence), no page, d5_registration" in block
 
 
 def test_packet_readiness_separates_mechanical_completeness_from_semantic_adequacy():
@@ -101,7 +199,7 @@ def test_packet_readiness_can_emit_all_review_statuses():
     quote = packet_readiness(
         sq_id="1.1",
         missing=[],
-        flags=["missing_page_source"],
+        flags=["quote_untraceable"],
         contradictions=[],
         facts=[{"support_level": "strong"}],
         confidence=0.9,
@@ -750,79 +848,68 @@ def test_verifier_does_not_flag_section_text_for_missing_page_numbers():
     evidence["d1_randomization"]["text"] = (
         "Patients were randomized 1:1 using a centralized interactive web response system."
     )
-    state = {
-        "outcome": "Overall Survival",
-        "evidence": evidence,
-        "rag_chunk_metadata": {
-            "d1": [
-                {
-                    "text": "Randomization used permuted blocks stratified by site.",
-                    "section": "Methods",
-                    "page_numbers": [4],
-                    "score": 0.1,
-                }
-            ],
-            "d2": [],
-            "d3": [],
-            "d4": [],
-            "d5": [],
-        },
-        "retrieval_grades": {},
-    }
+    state = _state_with_chunks(
+        "d1",
+        [
+            {
+                "text": "Randomization used permuted blocks stratified by site.",
+                "section": "Methods",
+                "page_numbers": [4],
+                "score": 0.1,
+            }
+        ],
+        outcome="Overall Survival",
+    )
+    state["evidence"] = evidence
 
     result = build_evidence_packets(state)
 
-    # At least one SQ in d1 should have both a chunk source (with pages) and a
-    # section-text source (without pages). missing_page_source must not fire.
+    # At least one SQ in d1 should have both a supplement segment with pages and
+    # a section-text source without pages. missing_page_source must not fire.
     for sq_id in ("1.1", "1.2", "1.3"):
         packet = result["evidence_packets"][sq_id]
         kinds = {s.get("source_kind") for s in packet["sources"]}
-        if {"rag_chunk", "section_text"}.issubset(kinds):
+        if {"supplement_segment", "section_text"}.issubset(kinds):
             assert "missing_page_source" not in packet["negative_flags"], (
                 f"SQ {sq_id} should not be flagged missing_page_source: the "
                 f"only source with empty page_numbers is a section-text source"
             )
             return
     raise AssertionError(
-        "test setup did not produce any packet with both rag_chunk and "
+        "test setup did not produce any packet with both supplement_segment and "
         "section_text sources"
     )
 
 
-def test_verifier_still_flags_chunk_source_with_empty_page_numbers():
-    """A real RAG chunk that is missing page numbers is still a defect and
-    must still trigger missing_page_source. Only section-text sources get a
-    pass."""
+def test_supplement_segment_with_empty_page_numbers_is_provenance_warning():
+    """A retrieved supplement segment missing page numbers is a provenance
+    warning, not a fatal packet defect."""
     evidence = empty_paper_evidence("test")
-    state = {
-        "outcome": "Overall Survival",
-        "evidence": evidence,
-        "rag_chunk_metadata": {
-            "d1": [
-                {
-                    "text": "Randomization used permuted blocks stratified by site.",
-                    "section": "Methods",
-                    "page_numbers": [],
-                    "score": 0.1,
-                }
-            ],
-            "d2": [],
-            "d3": [],
-            "d4": [],
-            "d5": [],
-        },
-        "retrieval_grades": {},
-    }
+    state = _state_with_chunks(
+        "d1",
+        [
+            {
+                "text": "Randomization used permuted blocks stratified by site.",
+                "section": "Methods",
+                "page_numbers": [],
+                "score": 0.1,
+            }
+        ],
+        outcome="Overall Survival",
+    )
+    state["evidence"] = evidence
 
     result = build_evidence_packets(state)
 
     packet = result["evidence_packets"]["1.1"]
-    rag_sources = [s for s in packet["sources"] if s.get("source_kind") == "rag_chunk"]
-    assert rag_sources, "expected at least one RAG chunk source"
-    assert any(not s.get("page_numbers") for s in rag_sources), (
-        "test setup should have a chunk source with empty page_numbers"
+    supplement_sources = [
+        s for s in packet["sources"] if s.get("source_kind") == "supplement_segment"
+    ]
+    assert supplement_sources, "expected at least one supplement segment source"
+    assert any(not s.get("page_numbers") for s in supplement_sources), (
+        "test setup should have a supplement segment source with empty page_numbers"
     )
-    assert "missing_page_source" in packet["negative_flags"], (
-        "missing_page_source should still fire for a real RAG chunk that "
-        "has empty page_numbers"
-    )
+    assert "missing_page_source" not in packet["negative_flags"]
+    assert "missing_supplement_page_numbers" in packet["provenance_warnings"]
+    assert packet["packet_grade"]["retry_recommended"] is False
+    assert packet["packet_readiness"]["status"] == "ready"

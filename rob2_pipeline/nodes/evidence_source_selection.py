@@ -6,7 +6,6 @@ import re
 
 from rob2_pipeline.models import format_evidence
 from rob2_pipeline.nodes.evidence_contracts import EvidenceContract, OUTCOME_ALIASES
-from rob2_pipeline.rag_queries import SQ_QUERIES
 from rob2_pipeline.state import RoB2State
 from rob2_pipeline.types import PacketSource
 
@@ -31,11 +30,12 @@ def role_rank(domain: str, role: str) -> int:
 def candidate_sources(
     state: RoB2State, contract: EvidenceContract
 ) -> list[PacketSource]:
-    raw_sources = list((state.get("rag_chunk_metadata") or {}).get(contract.domain, []))
+    raw_sources = []
+    raw_sources.extend(supplement_sources(state, contract))
     # Section-text sources are belt-and-suspenders supplementary context for the
-    # LLM and run unconditionally alongside any RAG hits. They carry a
-    # source_kind="section_text" tag so downstream code (e.g. the verifier) can
-    # distinguish them from real RAG chunks, which have page metadata.
+    # LLM and run unconditionally alongside supplement and registry hits. They
+    # carry a source_kind="section_text" tag so downstream code can distinguish
+    # them from provenance-bearing retrieved segments.
     raw_sources.extend(ctgov_sources(state, contract))
     raw_sources.extend(fallback_sources(state, contract))
     terms = contract_terms(contract)
@@ -52,7 +52,7 @@ def candidate_sources(
                 page_numbers=list(raw.get("page_numbers") or []),
                 score=float(raw.get("score", 1.0)),
                 matched_terms=matched,
-                source_kind=str(raw.get("source_kind", "rag_chunk")),
+                source_kind=str(raw.get("source_kind") or "unknown"),
                 document_id=str(raw.get("document_id", "")),
                 document_name=str(raw.get("document_name", "")),
                 document_role=str(raw.get("document_role", "")),
@@ -61,6 +61,17 @@ def candidate_sources(
                 api_response_hash=str(raw.get("api_response_hash", "")),
             )
         )
+    return sources
+
+
+def supplement_sources(state: RoB2State, contract: EvidenceContract) -> list[dict]:
+    query = supplement_query(contract)
+    sources: list[dict] = []
+    for index in (state.get("supplement_indexes") or {}).values():
+        if not hasattr(index, "retrieve"):
+            continue
+        result = index.retrieve(query, domain=contract.domain, top_k=5)
+        sources.extend(result.get("segments", []))
     return sources
 
 
@@ -144,12 +155,11 @@ def fallback_sources(state: RoB2State, contract: EvidenceContract) -> list[dict]
 
 
 def contract_terms(contract: EvidenceContract) -> tuple[str, ...]:
-    query_terms = []
-    for query in SQ_QUERIES.get(contract.sq_id, []):
-        query_terms.extend(
-            word for word in re.findall(r"[a-z0-9-]+", query.lower()) if len(word) > 4
-        )
-    return tuple(dict.fromkeys([*contract.terms, *query_terms]))
+    return tuple(dict.fromkeys([*contract.required_evidence, *contract.terms]))
+
+
+def supplement_query(contract: EvidenceContract) -> str:
+    return " ".join(contract_terms(contract))
 
 
 def matched_terms(text: str, terms: tuple[str, ...]) -> list[str]:

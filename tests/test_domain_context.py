@@ -9,14 +9,14 @@ from rob2_pipeline.nodes.domain_context import (
 )
 
 
-def test_domain1_context_preserves_structured_trial_packet_and_rag_text():
+def test_domain1_context_preserves_structured_trial_and_packet_text():
     evidence = empty_paper_evidence()
     evidence["d1_randomization"]["text"] = "Randomization used a central system."
     evidence["baseline_table"]["text"] = "Baseline factors were balanced."
     evidence["consort_flow"]["text"] = "All randomized patients were included."
     state = {
         "evidence": evidence,
-        "rag_contexts": {"d1": "RAG randomization context."},
+        "rag_contexts": {"d1": "legacy generic retrieval context."},
         "trial_facts": {
             "randomization": "Trial fact randomization.",
             "allocation_concealment": "Trial fact concealment.",
@@ -48,9 +48,7 @@ def test_domain1_context_preserves_structured_trial_packet_and_rag_text():
     assert context.baseline_text == "Baseline factors were balanced."
     assert context.consort_text == "All randomized patients were included."
     assert "SQ 1.1 verified evidence packet" in context.rag_text
-    assert context.rag_text.index("SQ 1.1 verified evidence packet") < (
-        context.rag_text.index("RAG randomization context")
-    )
+    assert "legacy generic retrieval context" not in context.rag_text
     assert context.ctgov_design == "Registry design text."
 
 
@@ -96,7 +94,7 @@ def test_domain2_stage_contexts_preserve_stage_specific_inputs():
     assert "Trial fact analysis" in analysis.results_text
 
 
-def test_domain4_context_includes_all_prompt_fields_and_both_rag_keys():
+def test_domain4_context_includes_all_prompt_fields_without_legacy_rag_keys():
     evidence = empty_paper_evidence()
     evidence["d4_outcome_meas"]["text"] = "Radiographic progression was assessed."
     evidence["d2_blinding"]["text"] = "Outcome assessors were blinded."
@@ -117,8 +115,8 @@ def test_domain4_context_includes_all_prompt_fields_and_both_rag_keys():
     assert context.outcome_type == "clinician-composite"
     assert context.outcome_measurement_text == "Radiographic progression was assessed."
     assert context.blinding_text == "Outcome assessors were blinded."
-    assert "RAG measurement context" in context.rag_text
-    assert "RAG assessor context" in context.rag_text
+    assert "RAG measurement context" not in context.rag_text
+    assert "RAG assessor context" not in context.rag_text
 
 
 def test_domain5_context_preserves_registry_and_reported_outcome_binding():
@@ -150,4 +148,4 @@ def test_domain5_context_preserves_registry_and_reported_outcome_binding():
     assert context.registration_text == "NCT registration reported OS."
     assert context.sap_text == "Overall survival was measured."
     assert context.results_text == "Hazard ratio was reported."
-    assert context.rag_text == "RAG registration context."
+    assert context.rag_text == ""

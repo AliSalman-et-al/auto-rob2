@@ -101,6 +101,7 @@ class ParsedPageArtifact(TypedDict, total=False):
     text: str
     width: float
     height: float
+    section_header_boxes: list[dict]
 
 
 @dataclass(frozen=True)
@@ -222,11 +223,15 @@ class PyMuPDFSectionMapSourceParser:
         chunks = pymupdf4llm.to_markdown(source["path"], page_chunks=True)
         raw_pages: list[str] = []
         dimensions: dict[int, tuple[float, float]] = {}
+        header_boxes_by_page: dict[int, list[dict]] = {}
         warnings = ""
         with pymupdf.open(source["path"]) as doc:
             for page_index, page in enumerate(doc, start=1):
                 raw_pages.append(page.get_text())
                 dimensions[page_index] = (float(page.rect.width), float(page.rect.height))
+                header_boxes = _section_header_boxes_from_page(page)
+                if header_boxes:
+                    header_boxes_by_page[page_index] = header_boxes
             warnings = pymupdf.TOOLS.mupdf_warnings()
 
         pages = []
@@ -234,14 +239,16 @@ class PyMuPDFSectionMapSourceParser:
             metadata = chunk.get("metadata", {})
             page_number = int(metadata.get("page_number") or index)
             width, height = dimensions.get(page_number, (0.0, 0.0))
-            pages.append(
-                ParsedPageArtifact(
-                    page_number=page_number,
-                    text=str(chunk.get("text", "")),
-                    width=width,
-                    height=height,
-                )
+            page_artifact = ParsedPageArtifact(
+                page_number=page_number,
+                text=str(chunk.get("text", "")),
+                width=width,
+                height=height,
             )
+            header_boxes = header_boxes_by_page.get(page_number, [])
+            if header_boxes:
+                page_artifact["section_header_boxes"] = header_boxes
+            pages.append(page_artifact)
         diagnostics = [
             ParserDiagnostic(
                 level="info",
@@ -468,6 +475,42 @@ def _canonical_section_label(raw_heading: str) -> str | None:
 
 def _clean_section_heading(raw_heading: str) -> str:
     return raw_heading.lstrip("#").strip().rstrip(":").strip()
+
+
+def _section_header_boxes_from_page(page) -> list[dict]:
+    boxes: list[dict] = []
+    text_dict = page.get_text("dict")
+    for block in text_dict.get("blocks", []):
+        for line in block.get("lines", []):
+            spans = line.get("spans", [])
+            text = " ".join(span.get("text", "").strip() for span in spans).strip()
+            if _looks_like_section_header(text):
+                bbox = line.get("bbox") or block.get("bbox")
+                if bbox:
+                    boxes.append(
+                        {
+                            "text": _clean_section_heading(text),
+                            "bbox": [float(value) for value in bbox],
+                        }
+                    )
+    return boxes
+
+
+def _looks_like_section_header(text: str) -> bool:
+    if _canonical_section_label(text) is not None:
+        return True
+    cleaned = _clean_section_heading(text)
+    normalized = re.sub(r"\s+", " ", cleaned).casefold()
+    return any(
+        term in normalized
+        for term in (
+            "protocol",
+            "statistical analysis plan",
+            "appendix",
+            "supplementary material",
+            "supplementary materials",
+        )
+    )
 
 
 def _package_version(package_name: str) -> str:

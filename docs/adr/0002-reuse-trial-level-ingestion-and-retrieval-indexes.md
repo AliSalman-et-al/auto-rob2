@@ -10,8 +10,8 @@ Accepted
 
 Benchmark runs often assess multiple outcomes for the same trial. Each
 outcome-specific `Assessment` can otherwise repeat primary PDF parsing,
-supplement parsing, primary-paper evidence extraction, chunk creation,
-embedding, and FAISS index construction.
+supplement parsing, primary-paper evidence extraction, supplement segmentation,
+annotation, and retrieval setup.
 
 The timing traces show `pdf_ingest` dominating benchmark wall time. Repeating
 the same trial-level parsing work for each outcome is wasteful because the
@@ -23,9 +23,8 @@ signaling-question evidence selection must remain tied to the assessed outcome.
 
 ## Decision
 
-Reuse trial-level ingestion artifacts and trial-level retrieval indexes across
-multiple outcome-specific Assessments for the same primary paper and selected
-supplements.
+Reuse trial-level ingestion artifacts across multiple outcome-specific
+Assessments for the same primary paper and selected supplements.
 
 Primary PDF ingestion should avoid duplicate parsing. One primary parser
 artifact should supply strict full text, primary-paper evidence, page-aware
@@ -45,15 +44,14 @@ Reusable trial-level artifacts may include:
 - primary-paper `full_text`
 - primary-paper `PaperEvidence`
 - parser-neutral `ParseArtifact` records
-- primary and supplement page-aware retrieval chunks
 - source-document inventory
+- supplement segments
 - supplement warnings
-- the vector index built from those chunks
 
 Outcome-specific artifacts must not be reused across outcomes:
 
 - retrieved domain contexts
-- RAG source selections emitted into output JSON
+- supplement retrieval selections emitted into output JSON
 - evidence packets and evidence facts
 - signaling-question prompts and answers
 - domain judgments and overall judgment
@@ -68,15 +66,22 @@ must move out of the trial-level artifact.
 
 ## Consequences
 
-Benchmark runs avoid repeating the slowest parser and embedding work for every
-outcome of the same trial.
+Benchmark runs avoid repeating the slowest parser and supplement segmentation
+work for every outcome of the same trial.
 
 ## Superseded implementation note
 
-This ADR was accepted before the parser-boundary cleanup. The current
-implementation fulfills the reuse decision through PyMuPDF-derived,
-parser-neutral `ParseArtifact` records and page-aware retrieval chunks.
-Downstream code should depend on those artifacts and JSON contracts rather than
+This ADR was accepted before the parser-boundary cleanup and the BM25S
+supplement retrieval migration. The original vector-index reuse detail is
+superseded: primary-paper evidence is no longer part of a mixed vector index,
+and BM25S `SupplementIndex` internals are rebuilt in memory from reusable
+`SupplementSegment` artifacts when supplement retrieval is needed.
+
+The trial-level ingestion artifact reuse decision remains valid. The current
+implementation fulfills that decision through PyMuPDF-derived, parser-neutral
+`ParseArtifact` records, structured primary-paper evidence, source-document
+inventory, supplement warnings, and serializable supplement segments. Downstream
+code should depend on those artifacts and JSON contracts rather than
 parser-native objects or legacy cache and parser-specific APIs.
 
 The public single-assessment behavior can remain unchanged while benchmark

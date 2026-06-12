@@ -236,7 +236,12 @@ def set_na(sq_answers: dict[str, dict], *sq_ids: str) -> dict[str, dict]:
 
 
 def format_chunk_sources(state: dict, domain: str, limit: int = 5) -> list[str]:
-    metas = state.get("rag_chunk_metadata", {}).get(domain, [])
+    metas = [
+        source
+        for packet in (state.get("evidence_packets") or {}).values()
+        if packet.get("domain") == domain
+        for source in packet.get("sources", [])
+    ]
     sources: list[str] = []
     for meta in metas[:limit]:
         page_numbers = meta.get("page_numbers") or []
