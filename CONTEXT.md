@@ -15,12 +15,11 @@ shared `RoB2State`.
    ClinicalTrials.gov when possible.
 4. `outcome_resolver` normalizes outcome properties and outcome type.
 5. `trial_facts` extracts reusable trial-level snippets.
-6. `rag_retrieval` builds per-study retrieval context from primary and
-   supplement chunks.
-7. `evidence_packet_builder` builds SQ-specific evidence packets.
-8. D1-D5 SQ nodes ask LLMs for signaling-question answers.
-9. D1-D5 judges convert SQ answers into deterministic domain judgments.
-10. `quote_verifier`, `overall_judge`, and `report_formatter` produce quality
+6. `evidence_packet_builder` retrieves supplement candidates from
+   SupplementIndex artifacts and builds SQ-specific evidence packets.
+7. D1-D5 SQ nodes ask LLMs for signaling-question answers.
+8. D1-D5 judges convert SQ answers into deterministic domain judgments.
+9. `quote_verifier`, `overall_judge`, and `report_formatter` produce quality
     flags, overall judgment, review priority, and the Markdown draft.
 
 ## Domain Terms
@@ -28,20 +27,22 @@ shared `RoB2State`.
 ### Assessment
 
 A single RoB 2 run for one primary PDF and one assessed outcome. It may include
-supplementary PDFs, registry enrichment, RAG retrieval, LLM signaling-question
-answers, deterministic judgments, verification flags, and output artifacts.
+supplementary PDFs, registry enrichment, supplement retrieval, LLM
+signaling-question answers, deterministic judgments, verification flags, and
+output artifacts.
 
 ### Primary Paper
 
 The main randomized trial report. It stays central. Primary-paper text becomes
-`full_text`, structured `PaperEvidence`, primary retrieval chunks, and the primary
+`full_text`, structured `PaperEvidence`, parser artifacts, and the primary
 `SourceDocument`.
 
 ### Supplement
 
 An optional supporting PDF such as a protocol, SAP, appendix, disclosure, or
-data-sharing document. Supplements are parsed into chunks with provenance and
-join retrieval, but they do not replace `full_text` or primary-paper evidence.
+data-sharing document. Supplements are parsed into SupplementSegments with
+provenance and join evidence packets through SupplementIndex retrieval, but
+they do not replace `full_text` or primary-paper evidence.
 
 ### SourceDocument
 
@@ -56,11 +57,18 @@ The role assigned to a source document or packet source. Current roles include
 `primary`, `protocol`, `sap`, `appendix`, `disclosure`, `data_sharing`,
 `unknown_supplement`, and `registry`.
 
+For supplements, content-based document type detection is authoritative when it
+detects `sap`, `protocol`, or `appendix`; filename-based role classification is
+only a fallback when content detection returns `unknown`.
+
 ### Source Kind
 
-The provenance class for evidence text. Current values include `rag_chunk`,
-`section_text`, and `ctgov`. Only real `rag_chunk` sources are expected to have
-page numbers.
+The provenance class for evidence text. Current values include
+`supplement_segment`, `section_text`, and `ctgov`. Supplement segments and
+section text should carry page numbers when the parser provides them. Missing
+page numbers on supplement segments are provenance warnings rather than fatal
+packet defects.
+_Avoid_: rag_chunk.
 
 ### PaperEvidence
 
@@ -88,15 +96,17 @@ layout-aware primary-paper `full_text`.
 The reusable trial-level ingestion result for a primary paper and its selected
 supplements. It can be shared by multiple outcome-specific Assessments for the
 same trial because primary-paper text, primary-paper evidence, retrieval chunks,
-source-document inventory, and supplement warnings do not depend on the assessed
-outcome. If primary-paper evidence extraction becomes outcome-specific, that
-evidence must move out of the trial-level artifact.
+source-document inventory, SupplementSegments, and supplement warnings do not
+depend on the assessed outcome. If primary-paper evidence extraction becomes
+outcome-specific, that evidence must move out of the trial-level artifact.
 
 ### Parser-Neutral Artifact
 
 The ingestion representation produced from page-aware parser output. It carries
-source identity, page text, diagnostics, provenance, and retrieval chunks without
-exposing parser-native document objects.
+source identity, page text, parser-neutral layout boxes, diagnostics,
+provenance, and retrieval artifacts without exposing parser-native document
+objects. Supplement parsing needs section-header boxes so document type
+detection and structural segmentation are deterministic.
 
 ### Trial Workspace
 
@@ -172,25 +182,59 @@ randomization, allocation concealment, masking, protocol deviations, protocol
 amendments, and analysis populations. Domain prompt context can use these
 snippets alongside section evidence and evidence packets.
 
-### RAG Context
-
-Domain-oriented retrieved text stored in `rag_contexts`. It is compatibility
-text for prompts, currently keyed by `d1`, `d2_blinding`, `d2_deviations`,
-`d2_analysis`, `d3`, `d4_measurement`, `d4_assessor`, and `d5`.
-
-### RAG Sources
-
-The JSON-facing retrieval provenance emitted from `rag_chunk_metadata`. Sources
-include retrieved text, section, page numbers, score, document id/name/role,
-source kind, and source path.
-
 ### Trial Retrieval Index
 
-The reusable trial-level vector index built from parser-neutral retrieval chunks for a primary
-paper and its selected supplements. The index can be shared across
-outcome-specific Assessments for the same trial, but retrieved contexts,
-evidence packets, signaling-question prompts, and judgments remain
-outcome-specific.
+Legacy concept for the old mixed primary-paper plus supplement retrieval path.
+New retrieval work should not rebuild a mixed trial index; primary-paper
+evidence stays section- and packet-based, while supplement retrieval uses
+SupplementIndex.
+
+### SupplementIndex
+
+A supplement-specific BM25S retrieval artifact made from domain-tagged,
+contextually annotated supplement segments. It replaces supplement participation
+in the old FAISS-backed RAG path; it is rebuilt in memory and is not serialized.
+Serializable SupplementSegment artifacts may be reused by trial-level ingestion
+caches, but BM25S index internals are rebuilt in memory for each run.
+BM25S is a required dependency for supplement retrieval; missing or failed BM25S
+setup is an implementation error except when no supplements are present.
+
+### SupplementSegment
+
+A page-ranged section of a Supplement with a heading, raw text, RoB 2 domain
+tags, and a short annotation describing methodological content. Supplement
+segments are produced during ingestion before SupplementIndex construction,
+then enter signaling-question evidence through Evidence Packets.
+
+When annotation fails for a segment, ingestion records a supplement warning and
+uses a non-empty fallback annotation so the segment remains retrievable from raw
+text.
+
+The annotation text `No risk-of-bias relevant content.` is not an exclusion
+flag. The segment remains indexed so BM25S can still retrieve raw text when a
+query matches it.
+
+When structural segmentation produces too few segments, the whole Supplement is
+represented as one segment tagged with RoB 2 domains `D1` through `D5` only.
+
+Segment annotation is bounded by a defensive per-supplement cap. Tagged
+segments are preserved first; low-signal untagged adjacent segments may be
+merged, and any remaining over-cap segments receive fallback annotations with
+supplement warnings.
+
+### Supplement Retrieval Grade
+
+A diagnostic summary of SupplementIndex retrieval quality for a RoB 2 domain or
+signaling question. It replaces legacy retrieval grades from the mixed FAISS RAG
+path and describes supplement retrieval only.
+
+Output JSON may expose `supplement_segments` and `supplement_retrieval_grades`
+for audit and debugging. It should not expose legacy `rag_sources`,
+`rag_contexts`, or generic `retrieval_grades`.
+
+Assessments without supplements still carry empty supplement retrieval values:
+no SupplementSegments, no SupplementIndex entries, and no supplement retrieval
+grades.
 
 ### EvidenceContract
 
@@ -203,12 +247,21 @@ distinct kinds of evidence (e.g. D5 SQ 5.3's pre-specified-plan source and
 reported-analysis-methods source) does not let the higher-ranking kind take
 every slot.
 
+EvidenceContract terms and required evidence labels are the query source for
+SupplementIndex retrieval. The old separate RAG query registry should not be
+kept as a parallel source of retrieval intent.
+
 ### Evidence Packet
 
-An SQ-specific packet built from ranked candidate sources. It combines RAG
-chunks, ClinicalTrials.gov-derived sources, and section-text fallbacks, then
-records selected sources, candidate facts, missing evidence, negative flags,
-retrieval confidence, and packet grade.
+An SQ-specific packet built from ranked candidate sources. It combines
+SupplementSegment sources, ClinicalTrials.gov-derived sources, and primary-paper
+section-text fallbacks, then records selected sources, candidate facts, missing
+evidence, negative flags, retrieval confidence, and packet grade.
+
+Source priority is contract-dependent. SAP and protocol supplements should get
+priority for prespecification and analysis-plan evidence, while primary-paper
+section text remains competitive for evidence normally reported in the main
+trial report.
 
 ### Evidence Fact
 
@@ -289,9 +342,9 @@ The support-audit state for an evidence claim. Canonical statuses are
 ### DomainEvidenceContext
 
 Prompt-ready evidence context for one RoB 2 domain or one Domain 2 prompt
-stage. It combines primary-paper evidence, evidence packets, RAG compatibility
-text, trial facts, and registry fields without changing source selection or
-signaling-question control logic.
+stage. It combines primary-paper evidence, evidence packets, trial facts, and
+registry fields without changing source selection or signaling-question control
+logic.
 
 ### DomainSqStage
 
@@ -384,8 +437,8 @@ Some-concerns domains.
   calls the Assessment ingestion module and returns the existing `RoB2State`
   update shape.
 - `rob2_pipeline/ingestion/assessment.py` owns Assessment ingestion behavior:
-  strict primary full-text extraction from parser artifacts, primary plus
-  supplement chunk assembly, source-document inventory, and remote
+  strict primary full-text extraction from parser artifacts, supplement segment
+  creation, SupplementIndex construction, source-document inventory, and remote
   paper-evidence extraction orchestration.
 - `rob2_pipeline/ingestion/parse_artifacts.py` owns PyMuPDF/PyMuPDF4LLM
   adaptation, parser-neutral page artifacts, raw character streams,
@@ -411,18 +464,17 @@ Some-concerns domains.
 
 ### Retrieval And Evidence Packets
 
-- `rob2_pipeline/rag.py` owns per-study FAISS index building, section-filtered
-  retrieval, adaptive token budgeting, and retrieval grades.
-- `rob2_pipeline/rag_queries.py` owns SQ and domain query text.
-- `rob2_pipeline/nodes/rag_retrieval.py` is the graph node that emits
-  compatibility `rag_contexts`, structured `rag_chunk_metadata`, and retrieval
-  grades. It falls back to primary-paper sections when vector retrieval fails
-  or no chunks exist.
+- Supplement indexing owns BM25S indexes over annotated SupplementSegments.
+- Query text belongs with SQ evidence contracts or supplement retrieval helpers.
+- Supplement retrieval emits supplement segments and supplement retrieval grades;
+  it does not emit legacy `rag_contexts`, `rag_chunk_metadata`, or `rag_sources`.
+- There is no standalone graph retrieval node; Evidence Packet construction is
+  the retrieval boundary for prompt-facing evidence.
 - `rob2_pipeline/nodes/evidence_contracts.py` defines SQ evidence contracts,
   matching regexes, prespecification terms, and outcome aliases.
 - `rob2_pipeline/nodes/evidence_source_selection.py` builds candidate sources
-  from RAG metadata, registry fields, and section-text fallbacks, then annotates
-  matched terms and provenance.
+  from SupplementIndex results, registry fields, and section-text fallbacks,
+  then annotates matched terms and provenance.
 - `rob2_pipeline/nodes/evidence_packet_grading.py` detects missing evidence,
   negative flags, confidence, packet grade, and evidence facts.
 - `rob2_pipeline/nodes/evidence_packets.py` orchestrates packet construction
@@ -462,6 +514,10 @@ Some-concerns domains.
   import time and builds provider adapters.
 - `rob2_pipeline/providers/` contains the LLM provider interface and adapters
   for OpenRouter, Anthropic, and OpenAI.
+- Provider calls may accept structured user content blocks for supplement
+  annotation prompts. Providers that do not support provider-specific block keys
+  such as Anthropic `cache_control` should ignore unknown keys and concatenate
+  text blocks.
 - `rob2_pipeline/cache.py` owns optional prompt cache behavior.
 - `rob2_pipeline/trace.py` records LLM calls and graph-node spans for audit and
   timing analysis.
@@ -492,9 +548,7 @@ Some-concerns domains.
 - Supplements are best-effort by default; benchmark `required` mode treats
   missing, failed, or not-ingested requested supplements as benchmark failures.
 - LLMs answer SQs; deterministic judges assign D1-D5 and overall labels.
-- `rag_contexts` are prompt compatibility text. `rag_chunk_metadata` is the
-  provenance-bearing source record emitted as `rag_sources` in JSON.
-- Evidence packets are the main prompt context protection against overload.
+- Evidence packets are the only prompt-facing retrieval product.
 - `DomainEvidenceContext` is prompt assembly only. It does not own packet
   selection, retrieval, SQ branching, NA control logic, or judges.
 - `DomainSqStage` owns SQ-stage execution shape: prompt build, LLM call,
