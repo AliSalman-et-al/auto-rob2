@@ -18,6 +18,7 @@ from rob2_pipeline.types import (
     SourceDocument,
     SqSupportAdjudication,
     MicroAgentRoutingDecision,
+    SupplementSegmentArtifact,
     SupportConstraint,
     TrialFacts,
     VerifierTraceEntry,
@@ -46,6 +47,9 @@ class RoB2State(TypedDict, total=False):
     source_documents: Annotated[list[SourceDocument], take_latest]
     parse_artifacts: Annotated[list[ParseArtifact], take_latest]
     supplement_warnings: Annotated[list[str], take_latest]
+    supplement_segments: Annotated[list[SupplementSegmentArtifact], take_latest]
+    supplement_indexes: Annotated[dict, take_latest]
+    supplement_retrieval_grades: Annotated[dict[str, RetrievalGrade], merge_dicts]
     rag_contexts: Annotated[dict[str, str], take_latest]
     rag_chunk_metadata: Annotated[dict, merge_dicts]
     retrieval_grades: Annotated[dict[str, RetrievalGrade], merge_dicts]

@@ -97,6 +97,19 @@ class RetrievalGrade(TypedDict):
     retry_recommended: bool
 
 
+class SupplementSegmentArtifact(TypedDict, total=False):
+    segment_id: str
+    document_id: str
+    document_name: str
+    document_role: str
+    source_path: str
+    heading: str
+    page_numbers: list[int]
+    domain_tags: list[str]
+    annotation: str
+    text: str
+
+
 class PacketReadiness(TypedDict, total=False):
     artifact_id: str
     schema_version: str

@@ -26,7 +26,11 @@ from rob2_pipeline.ingestion.source_catalog import (
     supplement_source_document,
 )
 from rob2_pipeline.models import PaperEvidence
-from rob2_pipeline.types import LLMCallLogEntry, SourceDocument
+from rob2_pipeline.types import (
+    LLMCallLogEntry,
+    SourceDocument,
+    SupplementSegmentArtifact,
+)
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,9 @@ class AssessmentIngestionResult:
     docling_chunks: list[Document]
     source_documents: list[SourceDocument]
     supplement_warnings: list[str]
+    supplement_segments: list[SupplementSegmentArtifact] = field(default_factory=list)
+    supplement_indexes: dict = field(default_factory=dict)
+    supplement_retrieval_grades: dict = field(default_factory=dict)
     parse_artifacts: list[dict] = field(default_factory=list)
     llm_call_log: list[LLMCallLogEntry] = field(default_factory=list)
 
@@ -47,6 +54,9 @@ class AssessmentIngestionResult:
             "source_documents": self.source_documents,
             "parse_artifacts": self.parse_artifacts,
             "supplement_warnings": self.supplement_warnings,
+            "supplement_segments": self.supplement_segments,
+            "supplement_indexes": self.supplement_indexes,
+            "supplement_retrieval_grades": self.supplement_retrieval_grades,
         }
         if include_llm_call_log and self.llm_call_log:
             update["llm_call_log"] = self.llm_call_log

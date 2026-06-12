@@ -39,6 +39,8 @@ def test_assessment_json_includes_supplement_fields():
             }
         ],
         "supplement_warnings": [],
+        "supplement_segments": [],
+        "supplement_retrieval_grades": {},
         "rag_chunk_metadata": {},
     }
 
@@ -55,6 +57,8 @@ def test_assessment_json_includes_supplement_fields():
         == PARSE_ARTIFACT_SCHEMA_VERSION
     )
     assert data["supplement_warnings"] == []
+    assert data["supplement_segments"] == []
+    assert data["supplement_retrieval_grades"] == {}
 
 
 def test_assessment_json_preserves_sq_support_metadata():

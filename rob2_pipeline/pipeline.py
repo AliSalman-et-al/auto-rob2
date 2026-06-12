@@ -41,6 +41,8 @@ JSON_OUTPUT_KEYS = (
     "source_documents",
     "parse_artifacts",
     "supplement_warnings",
+    "supplement_segments",
+    "supplement_retrieval_grades",
     "evidence",
     "rag_sources",
     "retrieval_grades",
