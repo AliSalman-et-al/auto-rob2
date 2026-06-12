@@ -134,6 +134,7 @@ def retrieve_adaptive(
             ChunkMeta(
                 text=page_content,
                 section=doc.metadata.get("section", ""),
+                original_heading=doc.metadata.get("original_heading", ""),
                 page_numbers=list(doc.metadata.get("page_numbers") or []),
                 score=scores[key],
                 document_id=doc.metadata.get("document_id", ""),
@@ -223,6 +224,7 @@ def _materialize_ranked_documents(
             ChunkMeta(
                 text=page_content,
                 section=doc.metadata.get("section", ""),
+                original_heading=doc.metadata.get("original_heading", ""),
                 page_numbers=list(doc.metadata.get("page_numbers") or []),
                 score=score,
                 document_id=doc.metadata.get("document_id", ""),

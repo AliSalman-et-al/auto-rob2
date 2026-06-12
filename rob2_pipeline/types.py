@@ -26,6 +26,7 @@ class LLMCallLogEntry(TypedDict):
 class ChunkMeta(TypedDict, total=False):
     text: str
     section: str
+    original_heading: str
     page_numbers: list[int]
     score: float
     document_id: str
@@ -109,6 +110,7 @@ class PacketReadiness(TypedDict, total=False):
 class PacketSource(TypedDict, total=False):
     text: str
     section: str
+    original_heading: str
     page_numbers: list[int]
     score: float
     matched_terms: list[str]

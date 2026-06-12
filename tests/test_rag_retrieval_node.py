@@ -103,6 +103,37 @@ def test_rag_retrieval_node_populates_rag_chunk_metadata(monkeypatch):
         assert "score" in metas[0]
 
 
+def test_rag_retrieval_node_preserves_original_heading_metadata(monkeypatch):
+    import rob2_pipeline.nodes.rag_retrieval as node
+
+    chunks = [_make_doc("Participants were randomized.", section="METHODS")]
+    monkeypatch.setattr(node, "build_index", lambda _: MagicMock())
+    monkeypatch.setattr(node, "build_filtered_index", lambda chunks, keywords: None)
+    monkeypatch.setattr(
+        node,
+        "retrieve_adaptive",
+        lambda index, filtered, queries: (
+            "Study design text.",
+            [
+                ChunkMeta(
+                    text="Study design text.",
+                    section="METHODS",
+                    original_heading="Study Design",
+                    page_numbers=[4],
+                    score=0.8,
+                )
+            ],
+        ),
+    )
+
+    result = node.rag_retrieval_node(_base_state(chunks))
+
+    meta = result["rag_chunk_metadata"]["d1"][0]
+    assert meta["section"] == "METHODS"
+    assert meta["original_heading"] == "Study Design"
+    assert meta["page_numbers"] == [4]
+
+
 def test_rag_retrieval_node_falls_back_when_no_chunks():
     from rob2_pipeline.nodes.rag_retrieval import rag_retrieval_node
 
