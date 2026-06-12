@@ -3,7 +3,7 @@ import time
 from tenacity import Retrying, retry_if_exception, stop_after_attempt, wait_exponential
 
 from ._rate_limiter import SlidingWindowRateLimiter
-from .base import LLMProvider, LLMResponse
+from .base import LLMProvider, LLMResponse, UserContent, user_content_to_text
 
 
 def _is_rate_limit_error(exc: BaseException) -> bool:
@@ -48,10 +48,12 @@ class AnthropicProvider(LLMProvider):
     def model_id(self):
         return self._model
 
-    def complete(self, system, user):
+    def complete(self, system: str, user: UserContent) -> LLMResponse:
         from langchain_core.messages import HumanMessage, SystemMessage
 
-        estimated_tokens = SlidingWindowRateLimiter.estimate_input_tokens(system, user)
+        estimated_tokens = SlidingWindowRateLimiter.estimate_input_tokens(
+            system, user_content_to_text(user)
+        )
         self._rate_limiter.wait_for_slot(estimated_tokens=estimated_tokens)
         start = time.time()
         retryer = Retrying(

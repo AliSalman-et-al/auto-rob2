@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, replace
 
 from rob2_pipeline.ingestion.parse_artifacts import SourceParseArtifact
+from rob2_pipeline.providers.base import ContentBlock
 from rob2_pipeline.supplement_retrieval import SupplementIndex, SupplementSegment
 from rob2_pipeline.types import SourceDocument, SupplementSegmentArtifact
 
@@ -106,6 +107,30 @@ def supplement_segment_artifacts(
     segments: list[SupplementSegment],
 ) -> list[SupplementSegmentArtifact]:
     return [SupplementSegmentArtifact(**segment.to_dict()) for segment in segments]
+
+
+def supplement_annotation_user_blocks(
+    segment: SupplementSegment,
+    *,
+    document_preamble: str,
+) -> list[ContentBlock]:
+    segment_text = (
+        "Annotate this supplement segment for risk-of-bias retrieval.\n\n"
+        f"Document: {segment.document_name}\n"
+        f"Role: {segment.document_role}\n"
+        f"Heading: {segment.heading}\n"
+        f"Pages: {', '.join(str(page) for page in segment.page_numbers) or 'unknown'}\n"
+        f"Domain tags: {', '.join(segment.domain_tags) or 'none'}\n\n"
+        f"{segment.text}"
+    )
+    return [
+        {
+            "type": "text",
+            "text": document_preamble,
+            "cache_control": {"type": "ephemeral"},
+        },
+        {"type": "text", "text": segment_text},
+    ]
 
 
 def _source_with_content_detected_role(

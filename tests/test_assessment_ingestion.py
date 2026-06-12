@@ -1,4 +1,5 @@
 from rob2_pipeline.ingestion.assessment import AssessmentIngestionResult
+from rob2_pipeline.ingestion import supplement_segments
 from rob2_pipeline.ingestion.parse_artifacts import (
     PARSE_ARTIFACT_SCHEMA_VERSION,
     ParserDiagnostic,
@@ -6,6 +7,7 @@ from rob2_pipeline.ingestion.parse_artifacts import (
     SourceParseArtifact,
 )
 from rob2_pipeline.models import empty_paper_evidence
+from rob2_pipeline.supplement_retrieval import SupplementSegment
 
 
 LLM_LOG = {
@@ -174,9 +176,15 @@ def test_ingest_assessment_documents_produces_content_detected_supplement_segmen
                             "The primary outcome analysis used the intention-to-treat population."
                         ),
                         "section_header_boxes": [
-                            {"text": "Clinical Trial Protocol", "bbox": [36, 40, 220, 52]},
+                            {
+                                "text": "Clinical Trial Protocol",
+                                "bbox": [36, 40, 220, 52],
+                            },
                             {"text": "Blinding", "bbox": [36, 96, 92, 108]},
-                            {"text": "Statistical Analysis", "bbox": [36, 144, 170, 156]},
+                            {
+                                "text": "Statistical Analysis",
+                                "bbox": [36, 144, 170, 156],
+                            },
                         ],
                     }
                 ],
@@ -230,7 +238,10 @@ def test_ingest_assessment_documents_uses_all_domain_fallback_for_sparse_supplem
                         "page_number": 4,
                         "text": "Supplementary Appendix\nCentral allocation was used.",
                         "section_header_boxes": [
-                            {"text": "Supplementary Appendix", "bbox": [36, 40, 220, 52]},
+                            {
+                                "text": "Supplementary Appendix",
+                                "bbox": [36, 40, 220, 52],
+                            },
                         ],
                     }
                 ],
@@ -285,9 +296,15 @@ def test_ingest_assessment_documents_warns_and_uses_fallback_annotations_over_ca
                         "page_number": 1,
                         "text": "Statistical Analysis Plan\n" + text,
                         "section_header_boxes": [
-                            {"text": "Statistical Analysis Plan", "bbox": [36, 20, 220, 32]},
+                            {
+                                "text": "Statistical Analysis Plan",
+                                "bbox": [36, 20, 220, 32],
+                            },
                             *[
-                                {"text": heading, "bbox": [36, 40 + index * 20, 120, 52 + index * 20]}
+                                {
+                                    "text": heading,
+                                    "bbox": [36, 40 + index * 20, 120, 52 + index * 20],
+                                }
                                 for index, heading in enumerate(headings, start=1)
                             ],
                         ],
@@ -303,11 +320,41 @@ def test_ingest_assessment_documents_warns_and_uses_fallback_annotations_over_ca
     result = assessment.ingest_assessment_documents(str(primary), [str(supplement)])
 
     assert len(result.supplement_segments) == 5
-    assert any("exceeded annotation cap" in warning for warning in result.supplement_warnings)
+    assert any(
+        "exceeded annotation cap" in warning for warning in result.supplement_warnings
+    )
     assert any(
         segment["annotation"] == supplement_segments.FALLBACK_ANNOTATION
         for segment in result.supplement_segments
     )
+
+
+def test_supplement_annotation_prompt_blocks_include_cache_control_preamble():
+    segment = SupplementSegment(
+        segment_id="protocol:segment:0001",
+        document_id="protocol",
+        document_name="Protocol.pdf",
+        document_role="protocol",
+        source_path="Protocol.pdf",
+        heading="Randomisation",
+        page_numbers=[3],
+        domain_tags=["D1"],
+        annotation="",
+        text="Participants were randomized centrally.",
+    )
+
+    blocks = supplement_segments.supplement_annotation_user_blocks(
+        segment,
+        document_preamble="Protocol PDF parsed into page-aware segments.",
+    )
+
+    assert blocks[0] == {
+        "type": "text",
+        "text": "Protocol PDF parsed into page-aware segments.",
+        "cache_control": {"type": "ephemeral"},
+    }
+    assert blocks[1]["type"] == "text"
+    assert "Participants were randomized centrally." in blocks[1]["text"]
 
 
 def test_ingest_assessment_documents_keeps_failed_supplements_best_effort(

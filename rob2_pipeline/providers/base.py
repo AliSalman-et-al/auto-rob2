@@ -1,5 +1,20 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Any, TypeAlias
+
+
+ContentBlock: TypeAlias = dict[str, Any]
+UserContent: TypeAlias = str | list[ContentBlock]
+
+
+def user_content_to_text(user: UserContent) -> str:
+    if isinstance(user, str):
+        return user
+    return "\n\n".join(
+        str(block.get("text", "")).strip()
+        for block in user
+        if isinstance(block, dict) and str(block.get("text", "")).strip()
+    )
 
 
 @dataclass
@@ -19,7 +34,7 @@ class LLMResponse:
 
 class LLMProvider(ABC):
     @abstractmethod
-    def complete(self, system: str, user: str) -> LLMResponse: ...
+    def complete(self, system: str, user: UserContent) -> LLMResponse: ...
 
     @property
     @abstractmethod
