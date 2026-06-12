@@ -1606,6 +1606,7 @@ def test_write_benchmark_report_emits_machine_readable_schema(tmp_path):
         "D1": {"status": "ready", "grade": "strong"}
     }
     assert assessment["diagnostics"]["quote_traceability"] == {
+        "quote_raw_pdf_only": 0,
         "quote_untraceable": 1,
         "semantic_support_conflict": 1,
         "failures": [
@@ -1647,6 +1648,7 @@ def test_write_benchmark_report_emits_machine_readable_schema(tmp_path):
         "by_grade": {"strong": 1},
     }
     assert aggregate_diagnostics["quote_traceability"] == {
+        "quote_raw_pdf_only": 0,
         "quote_untraceable": 1,
         "semantic_support_conflict": 1,
         "failure_count": 2,

@@ -167,6 +167,88 @@ def test_verify_sq_evidence_accepts_packet_source_quote():
     assert not any(flag["issue"] == "quote_not_found_in_source_context" for flag in flags)
 
 
+def test_verify_sq_evidence_marks_raw_stream_only_quote():
+    state = {
+        "full_text": "The layout text split random ization across lines.",
+        "evidence": empty_paper_evidence(),
+        "rag_contexts": {},
+        "sq_answers": {
+            "1.1": {
+                "answer": "Y",
+                "quote": "Randomization was performed centrally.",
+                "justification": "The report describes central randomization.",
+            }
+        },
+        "evidence_packets": {},
+        "parse_artifacts": [
+            {
+                "source_identity": {"document_id": "primary", "document_role": "primary"},
+                "raw_character_stream": "Randomization was performed centrally.",
+            }
+        ],
+    }
+
+    flags = verify_sq_evidence(state)
+
+    assert flags == [
+        {
+            "sq_id": "1.1",
+            "issue": "quote_found_only_in_raw_character_stream",
+            "quote": "Randomization was performed centrally.",
+        }
+    ]
+
+
+def test_quote_verifier_surfaces_raw_stream_only_constraint_and_action():
+    state = {
+        "full_text": "The layout text split random ization across lines.",
+        "evidence": empty_paper_evidence(),
+        "rag_contexts": {},
+        "sq_answers": {
+            "1.1": {
+                "answer": "Y",
+                "quote": "Randomization was performed centrally.",
+                "justification": "The report describes central randomization.",
+                "support_level": "strong",
+            }
+        },
+        "evidence_packets": {},
+        "parse_artifacts": [
+            {"raw_character_stream": "Randomization was performed centrally."}
+        ],
+        "verifier_trace": [],
+    }
+
+    result = quote_verifier_node(state)
+
+    assert result["support_constraints"] == [
+        {
+            "constraint_type": "quote_raw_pdf_only",
+            "sq_id": "1.1",
+            "claim": {
+                "answer": "Y",
+                "quote": "Randomization was performed centrally.",
+                "justification": "The report describes central randomization.",
+                "support_level": "strong",
+            },
+            "evidence_label": "quote",
+            "evidence": "Randomization was performed centrally.",
+            "reason": "quote_found_only_in_raw_character_stream",
+            "provenance": {
+                "source": "quote_verifier",
+                "fallback": "raw_character_stream",
+            },
+        }
+    ]
+    assert result["verification_actions"] == [
+        {
+            "sq_id": "1.1",
+            "action": "review_raw_pdf_only_traceability",
+            "reason": "quote_found_only_in_raw_character_stream",
+        }
+    ]
+
+
 def test_quote_verifier_surfaces_packet_support_constraints():
     state = {
         "full_text": "Progression-free survival improved.",
