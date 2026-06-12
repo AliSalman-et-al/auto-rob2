@@ -77,6 +77,12 @@ Evidence whose claim can be traced to matching text in `full_text`, a parser art
 chunk, or another provenance-bearing `SourceDocument`. It is the authority used
 to resolve conflicts with unverified extracted evidence.
 
+### Raw Character Stream
+
+The minimally processed text extracted from the primary PDF for quote
+traceability checks. It is not prompt context and must not replace the
+layout-aware primary-paper `full_text`.
+
 ### Trial Ingestion Artifact
 
 The reusable trial-level ingestion result for a primary paper and its selected
