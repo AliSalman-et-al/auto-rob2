@@ -1,6 +1,7 @@
 import json
 
 from rob2_pipeline.pipeline import _assessment_json, _write_workspace_artifacts
+from rob2_pipeline.ingestion.parse_artifacts import PARSE_ARTIFACT_SCHEMA_VERSION
 from rob2_pipeline.trial_workspace import file_sha256
 
 
@@ -26,11 +27,14 @@ def test_assessment_json_includes_supplement_fields():
                 "pages": [{"page_number": 1, "text": "Primary text"}],
                 "diagnostics": [],
                 "provenance": {
-                    "parser_name": "liteparse",
-                    "parser_version": "2.0.0",
-                    "adapter_name": "liteparse",
-                    "artifact_schema_version": "parse-artifact-v1",
-                    "config": {},
+                    "parser_name": "pymupdf+pymupdf4llm",
+                    "parser_version": "pymupdf=1.26.0; pymupdf4llm=0.0.27",
+                    "adapter_name": "pymupdf-sectionmap",
+                    "artifact_schema_version": PARSE_ARTIFACT_SCHEMA_VERSION,
+                    "config": {
+                        "layout_text_engine": "pymupdf4llm",
+                        "raw_character_stream_engine": "pymupdf",
+                    },
                 },
             }
         ],
@@ -42,7 +46,14 @@ def test_assessment_json_includes_supplement_fields():
 
     assert data["supplementary_paths"] == ["protocol.pdf"]
     assert data["source_documents"][0]["document_name"] == "protocol.pdf"
-    assert data["parse_artifacts"][0]["provenance"]["parser_name"] == "liteparse"
+    assert (
+        data["parse_artifacts"][0]["provenance"]["parser_name"]
+        == "pymupdf+pymupdf4llm"
+    )
+    assert (
+        data["parse_artifacts"][0]["provenance"]["artifact_schema_version"]
+        == PARSE_ARTIFACT_SCHEMA_VERSION
+    )
     assert data["supplement_warnings"] == []
 
 
@@ -490,11 +501,14 @@ def _parse_artifact(path):
         "diagnostics": [],
         "parse_time_ms": 17,
         "provenance": {
-            "parser_name": "liteparse",
-            "parser_version": "2.0.4",
-            "adapter_name": "liteparse",
-            "artifact_schema_version": "parse-artifact-v1",
-            "config": {"ocr_enabled": False},
+            "parser_name": "pymupdf+pymupdf4llm",
+            "parser_version": "pymupdf=1.26.0; pymupdf4llm=0.0.27",
+            "adapter_name": "pymupdf-sectionmap",
+            "artifact_schema_version": PARSE_ARTIFACT_SCHEMA_VERSION,
+            "config": {
+                "layout_text_engine": "pymupdf4llm",
+                "raw_character_stream_engine": "pymupdf",
+            },
         },
     }
 
