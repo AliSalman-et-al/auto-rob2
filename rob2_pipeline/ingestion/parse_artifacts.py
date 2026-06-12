@@ -14,7 +14,7 @@ from rob2_pipeline.ingestion.source_catalog import mark_failed, mark_parsed
 from rob2_pipeline.types import SourceDocument
 
 
-PARSE_ARTIFACT_SCHEMA_VERSION = "parse-artifact-v1"
+PARSE_ARTIFACT_SCHEMA_VERSION = "parse-artifact-v2"
 PAGE_AWARE_ARTIFACT_SCHEMA_VERSION = "page-aware-artifacts-v1"
 MIN_SECTION_TEXT_CHARS = 20
 
@@ -55,12 +55,14 @@ class SourceParseArtifact:
     pages: list[ParsedPageArtifact]
     diagnostics: list[ParserDiagnostic]
     provenance: ParserProvenance
+    raw_character_stream: str = ""
     parse_time_ms: int = 0
 
     def to_dict(self) -> dict:
         return {
             "source_identity": dict(self.source_identity),
             "pages": [dict(page) for page in self.pages],
+            "raw_character_stream": self.raw_character_stream,
             "diagnostics": [asdict(diagnostic) for diagnostic in self.diagnostics],
             "parse_time_ms": self.parse_time_ms,
             "provenance": asdict(self.provenance),
@@ -113,40 +115,90 @@ class SourceParserAdapter(Protocol):
         ...
 
 
-class LiteParseSourceParser:
-    producer = "liteparse"
+class PyMuPDFSectionMapSourceParser:
+    producer = "pymupdf+pymupdf4llm"
+    adapter_name = "pymupdf-sectionmap"
 
-    def __init__(self, *, ocr_enabled: bool = False, quiet: bool = True):
-        self.config = {"ocr_enabled": ocr_enabled, "quiet": quiet}
-        self.producer_version = _package_version("liteparse")
-
-    def parse(self, path: str | Path) -> SourceParseArtifact:
-        raise NotImplementedError(
-            "LiteParseSourceParser.parse requires parse_source_with_adapter."
+    def __init__(self) -> None:
+        self.config = {
+            "layout_text_engine": "pymupdf4llm",
+            "raw_character_stream_engine": "pymupdf",
+            "page_chunks": True,
+        }
+        pymupdf_version = _package_version("pymupdf")
+        pymupdf4llm_version = _package_version("pymupdf4llm")
+        self.producer_version = (
+            f"pymupdf={pymupdf_version}; pymupdf4llm={pymupdf4llm_version}"
         )
 
-    def parse_source(self, source: SourceDocument) -> SourceParseArtifact:
-        from liteparse import LiteParse
+    def parse(self, path: str | Path) -> SourceParseArtifact:
+        source = SourceDocument(
+            document_id=Path(path).stem,
+            document_name=Path(path).name,
+            document_role="primary",
+            source_kind="rag_chunk",
+            path=str(path),
+            is_primary=True,
+            status="pending",
+        )
+        return self.parse_source(source)
 
-        parser = LiteParse(**self.config)
-        native_result = parser.parse(source["path"])
-        pages = [
-            ParsedPageArtifact(
-                page_number=page.page_num,
-                text=page.text,
-                width=page.width,
-                height=page.height,
+    def parse_source(self, source: SourceDocument) -> SourceParseArtifact:
+        import pymupdf
+        import pymupdf4llm
+
+        chunks = pymupdf4llm.to_markdown(source["path"], page_chunks=True)
+        raw_pages: list[str] = []
+        dimensions: dict[int, tuple[float, float]] = {}
+        warnings = ""
+        with pymupdf.open(source["path"]) as doc:
+            for page_index, page in enumerate(doc, start=1):
+                raw_pages.append(page.get_text())
+                dimensions[page_index] = (float(page.rect.width), float(page.rect.height))
+            warnings = pymupdf.TOOLS.mupdf_warnings()
+
+        pages = []
+        for index, chunk in enumerate(chunks, start=1):
+            metadata = chunk.get("metadata", {})
+            page_number = int(metadata.get("page_number") or index)
+            width, height = dimensions.get(page_number, (0.0, 0.0))
+            pages.append(
+                ParsedPageArtifact(
+                    page_number=page_number,
+                    text=str(chunk.get("text", "")),
+                    width=width,
+                    height=height,
+                )
             )
-            for page in native_result.pages
+        diagnostics = [
+            ParserDiagnostic(
+                level="info",
+                message=(
+                    f"Parsed {len(pages)} page(s) with PyMuPDF4LLM layout text "
+                    "and PyMuPDF raw character stream."
+                ),
+                page_number=None,
+            )
         ]
+        if warnings:
+            diagnostics.append(
+                ParserDiagnostic(
+                    level="warning",
+                    message=warnings,
+                    page_number=None,
+                )
+            )
         return SourceParseArtifact(
             source_identity=mark_parsed(source),
             pages=pages,
-            diagnostics=[],
+            raw_character_stream="\n\n".join(
+                page.strip() for page in raw_pages if page.strip()
+            ).strip(),
+            diagnostics=diagnostics,
             provenance=ParserProvenance(
                 parser_name=self.producer,
                 parser_version=self.producer_version,
-                adapter_name="liteparse",
+                adapter_name=self.adapter_name,
                 artifact_schema_version=PARSE_ARTIFACT_SCHEMA_VERSION,
                 config=dict(self.config),
             ),
@@ -169,6 +221,7 @@ def parse_source_with_adapter(
             pages=artifact.pages,
             diagnostics=artifact.diagnostics,
             provenance=artifact.provenance,
+            raw_character_stream=artifact.raw_character_stream,
             parse_time_ms=parse_time_ms,
         )
     except Exception as error:  # noqa: BLE001
@@ -176,13 +229,14 @@ def parse_source_with_adapter(
         return SourceParseArtifact(
             source_identity=mark_failed(source, str(error)),
             pages=[],
+            raw_character_stream="",
             diagnostics=[
                 ParserDiagnostic(level="error", message=str(error), page_number=None)
             ],
             provenance=ParserProvenance(
                 parser_name=getattr(parser, "producer", parser.__class__.__name__),
                 parser_version=getattr(parser, "producer_version", "unknown"),
-                adapter_name=parser.__class__.__name__,
+                adapter_name=getattr(parser, "adapter_name", parser.__class__.__name__),
                 artifact_schema_version=PARSE_ARTIFACT_SCHEMA_VERSION,
                 config=dict(getattr(parser, "config", {})),
             ),
@@ -194,7 +248,7 @@ def parse_sources(
     sources: list[SourceDocument],
     parser: SourceParserAdapter | None = None,
 ) -> list[SourceParseArtifact]:
-    parser = parser or LiteParseSourceParser()
+    parser = parser or PyMuPDFSectionMapSourceParser()
     return [parse_source_with_adapter(source, parser) for source in sources]
 
 
@@ -323,13 +377,13 @@ def _package_version(package_name: str) -> str:
 __all__ = [
     "PARSE_ARTIFACT_SCHEMA_VERSION",
     "PAGE_AWARE_ARTIFACT_SCHEMA_VERSION",
-    "LiteParseSourceParser",
     "PageAwareArtifacts",
     "PageAwareChunkArtifact",
     "PageAwareSectionArtifact",
     "ParsedPageArtifact",
     "ParserDiagnostic",
     "ParserProvenance",
+    "PyMuPDFSectionMapSourceParser",
     "SourceParseArtifact",
     "SourceParserAdapter",
     "build_page_aware_artifacts",

@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import json
+import tomllib
+from pathlib import Path
 
 from rob2_pipeline.ingestion.parse_artifacts import (
+    PARSE_ARTIFACT_SCHEMA_VERSION,
+    PyMuPDFSectionMapSourceParser,
     ParserDiagnostic,
     ParserProvenance,
     SourceParseArtifact,
     build_page_aware_artifacts,
+    full_text_from_parse_artifact,
+    parse_sources,
     parse_source_with_adapter,
     write_page_aware_artifacts,
 )
@@ -222,3 +228,84 @@ def test_page_aware_artifacts_ignore_empty_and_low_text_pages():
 
     assert artifacts.sections == []
     assert artifacts.chunks == []
+
+
+def test_default_parser_produces_v2_layout_text_raw_stream_and_provenance(tmp_path):
+    import pymupdf
+
+    pdf_path = tmp_path / "trial.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page(width=300, height=300)
+    page.insert_text((36, 48), "Methods")
+    page.insert_text((36, 72), "Participants were randomized centrally.")
+    doc.save(pdf_path)
+    doc.close()
+
+    source = {
+        "document_id": "primary",
+        "document_name": "trial.pdf",
+        "document_role": "primary",
+        "source_kind": "rag_chunk",
+        "path": str(pdf_path),
+        "is_primary": True,
+        "status": "pending",
+    }
+
+    artifact = parse_sources([source])[0]
+
+    assert artifact.source_identity["status"] == "parsed"
+    assert artifact.provenance.parser_name == "pymupdf+pymupdf4llm"
+    assert artifact.provenance.adapter_name == "pymupdf-sectionmap"
+    assert artifact.provenance.artifact_schema_version == PARSE_ARTIFACT_SCHEMA_VERSION
+    assert artifact.provenance.config["layout_text_engine"] == "pymupdf4llm"
+    assert artifact.provenance.config["raw_character_stream_engine"] == "pymupdf"
+    assert artifact.parse_time_ms >= 0
+    assert artifact.diagnostics
+    assert artifact.pages
+    assert "Participants were randomized centrally." in full_text_from_parse_artifact(
+        artifact
+    )
+    assert "Participants were randomized centrally." in artifact.raw_character_stream
+    assert artifact.to_dict()["raw_character_stream"] == artifact.raw_character_stream
+
+
+def test_default_parser_returns_degraded_artifact_for_corrupt_pdf(tmp_path):
+    pdf_path = tmp_path / "corrupt.pdf"
+    pdf_path.write_bytes(b"not a pdf")
+    source = {
+        "document_id": "primary",
+        "document_name": "corrupt.pdf",
+        "document_role": "primary",
+        "source_kind": "rag_chunk",
+        "path": str(pdf_path),
+        "is_primary": True,
+        "status": "pending",
+    }
+
+    artifact = parse_sources([source])[0]
+
+    assert artifact.source_identity["status"] == "failed"
+    assert artifact.pages == []
+    assert artifact.raw_character_stream == ""
+    assert artifact.diagnostics
+    assert artifact.diagnostics[0].level == "error"
+    assert artifact.provenance.parser_name == "pymupdf+pymupdf4llm"
+    assert artifact.provenance.adapter_name == "pymupdf-sectionmap"
+
+
+def test_default_parser_path_does_not_use_liteparse():
+    parser = PyMuPDFSectionMapSourceParser()
+
+    assert parser.producer == "pymupdf+pymupdf4llm"
+    assert parser.producer_version != "unknown"
+
+
+def test_runtime_dependencies_do_not_include_liteparse():
+    payload = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    dependencies = payload["project"]["dependencies"]
+    assert not any(dependency.lower().startswith("liteparse") for dependency in dependencies)
