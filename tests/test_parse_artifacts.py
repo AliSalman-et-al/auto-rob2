@@ -384,6 +384,9 @@ def test_default_parser_produces_v2_layout_text_raw_stream_and_provenance(tmp_pa
     assert artifact.parse_time_ms >= 0
     assert artifact.diagnostics
     assert artifact.pages
+    assert artifact.pages[0]["section_header_boxes"]
+    assert artifact.pages[0]["section_header_boxes"][0]["text"] == "Methods"
+    assert len(artifact.pages[0]["section_header_boxes"][0]["bbox"]) == 4
     assert "Participants were randomized centrally." in full_text_from_parse_artifact(
         artifact
     )

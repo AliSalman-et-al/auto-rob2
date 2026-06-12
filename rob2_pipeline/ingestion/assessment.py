@@ -25,6 +25,10 @@ from rob2_pipeline.ingestion.source_catalog import (
     primary_source_document,
     supplement_source_document,
 )
+from rob2_pipeline.ingestion.supplement_segments import (
+    build_supplement_ingestion_artifacts,
+    supplement_segment_artifacts,
+)
 from rob2_pipeline.models import PaperEvidence
 from rob2_pipeline.types import (
     LLMCallLogEntry,
@@ -102,7 +106,24 @@ def _ingest_from_parse_artifacts(
     ):
         return None
 
-    source_documents = [artifact.source_identity for artifact in artifacts]
+    supplement_ingestion = [
+        build_supplement_ingestion_artifacts(artifact)
+        for artifact in artifacts[1:]
+        if artifact.source_identity.get("status") == "parsed"
+    ]
+    supplement_sources_by_id = {
+        result.source_document.get("document_id"): result.source_document
+        for result in supplement_ingestion
+    }
+    source_documents = [
+        artifacts[0].source_identity,
+        *[
+            supplement_sources_by_id.get(
+                artifact.source_identity.get("document_id"), artifact.source_identity
+            )
+            for artifact in artifacts[1:]
+        ],
+    ]
     page_artifacts = [build_page_aware_artifacts(artifact) for artifact in artifacts]
     docling_chunks = [
         chunk
@@ -115,6 +136,19 @@ def _ingest_from_parse_artifacts(
         if source.get("status") in {"failed", "missing", "partial", "degraded"}
         and source.get("error")
     ]
+    supplement_warnings.extend(
+        warning for result in supplement_ingestion for warning in result.warnings
+    )
+    supplement_segments = [
+        segment
+        for result in supplement_ingestion
+        for segment in supplement_segment_artifacts(result.segments)
+    ]
+    supplement_indexes = {
+        result.source_document.get("document_id", ""): result.index
+        for result in supplement_ingestion
+        if result.index is not None
+    }
     sections = parse_sections(primary_text)
     evidence = paper_evidence_from_sections(
         sections,
@@ -135,6 +169,8 @@ def _ingest_from_parse_artifacts(
             source_documents=source_documents,
             parse_artifacts=parse_artifacts,
             supplement_warnings=supplement_warnings,
+            supplement_segments=supplement_segments,
+            supplement_indexes=supplement_indexes,
         )
 
     if not appears_rct_candidate(primary_text):
@@ -148,6 +184,8 @@ def _ingest_from_parse_artifacts(
             source_documents=source_documents,
             parse_artifacts=parse_artifacts,
             supplement_warnings=supplement_warnings,
+            supplement_segments=supplement_segments,
+            supplement_indexes=supplement_indexes,
         )
 
     doc_repr = _ParseArtifactDocumentRepr(primary_text)
@@ -160,6 +198,8 @@ def _ingest_from_parse_artifacts(
             source_documents=source_documents,
             parse_artifacts=parse_artifacts,
             supplement_warnings=supplement_warnings,
+            supplement_segments=supplement_segments,
+            supplement_indexes=supplement_indexes,
             llm_call_log=log,
         )
     except Exception as error:  # noqa: BLE001
@@ -172,6 +212,8 @@ def _ingest_from_parse_artifacts(
         source_documents=source_documents,
         parse_artifacts=parse_artifacts,
         supplement_warnings=supplement_warnings,
+        supplement_segments=supplement_segments,
+        supplement_indexes=supplement_indexes,
     )
 
 

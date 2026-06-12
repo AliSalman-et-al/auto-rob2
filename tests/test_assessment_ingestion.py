@@ -138,6 +138,178 @@ def test_ingest_assessment_documents_prefers_parser_neutral_artifacts(
     assert result.parse_artifacts[0]["pages"][0]["text"].startswith("Methods")
 
 
+def test_ingest_assessment_documents_produces_content_detected_supplement_segments(
+    monkeypatch,
+    tmp_path,
+):
+    import rob2_pipeline.ingestion.assessment as assessment
+
+    primary = tmp_path / "trial.pdf"
+    supplement = tmp_path / "generic-file.pdf"
+    primary.write_bytes(b"%PDF-1.4")
+    supplement.write_bytes(b"%PDF-1.4")
+
+    def parse_sources(sources):
+        return [
+            _source_parse_artifact(
+                sources[0],
+                [
+                    {
+                        "page_number": 1,
+                        "text": "Methods\nRandomized trial text with enough content to parse.",
+                    }
+                ],
+            ),
+            _source_parse_artifact(
+                sources[1],
+                [
+                    {
+                        "page_number": 1,
+                        "text": (
+                            "Clinical Trial Protocol\n"
+                            "Randomisation and allocation were concealed centrally.\n"
+                            "Blinding\n"
+                            "Participants and clinicians were masked.\n"
+                            "Statistical Analysis\n"
+                            "The primary outcome analysis used the intention-to-treat population."
+                        ),
+                        "section_header_boxes": [
+                            {"text": "Clinical Trial Protocol", "bbox": [36, 40, 220, 52]},
+                            {"text": "Blinding", "bbox": [36, 96, 92, 108]},
+                            {"text": "Statistical Analysis", "bbox": [36, 144, 170, 156]},
+                        ],
+                    }
+                ],
+            ),
+        ]
+
+    monkeypatch.setattr(assessment, "parse_sources", parse_sources)
+    monkeypatch.setattr(assessment, "allow_remote_evidence_extraction", lambda: False)
+
+    result = assessment.ingest_assessment_documents(str(primary), [str(supplement)])
+
+    assert result.source_documents[1]["document_role"] == "protocol"
+    assert [segment["heading"] for segment in result.supplement_segments] == [
+        "Clinical Trial Protocol",
+        "Blinding",
+        "Statistical Analysis",
+    ]
+    assert result.supplement_segments[0]["domain_tags"] == ["D1"]
+    assert result.supplement_segments[1]["domain_tags"] == ["D2", "D4"]
+    assert {"D2", "D5"}.issubset(result.supplement_segments[2]["domain_tags"])
+    assert all(segment["annotation"] for segment in result.supplement_segments)
+    assert result.supplement_warnings == []
+
+
+def test_ingest_assessment_documents_uses_all_domain_fallback_for_sparse_supplement(
+    monkeypatch,
+    tmp_path,
+):
+    import rob2_pipeline.ingestion.assessment as assessment
+
+    primary = tmp_path / "trial.pdf"
+    supplement = tmp_path / "appendix.pdf"
+    primary.write_bytes(b"%PDF-1.4")
+    supplement.write_bytes(b"%PDF-1.4")
+
+    def parse_sources(sources):
+        return [
+            _source_parse_artifact(
+                sources[0],
+                [
+                    {
+                        "page_number": 1,
+                        "text": "Methods\nRandomized trial text with enough content to parse.",
+                    }
+                ],
+            ),
+            _source_parse_artifact(
+                sources[1],
+                [
+                    {
+                        "page_number": 4,
+                        "text": "Supplementary Appendix\nCentral allocation was used.",
+                        "section_header_boxes": [
+                            {"text": "Supplementary Appendix", "bbox": [36, 40, 220, 52]},
+                        ],
+                    }
+                ],
+            ),
+        ]
+
+    monkeypatch.setattr(assessment, "parse_sources", parse_sources)
+    monkeypatch.setattr(assessment, "allow_remote_evidence_extraction", lambda: False)
+
+    result = assessment.ingest_assessment_documents(str(primary), [str(supplement)])
+
+    assert len(result.supplement_segments) == 1
+    segment = result.supplement_segments[0]
+    assert segment["heading"] == "Full document"
+    assert segment["page_numbers"] == [4]
+    assert segment["domain_tags"] == ["D1", "D2", "D3", "D4", "D5"]
+    assert "Supplementary Appendix" in segment["text"]
+
+
+def test_ingest_assessment_documents_warns_and_uses_fallback_annotations_over_cap(
+    monkeypatch,
+    tmp_path,
+):
+    import rob2_pipeline.ingestion.assessment as assessment
+    import rob2_pipeline.ingestion.supplement_segments as supplement_segments
+
+    primary = tmp_path / "trial.pdf"
+    supplement = tmp_path / "sap.pdf"
+    primary.write_bytes(b"%PDF-1.4")
+    supplement.write_bytes(b"%PDF-1.4")
+    headings = [f"Section {index}" for index in range(1, 6)]
+    text = "\n".join(
+        f"{heading}\nAdministrative content without methodological detail."
+        for heading in headings
+    )
+
+    def parse_sources(sources):
+        return [
+            _source_parse_artifact(
+                sources[0],
+                [
+                    {
+                        "page_number": 1,
+                        "text": "Methods\nRandomized trial text with enough content to parse.",
+                    }
+                ],
+            ),
+            _source_parse_artifact(
+                sources[1],
+                [
+                    {
+                        "page_number": 1,
+                        "text": "Statistical Analysis Plan\n" + text,
+                        "section_header_boxes": [
+                            {"text": "Statistical Analysis Plan", "bbox": [36, 20, 220, 32]},
+                            *[
+                                {"text": heading, "bbox": [36, 40 + index * 20, 120, 52 + index * 20]}
+                                for index, heading in enumerate(headings, start=1)
+                            ],
+                        ],
+                    }
+                ],
+            ),
+        ]
+
+    monkeypatch.setattr(assessment, "parse_sources", parse_sources)
+    monkeypatch.setattr(assessment, "allow_remote_evidence_extraction", lambda: False)
+    monkeypatch.setattr(supplement_segments, "ANNOTATION_CAP_PER_SUPPLEMENT", 2)
+
+    result = assessment.ingest_assessment_documents(str(primary), [str(supplement)])
+
+    assert len(result.supplement_segments) == 5
+    assert any("exceeded annotation cap" in warning for warning in result.supplement_warnings)
+    assert any(
+        segment["annotation"] == supplement_segments.FALLBACK_ANNOTATION
+        for segment in result.supplement_segments
+    )
+
+
 def test_ingest_assessment_documents_keeps_failed_supplements_best_effort(
     monkeypatch,
     tmp_path,
