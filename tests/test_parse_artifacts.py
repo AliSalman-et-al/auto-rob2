@@ -415,6 +415,49 @@ def test_default_parser_returns_degraded_artifact_for_corrupt_pdf(tmp_path):
     assert artifact.provenance.adapter_name == "pymupdf-sectionmap"
 
 
+def test_parser_adapter_preserves_degraded_parser_status():
+    class DegradedParser(FakeParser):
+        def parse(self, path):
+            artifact = super().parse(path)
+            source_identity = dict(artifact.source_identity)
+            source_identity["status"] = "degraded"
+            source_identity["error"] = "layout recovery degraded"
+            return SourceParseArtifact(
+                source_identity=source_identity,
+                pages=artifact.pages,
+                diagnostics=[
+                    ParserDiagnostic(
+                        level="warning",
+                        message="page text order uncertain",
+                        page_number=1,
+                    )
+                ],
+                provenance=artifact.provenance,
+            )
+
+    source = {
+        "document_id": "primary",
+        "document_name": "trial.pdf",
+        "document_role": "primary",
+        "source_kind": "rag_chunk",
+        "path": "trial.pdf",
+        "is_primary": True,
+        "status": "pending",
+    }
+
+    artifact = parse_source_with_adapter(source, DegradedParser())
+
+    assert artifact.source_identity["status"] == "degraded"
+    assert artifact.source_identity["error"] == "layout recovery degraded"
+    assert artifact.diagnostics == [
+        ParserDiagnostic(
+            level="warning",
+            message="page text order uncertain",
+            page_number=1,
+        )
+    ]
+
+
 def test_default_parser_path_does_not_use_liteparse():
     parser = PyMuPDFSectionMapSourceParser()
 

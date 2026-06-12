@@ -1,5 +1,7 @@
 from rob2_pipeline.ingestion.assessment import AssessmentIngestionResult
 from rob2_pipeline.ingestion.parse_artifacts import (
+    PARSE_ARTIFACT_SCHEMA_VERSION,
+    ParserDiagnostic,
     ParserProvenance,
     SourceParseArtifact,
 )
@@ -15,19 +17,21 @@ LLM_LOG = {
 }
 
 
-def _source_parse_artifact(source, pages, *, status="parsed", error=""):
+def _source_parse_artifact(
+    source, pages, *, status="parsed", error="", diagnostics=None
+):
     source_identity = {**source, "status": status}
     if error:
         source_identity["error"] = error
     return SourceParseArtifact(
         source_identity=source_identity,
         pages=pages,
-        diagnostics=[],
+        diagnostics=list(diagnostics or []),
         provenance=ParserProvenance(
-            parser_name="fake-liteparse",
+            parser_name="fake-pymupdf",
             parser_version="1.0.0",
-            adapter_name="fake",
-            artifact_schema_version="parse-artifact-v1",
+            adapter_name="fake-sectionmap",
+            artifact_schema_version=PARSE_ARTIFACT_SCHEMA_VERSION,
             config={},
         ),
     )
@@ -179,6 +183,71 @@ def test_ingest_assessment_documents_keeps_failed_supplements_best_effort(
     ]
 
 
+def test_ingest_assessment_documents_keeps_degraded_supplements_best_effort(
+    monkeypatch,
+    tmp_path,
+):
+    import rob2_pipeline.ingestion.assessment as assessment
+
+    primary = tmp_path / "trial.pdf"
+    supplement = tmp_path / "trial_supplement.pdf"
+    primary.write_bytes(b"%PDF-1.4")
+    supplement.write_bytes(b"%PDF-1.4")
+
+    def parse_sources(sources):
+        return [
+            _source_parse_artifact(
+                sources[0],
+                [
+                    {
+                        "page_number": 1,
+                        "text": "Methods\nRandomized trial text with enough content to parse.",
+                    }
+                ],
+            ),
+            _source_parse_artifact(
+                sources[1],
+                [
+                    {
+                        "page_number": 4,
+                        "text": "Appendix\nAllocation concealment details were partially recovered.",
+                    }
+                ],
+                status="degraded",
+                error="layout recovery degraded",
+                diagnostics=[
+                    ParserDiagnostic(
+                        level="warning",
+                        message="page 4 has overlapping text",
+                        page_number=4,
+                    )
+                ],
+            ),
+        ]
+
+    monkeypatch.setattr(assessment, "parse_sources", parse_sources)
+    monkeypatch.setattr(assessment, "allow_remote_evidence_extraction", lambda: False)
+
+    result = assessment.ingest_assessment_documents(str(primary), [str(supplement)])
+
+    assert result.source_documents[1]["status"] == "degraded"
+    assert result.supplement_warnings == ["layout recovery degraded"]
+    assert result.parse_artifacts[1]["provenance"]["artifact_schema_version"] == (
+        PARSE_ARTIFACT_SCHEMA_VERSION
+    )
+    assert result.parse_artifacts[1]["diagnostics"] == [
+        {
+            "level": "warning",
+            "message": "page 4 has overlapping text",
+            "page_number": 4,
+        }
+    ]
+    assert [chunk.metadata["document_id"] for chunk in result.docling_chunks] == [
+        "primary",
+        "supplement:001",
+    ]
+
+
 def test_ingest_assessment_documents_raises_when_primary_parse_fails(
     monkeypatch,
     tmp_path,
@@ -207,3 +276,38 @@ def test_ingest_assessment_documents_raises_when_primary_parse_fails(
         assert "Primary PDF parsing failed" in str(error)
     else:
         raise AssertionError("Expected primary parse failure to stop ingestion")
+
+
+def test_ingest_assessment_documents_raises_when_primary_parse_is_degraded(
+    monkeypatch,
+    tmp_path,
+):
+    import rob2_pipeline.ingestion.assessment as assessment
+
+    primary = tmp_path / "trial.pdf"
+    primary.write_bytes(b"%PDF-1.4")
+
+    monkeypatch.setattr(
+        assessment,
+        "parse_sources",
+        lambda sources: [
+            _source_parse_artifact(
+                sources[0],
+                [
+                    {
+                        "page_number": 1,
+                        "text": "Methods\nRandomized trial text with enough content to parse.",
+                    }
+                ],
+                status="degraded",
+                error="layout recovery degraded",
+            )
+        ],
+    )
+
+    try:
+        assessment.ingest_assessment_documents(str(primary), [])
+    except RuntimeError as error:
+        assert "Primary PDF parsing failed" in str(error)
+    else:
+        raise AssertionError("Expected degraded primary parse to stop ingestion")

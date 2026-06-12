@@ -289,7 +289,7 @@ def parse_source_with_adapter(
             artifact = parser.parse(source["path"])
         parse_time_ms = max(0, round((time.perf_counter() - started) * 1000))
         return SourceParseArtifact(
-            source_identity=mark_parsed(source),
+            source_identity=_source_identity_from_parser_artifact(source, artifact),
             pages=artifact.pages,
             diagnostics=artifact.diagnostics,
             provenance=artifact.provenance,
@@ -314,6 +314,21 @@ def parse_source_with_adapter(
             ),
             parse_time_ms=parse_time_ms,
         )
+
+
+def _source_identity_from_parser_artifact(
+    source: SourceDocument, artifact: SourceParseArtifact
+) -> SourceDocument:
+    artifact_identity = dict(artifact.source_identity)
+    status = artifact_identity.get("status") or "parsed"
+    if status == "parsed":
+        return mark_parsed(source)
+
+    updated = SourceDocument(**source)
+    updated["status"] = status
+    if artifact_identity.get("error"):
+        updated["error"] = artifact_identity["error"]
+    return updated
 
 
 def parse_sources(
