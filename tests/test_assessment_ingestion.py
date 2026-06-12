@@ -75,6 +75,40 @@ def test_assessment_ingestion_result_to_state_update_includes_llm_log_when_prese
     assert result.to_state_update()["llm_call_log"] == [LLM_LOG]
 
 
+def test_assessment_ingestion_result_rebuilds_supplement_indexes_from_segments():
+    evidence = empty_paper_evidence("parse_artifact")
+    segment = SupplementSegment(
+        segment_id="supplement:001:segment:0001",
+        document_id="supplement:001",
+        document_name="protocol.pdf",
+        document_role="protocol",
+        source_path="protocol.pdf",
+        heading="Protocol",
+        page_numbers=[1],
+        domain_tags=["D1"],
+        annotation="Central allocation evidence.",
+        text="Central allocation concealment was used.",
+    )
+    result = AssessmentIngestionResult(
+        full_text="Primary text",
+        evidence=evidence,
+        docling_chunks=[],
+        source_documents=[],
+        supplement_warnings=[],
+        supplement_segments=[segment.to_dict()],
+        supplement_indexes={},
+    )
+
+    update = result.to_state_update()
+
+    assert update["supplement_segments"] == [segment.to_dict()]
+    assert set(update["supplement_indexes"]) == {"supplement:001"}
+    retrieved = update["supplement_indexes"]["supplement:001"].retrieve(
+        "allocation concealment", domain="d1"
+    )
+    assert retrieved["segments"][0]["segment_id"] == segment.segment_id
+
+
 def test_ingest_assessment_documents_prefers_parser_neutral_artifacts(
     monkeypatch,
     tmp_path,

@@ -550,6 +550,90 @@ def test_run_benchmark_reuses_trial_artifacts_across_outcomes(tmp_path, monkeypa
     assert "trial_retrieval_indexes" not in calls[1]
 
 
+def test_run_benchmark_reuses_supplement_segments_without_cached_indexes(
+    tmp_path, monkeypatch
+):
+    pdf_dir = tmp_path / "benchmark"
+    pdf_dir.mkdir()
+    (pdf_dir / "TITAN.pdf").write_bytes(b"pdf")
+    reference_csv = tmp_path / "ref.csv"
+    reference_csv.write_text(
+        "Trial,D1,D2,D3,D4,D5,Overall Risk\nTITAN,Low,Low,Low,Low,Low,Low\n",
+        encoding="utf-8",
+    )
+    supplement_segment = {
+        "segment_id": "supplement:001:segment:0001",
+        "document_id": "supplement:001",
+        "document_name": "protocol.pdf",
+        "document_role": "protocol",
+        "source_path": "protocol.pdf",
+        "heading": "Protocol",
+        "page_numbers": [1],
+        "domain_tags": ["D1"],
+        "annotation": "Central allocation evidence.",
+        "text": "Central allocation concealment was used.",
+    }
+    calls = []
+
+    class LegacyIndex:
+        pass
+
+    def fake_run_assessment(**kwargs):
+        calls.append(kwargs)
+        assessment_dir = Path(kwargs["output_dir"])
+        assessment_dir.mkdir(parents=True)
+        (assessment_dir / "TITAN_rob2_data.json").write_text(
+            json.dumps(
+                {
+                    "domain_judgments": {
+                        "D1": "Low",
+                        "D2": "Low",
+                        "D3": "Low",
+                        "D4": "Low",
+                        "D5": "Low",
+                    },
+                    "overall_judgment": "Low",
+                    "source_documents": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        precomputed = kwargs["precomputed_ingestion"]
+        if precomputed is not None:
+            assert precomputed.supplement_segments == [supplement_segment]
+            assert precomputed.supplement_indexes == {}
+        return {
+            "full_text": "Trial text",
+            "evidence": {"warnings": []},
+            "source_documents": [],
+            "supplement_warnings": [],
+            "supplement_segments": [supplement_segment],
+            "supplement_indexes": {"supplement:001": LegacyIndex()},
+            "supplement_retrieval_grades": {},
+            "parse_artifacts": [],
+            "rag_contexts": {"D1": "legacy context"},
+            "rag_chunk_metadata": {"D1": [{"text": "legacy"}]},
+            "retrieval_grades": {"D1": {"legacy": True}},
+        }
+
+    monkeypatch.setattr("rob2_pipeline.benchmark.run_assessment", fake_run_assessment)
+
+    run_benchmark(
+        pdf_dir=pdf_dir,
+        reference_csvs={"OS": reference_csv, "PFS": reference_csv},
+        outcome_map=[
+            {"trial": "TITAN", "outcome_code": "OS"},
+            {"trial": "TITAN", "outcome_code": "PFS"},
+        ],
+        output_dir=tmp_path / "out",
+    )
+
+    assert calls[1]["precomputed_ingestion"].supplement_segments == [
+        supplement_segment
+    ]
+    assert calls[1]["precomputed_ingestion"].supplement_indexes == {}
+
+
 def test_run_benchmark_scores_gold_evidence_fixtures_when_present(
     tmp_path, monkeypatch
 ):

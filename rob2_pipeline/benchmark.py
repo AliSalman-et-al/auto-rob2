@@ -114,7 +114,6 @@ def _state_ingestion_artifact(state: dict) -> AssessmentIngestionResult:
         source_documents=list(state.get("source_documents") or []),
         supplement_warnings=list(state.get("supplement_warnings") or []),
         supplement_segments=list(state.get("supplement_segments") or []),
-        supplement_indexes=dict(state.get("supplement_indexes") or {}),
         supplement_retrieval_grades=dict(
             state.get("supplement_retrieval_grades") or {}
         ),

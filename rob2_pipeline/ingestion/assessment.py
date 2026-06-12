@@ -30,6 +30,7 @@ from rob2_pipeline.ingestion.supplement_segments import (
     supplement_segment_artifacts,
 )
 from rob2_pipeline.models import PaperEvidence
+from rob2_pipeline.supplement_retrieval import SupplementIndex, SupplementSegment
 from rob2_pipeline.types import (
     LLMCallLogEntry,
     SourceDocument,
@@ -51,6 +52,11 @@ class AssessmentIngestionResult:
     llm_call_log: list[LLMCallLogEntry] = field(default_factory=list)
 
     def to_state_update(self, include_llm_call_log: bool = True) -> dict:
+        supplement_indexes = (
+            self.supplement_indexes
+            if self.supplement_indexes
+            else _supplement_indexes_from_segment_artifacts(self.supplement_segments)
+        )
         update = {
             "full_text": self.full_text,
             "evidence": self.evidence,
@@ -58,12 +64,28 @@ class AssessmentIngestionResult:
             "parse_artifacts": self.parse_artifacts,
             "supplement_warnings": self.supplement_warnings,
             "supplement_segments": self.supplement_segments,
-            "supplement_indexes": self.supplement_indexes,
+            "supplement_indexes": supplement_indexes,
             "supplement_retrieval_grades": self.supplement_retrieval_grades,
         }
         if include_llm_call_log and self.llm_call_log:
             update["llm_call_log"] = self.llm_call_log
         return update
+
+
+def _supplement_indexes_from_segment_artifacts(
+    segment_artifacts: list[SupplementSegmentArtifact],
+) -> dict[str, SupplementIndex]:
+    segments_by_document: dict[str, list[SupplementSegment]] = {}
+    for artifact in segment_artifacts:
+        segment = SupplementSegment(**artifact)
+        if not segment.document_id:
+            continue
+        segments_by_document.setdefault(segment.document_id, []).append(segment)
+    return {
+        document_id: SupplementIndex.from_segments(segments)
+        for document_id, segments in segments_by_document.items()
+        if segments
+    }
 
 
 def ingest_assessment_documents(
