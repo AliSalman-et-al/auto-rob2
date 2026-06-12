@@ -21,6 +21,7 @@ from rob2_pipeline.nodes.evidence_packet_grading import (
     missing_evidence,
     negative_flags,
     packet_readiness,
+    provenance_warnings,
     source_to_fact,
 )
 from rob2_pipeline.nodes.evidence_source_selection import (
@@ -176,6 +177,7 @@ def _build_packet_for_contract(
     matched = {term for source in selected for term in source.get("matched_terms", [])}
     missing = missing_evidence(contract, text, matched)
     flags = negative_flags(state, contract, selected, text)
+    warnings = provenance_warnings(selected)
     retrieval_confidence = confidence(contract, selected, missing, flags)
     facts = [
         source_to_fact(contract, source, retrieval_confidence)
@@ -224,6 +226,7 @@ def _build_packet_for_contract(
         retrieval_confidence=retrieval_confidence,
         missing_evidence=missing,
         negative_flags=flags,
+        provenance_warnings=warnings,
         packet_grade=grade_packet(retrieval_confidence, missing, flags),
         packet_readiness=readiness,
     )

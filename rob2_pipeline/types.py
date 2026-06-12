@@ -230,6 +230,7 @@ class EvidencePacket(TypedDict, total=False):
     retrieval_confidence: float
     missing_evidence: list[str]
     negative_flags: list[str]
+    provenance_warnings: list[str]
     packet_grade: RetrievalGrade
     packet_readiness: PacketReadiness
 

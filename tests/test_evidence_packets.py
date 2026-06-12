@@ -199,7 +199,7 @@ def test_packet_readiness_can_emit_all_review_statuses():
     quote = packet_readiness(
         sq_id="1.1",
         missing=[],
-        flags=["missing_page_source"],
+        flags=["quote_untraceable"],
         contradictions=[],
         facts=[{"support_level": "strong"}],
         confidence=0.9,
@@ -881,10 +881,9 @@ def test_verifier_does_not_flag_section_text_for_missing_page_numbers():
     )
 
 
-def test_verifier_still_flags_supplement_segment_with_empty_page_numbers():
-    """A retrieved supplement segment missing page numbers is still a defect and
-    must still trigger missing_page_source. Only section-text sources get a
-    pass."""
+def test_supplement_segment_with_empty_page_numbers_is_provenance_warning():
+    """A retrieved supplement segment missing page numbers is a provenance
+    warning, not a fatal packet defect."""
     evidence = empty_paper_evidence("test")
     state = _state_with_chunks(
         "d1",
@@ -910,7 +909,7 @@ def test_verifier_still_flags_supplement_segment_with_empty_page_numbers():
     assert any(not s.get("page_numbers") for s in supplement_sources), (
         "test setup should have a supplement segment source with empty page_numbers"
     )
-    assert "missing_page_source" in packet["negative_flags"], (
-        "missing_page_source should still fire for a supplement segment that "
-        "has empty page_numbers"
-    )
+    assert "missing_page_source" not in packet["negative_flags"]
+    assert "missing_supplement_page_numbers" in packet["provenance_warnings"]
+    assert packet["packet_grade"]["retry_recommended"] is False
+    assert packet["packet_readiness"]["status"] == "ready"

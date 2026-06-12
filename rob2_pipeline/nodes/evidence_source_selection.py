@@ -52,7 +52,7 @@ def candidate_sources(
                 page_numbers=list(raw.get("page_numbers") or []),
                 score=float(raw.get("score", 1.0)),
                 matched_terms=matched,
-                source_kind=str(raw.get("source_kind", "rag_chunk")),
+                source_kind=str(raw.get("source_kind") or "unknown"),
                 document_id=str(raw.get("document_id", "")),
                 document_name=str(raw.get("document_name", "")),
                 document_role=str(raw.get("document_role", "")),
