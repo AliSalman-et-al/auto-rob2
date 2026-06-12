@@ -69,21 +69,17 @@ uv run python benchmark.py \
 ## What The Pipeline Uses
 
 - PyMuPDF4LLM and PyMuPDF for parser-neutral PDF page artifacts, raw character
-  streams, and retrieval chunks.
+  streams, structured primary-paper evidence, and parser artifacts.
 - LangGraph for the workflow.
-- LangChain FAISS plus BGE-small embeddings for per-study retrieval.
+- BM25S `SupplementIndex` retrieval over annotated `SupplementSegments` from
+  supplementary documents.
 - ClinicalTrials.gov API v2 for registry/design/outcome enrichment.
 - LLMs for RCT screening, metadata extraction, and signaling-question answers.
 - Deterministic Python judges for final domain and overall RoB 2 labels.
 
-The embedding model is `BAAI/bge-small-en-v1.5`. The first run may download
-model files. If your environment requires Hugging Face authentication, run:
-
-```bash
-hf auth login
-```
-
-or set `HF_TOKEN`.
+Primary-paper evidence is not BM25S-indexed. It enters prompts through
+structured evidence sections, parser artifacts, trial facts, registry evidence,
+and `section_text` fallbacks inside evidence packets.
 
 ## Inputs
 
@@ -148,10 +144,11 @@ Useful JSON fields:
 | `sq_support_adjudications`             | Targeted LLM re-checks for pivotal weak or constrained SQ answers |
 | `evidence`                             | Structured evidence extracted from the primary paper |
 | `source_documents`                     | Primary and supplement parse inventory               |
+| `supplement_segments`                  | Parsed and annotated supplement evidence sections    |
+| `supplement_retrieval_grades`          | BM25S supplement retrieval diagnostics by SQ/domain  |
 | `supplement_warnings`                  | Non-fatal supplement ingestion issues                |
-| `rag_sources`                          | Retrieved chunks with document/page provenance       |
 | `evidence_packets`                     | Evidence selected for each signaling question        |
-| `retrieval_grades`, `packet_grades`    | Retrieval and packet quality diagnostics             |
+| `packet_grades`                        | Evidence packet quality diagnostics                  |
 | `evidence_validation_flags`            | Quote-support and quality flags                      |
 | `support_constraints`                  | Typed support issues such as untraceable quotes or missing required evidence |
 | `verification_actions`                 | Suggested retry or review actions                    |
@@ -227,10 +224,10 @@ nodes, adjudication LLM calls, and LLM latency grouped by node.
 wall-clock timing, slowest runs, and node timing totals.
 
 When the same trial is benchmarked for multiple outcomes, benchmark execution
-reuses trial-level ingestion artifacts and retrieval indexes for later outcomes
-with the same primary PDF and supplements. Outcome resolution, evidence
-packets, SQ answers, support adjudication, and judgments remain
-outcome-specific.
+reuses trial-level ingestion artifacts for later outcomes with the same primary
+PDF and supplements. BM25S `SupplementIndex` internals are rebuilt in memory
+from reusable `SupplementSegments`; outcome resolution, evidence packets, SQ
+answers, support adjudication, and judgments remain outcome-specific.
 
 Benchmark reports also include an `Adjudication Summary` when support audit
 artifacts are present. It counts weak and unsupported SQ answers, pivotality
@@ -247,11 +244,22 @@ primary paper text and do not replace the primary publication.
 At ingestion time, the pipeline:
 
 1. Parses the primary PDF normally.
-2. Classifies supplement files from their filenames when possible.
+2. Runs supplement document type detection, using content-based detection for
+   protocol, SAP, and appendix roles when available and filename classification
+   as a fallback.
 3. Parses supplements in bounded page windows.
-4. Skips failed supplement windows and records warnings.
-5. Adds usable supplement chunks to RAG with document provenance.
-6. Surfaces supplement source name, role, page, and path in JSON diagnostics.
+4. Segments supplements into `SupplementSegments` with headings, page ranges,
+   document roles, RoB 2 domain tags, and short methodological annotations.
+5. Records warnings and fallback annotations when parsing or annotation is
+   partial, while keeping usable segments retrievable.
+6. Builds in-memory BM25S `SupplementIndex` instances from the segments.
+7. Selects supplement hits into SQ-specific evidence packets alongside
+   ClinicalTrials.gov evidence and primary-paper `section_text` fallbacks.
+8. Surfaces supplement source name, role, page, path, selected segments, and
+   retrieval diagnostics in JSON.
+
+These supplement parsing, annotation, and retrieval diagnostics are the first
+place to inspect when supplement evidence is missing or unexpectedly weak.
 
 Supplement statuses in `source_documents`:
 
@@ -309,7 +317,7 @@ Key files:
 | `rob2_pipeline/pipeline.py`               | Public `run_assessment()` API and output writing |
 | `rob2_pipeline/graph.py`                  | LangGraph workflow wiring                        |
 | `rob2_pipeline/ingestion/`                | Primary and supplement PDF ingestion             |
-| `rob2_pipeline/rag.py`                    | Per-study FAISS retrieval                        |
+| `rob2_pipeline/supplement_retrieval.py`   | BM25S SupplementIndex over SupplementSegments    |
 | `rob2_pipeline/nodes/domain_context.py`   | Prompt-ready D1-D5 evidence context              |
 | `rob2_pipeline/nodes/domain_helpers.py`   | Shared `DomainSqStage` SQ-stage runner           |
 | `rob2_pipeline/nodes/evidence_packets.py` | SQ-specific evidence packets                     |
@@ -337,8 +345,8 @@ print(state["overall_judgment"])
 ```
 
 `run_assessment()` also accepts `precomputed_ingestion` and
-`trial_retrieval_indexes` for benchmark-style reuse across multiple outcomes
-from the same trial. Normal callers should usually leave those unset.
+`supplement_indexes` for internal benchmark-style reuse across multiple
+outcomes from the same trial. Normal callers should usually leave those unset.
 
 ## Development
 
@@ -369,13 +377,14 @@ uv run python -m py_compile rob2_pipeline/benchmark.py benchmark.py
 | --------------------------- | ---------------------------------------------------------------- |
 | LLM JSON contract failure   | Trace JSON and `rob2_pipeline/llm_contracts.py`                  |
 | Early non-RCT stop          | `is_rct`, `rct_screen_evidence`, `errors`                        |
-| Missing evidence            | `evidence`, `rag_sources`, `evidence_packets`                    |
+| Missing evidence            | `evidence`, `evidence_packets`, `packet_grades`                  |
 | Prompt evidence mismatch    | `rob2_pipeline/nodes/domain_context.py` and relevant `DomainSqStage` |
 | Weak D3/D5 support          | `packet_grades`, `verification_actions`, supplement sources      |
 | Unexpected final-vs-initial label | `pivotality_tests`, `sq_support_adjudications`, `initial_domain_judgments` |
 | Supplement parse errors     | `source_documents`, `supplement_warnings`                        |
+| Supplement annotation gaps  | `supplement_warnings`, fallback annotations in `supplement_segments` |
+| Sparse supplement retrieval | `supplement_retrieval_grades`, `supplement_segments`, evidence packet sources |
 | ClinicalTrials.gov mismatch | Registered endpoint fields and CT.gov-derived `evidence_packets` |
-| Empty RAG output            | embedding model availability and `evidence.warnings`             |
 
 For large supplements with repeated skipped windows, reduce
 `ROB2_SUPPLEMENT_PAGE_WINDOW`. To scan deeper into very long supplements,
