@@ -124,7 +124,8 @@ def test_ingest_assessment_documents_prefers_parser_neutral_artifacts(
         "primary",
         "supplement:001",
     ]
-    assert result.docling_chunks[0].metadata["section"] == "Methods"
+    assert result.docling_chunks[0].metadata["section"] == "METHODS"
+    assert result.docling_chunks[0].metadata["original_heading"] == "Methods"
     assert result.docling_chunks[0].metadata["page_numbers"] == [1]
     assert result.docling_chunks[2].metadata["document_role"] == "protocol"
     assert result.parse_artifacts[0]["pages"][0]["text"].startswith("Methods")

@@ -18,12 +18,82 @@ PARSE_ARTIFACT_SCHEMA_VERSION = "parse-artifact-v2"
 PAGE_AWARE_ARTIFACT_SCHEMA_VERSION = "page-aware-artifacts-v1"
 MIN_SECTION_TEXT_CHARS = 20
 
-SECTION_HEADING_RE = re.compile(
-    r"^\s*(?:#+\s*)?(abstract|introduction|background|methods?|results?|discussion|"
-    r"conclusions?|randomi[sz]ation|masking|blinding|outcomes?|endpoints?|"
-    r"statistical analysis|baseline characteristics)\s*:?\s*$",
-    re.IGNORECASE,
-)
+METHODS_HEADINGS = {
+    "methods",
+    "method",
+    "materials and methods",
+    "patients and methods",
+    "participants and methods",
+    "study design",
+    "trial design",
+    "study oversight",
+    "trial oversight",
+    "participants",
+    "patients",
+    "eligibility",
+    "setting",
+    "interventions",
+    "intervention",
+    "treatment",
+    "procedures",
+    "randomization",
+    "randomisation",
+    "allocation",
+    "allocation concealment",
+    "masking",
+    "blinding",
+    "outcomes",
+    "outcome",
+    "endpoints",
+    "endpoint",
+    "assessments",
+    "assessment",
+    "sample size",
+    "statistical analysis",
+    "statistics",
+    "analysis population",
+    "protocol",
+    "ethics",
+}
+
+RESULTS_HEADINGS = {
+    "results",
+    "result",
+    "patient disposition",
+    "participant flow",
+    "trial profile",
+    "consort flow",
+    "baseline characteristics",
+    "demographics",
+    "efficacy",
+    "primary outcome",
+    "secondary outcomes",
+    "secondary outcome",
+    "safety",
+    "adverse events",
+    "adverse event",
+    "harms",
+    "follow-up",
+    "follow up",
+    "missing data",
+    "protocol deviations",
+    "protocol deviation",
+}
+
+OTHER_CANONICAL_HEADINGS = {
+    "abstract": "ABSTRACT",
+    "introduction": "INTRODUCTION",
+    "background": "BACKGROUND",
+    "discussion": "DISCUSSION",
+    "conclusion": "CONCLUSION",
+    "conclusions": "CONCLUSION",
+}
+
+SECTION_HEADING_ALIASES = {
+    **{heading: "METHODS" for heading in METHODS_HEADINGS},
+    **{heading: "RESULTS" for heading in RESULTS_HEADINGS},
+    **OTHER_CANONICAL_HEADINGS,
+}
 
 
 class ParsedPageArtifact(TypedDict, total=False):
@@ -73,7 +143,8 @@ class SourceParseArtifact:
 class PageAwareSectionArtifact:
     section_id: str
     source_id: str
-    heading: str
+    canonical_label: str
+    original_heading: str
     page_numbers: list[int]
     text: str
 
@@ -85,6 +156,7 @@ class PageAwareChunkArtifact:
     document_role: str
     section_id: str
     section_heading: str
+    original_heading: str
     page_numbers: list[int]
     text: str
 
@@ -264,7 +336,8 @@ def build_page_aware_artifacts(
             source_id=source_id,
             document_role=document_role,
             section_id=section.section_id,
-            section_heading=section.heading,
+            section_heading=section.canonical_label,
+            original_heading=section.original_heading,
             page_numbers=section.page_numbers,
             text=section.text,
         )
@@ -309,6 +382,7 @@ def documents_from_page_aware_artifacts(
             page_content=chunk.text,
             metadata={
                 "section": chunk.section_heading,
+                "original_heading": chunk.original_heading,
                 "page_numbers": list(chunk.page_numbers),
                 "document_id": source.get("document_id", ""),
                 "document_name": source.get("document_name", ""),
@@ -327,7 +401,8 @@ def _build_page_aware_sections(
     source_id: str,
 ) -> list[PageAwareSectionArtifact]:
     sections: list[PageAwareSectionArtifact] = []
-    current_heading = "Unsectioned"
+    current_label = "UNSECTIONED"
+    current_original_heading = "UNSECTIONED"
     current_lines: list[str] = []
     current_pages: list[int] = []
 
@@ -342,7 +417,8 @@ def _build_page_aware_sections(
             PageAwareSectionArtifact(
                 section_id=f"{source_id}:section:{len(sections) + 1:04d}",
                 source_id=source_id,
-                heading=current_heading,
+                canonical_label=current_label,
+                original_heading=current_original_heading,
                 page_numbers=sorted(set(current_pages)),
                 text=text,
             )
@@ -356,15 +432,27 @@ def _build_page_aware_sections(
             line = raw_line.strip()
             if not line:
                 continue
-            if SECTION_HEADING_RE.match(line):
+            heading_label = _canonical_section_label(line)
+            if heading_label is not None:
                 flush()
-                current_heading = line.lstrip("#").strip().rstrip(":")
+                current_label = heading_label
+                current_original_heading = _clean_section_heading(line)
                 continue
             current_lines.append(line)
             if page_number:
                 current_pages.append(page_number)
     flush()
     return sections
+
+
+def _canonical_section_label(raw_heading: str) -> str | None:
+    cleaned = _clean_section_heading(raw_heading)
+    normalized = re.sub(r"\s+", " ", cleaned).casefold()
+    return SECTION_HEADING_ALIASES.get(normalized)
+
+
+def _clean_section_heading(raw_heading: str) -> str:
+    return raw_heading.lstrip("#").strip().rstrip(":").strip()
 
 
 def _package_version(package_name: str) -> str:

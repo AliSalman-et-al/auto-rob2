@@ -255,7 +255,18 @@ def test_parse_trial_workspace_persists_loadable_artifacts_and_diagnostics(tmp_p
 
     assert (tmp_path / "workspace" / "sources" / "primary.json").exists()
     assert loaded["parse_artifacts"]["primary"] == parse_artifact
-    assert loaded["page_artifacts"]["primary"]["sections"][0]["heading"] == "Methods"
+    assert (
+        loaded["page_artifacts"]["primary"]["sections"][0]["canonical_label"]
+        == "METHODS"
+    )
+    assert (
+        loaded["page_artifacts"]["primary"]["sections"][0]["original_heading"]
+        == "Methods"
+    )
+    assert (
+        loaded["page_artifacts"]["primary"]["chunks"][0]["original_heading"]
+        == "Methods"
+    )
     assert loaded["page_artifacts"]["primary"]["chunks"][0]["source_id"] == "primary"
     assert diagnostic == {
         "source_id": "primary",

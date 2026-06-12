@@ -11,6 +11,7 @@ from rob2_pipeline.ingestion.parse_artifacts import (
     ParserProvenance,
     SourceParseArtifact,
     build_page_aware_artifacts,
+    documents_from_page_aware_artifacts,
     full_text_from_parse_artifact,
     parse_sources,
     parse_source_with_adapter,
@@ -140,7 +141,11 @@ def test_page_aware_artifacts_persist_sections_and_multi_page_chunks(tmp_path):
 
     artifacts = build_page_aware_artifacts(parse_artifact)
 
-    assert [section.heading for section in artifacts.sections] == [
+    assert [section.canonical_label for section in artifacts.sections] == [
+        "METHODS",
+        "RESULTS",
+    ]
+    assert [section.original_heading for section in artifacts.sections] == [
         "Methods",
         "Results",
     ]
@@ -149,8 +154,14 @@ def test_page_aware_artifacts_persist_sections_and_multi_page_chunks(tmp_path):
     assert artifacts.chunks[0].source_id == "primary"
     assert artifacts.chunks[0].document_role == "primary"
     assert artifacts.chunks[0].section_id == "primary:section:0001"
+    assert artifacts.chunks[0].section_heading == "METHODS"
+    assert artifacts.chunks[0].original_heading == "Methods"
     assert artifacts.chunks[0].page_numbers == [1, 2]
     assert "allocation concealment" in artifacts.chunks[0].text
+
+    documents = documents_from_page_aware_artifacts(artifacts, source)
+    assert documents[0].metadata["section"] == "METHODS"
+    assert documents[0].metadata["original_heading"] == "Methods"
 
     output_path = tmp_path / "page-aware-artifacts.json"
     write_page_aware_artifacts(artifacts, output_path)
@@ -158,6 +169,8 @@ def test_page_aware_artifacts_persist_sections_and_multi_page_chunks(tmp_path):
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["source_id"] == "primary"
     assert payload["sections"][0]["section_id"] == "primary:section:0001"
+    assert payload["sections"][0]["canonical_label"] == "METHODS"
+    assert payload["sections"][0]["original_heading"] == "Methods"
     assert payload["chunks"][0]["chunk_id"] == "primary:chunk:0001"
 
 
@@ -193,10 +206,119 @@ def test_page_aware_artifacts_keep_missing_headings_as_unsectioned_chunk():
     artifacts = build_page_aware_artifacts(parse_artifact)
 
     assert len(artifacts.sections) == 1
-    assert artifacts.sections[0].heading == "Unsectioned"
+    assert artifacts.sections[0].canonical_label == "UNSECTIONED"
+    assert artifacts.sections[0].original_heading == "UNSECTIONED"
     assert artifacts.chunks[0].chunk_id == "supplement:001:chunk:0001"
     assert artifacts.chunks[0].document_role == "appendix"
+    assert artifacts.chunks[0].section_heading == "UNSECTIONED"
+    assert artifacts.chunks[0].original_heading == "UNSECTIONED"
     assert artifacts.chunks[0].page_numbers == [7]
+
+
+def test_page_aware_artifacts_keep_repeated_canonical_labels_ordered():
+    parse_artifact = SourceParseArtifact(
+        source_identity={
+            "document_id": "primary",
+            "document_name": "trial.pdf",
+            "document_role": "primary",
+            "source_kind": "rag_chunk",
+            "path": "trial.pdf",
+            "is_primary": True,
+            "status": "parsed",
+        },
+        pages=[
+            {
+                "page_number": 3,
+                "text": (
+                    "Results\n"
+                    "Overall survival improved in the intervention group.\n"
+                    "Safety\n"
+                    "Grade 3 adverse events were balanced between groups."
+                ),
+                "width": 612.0,
+                "height": 792.0,
+            }
+        ],
+        diagnostics=[],
+        provenance=ParserProvenance(
+            parser_name="fake-parser",
+            parser_version="1.2.3",
+            adapter_name="fake",
+            artifact_schema_version="parse-artifact-v1",
+            config={},
+        ),
+    )
+
+    artifacts = build_page_aware_artifacts(parse_artifact)
+
+    assert [section.canonical_label for section in artifacts.sections] == [
+        "RESULTS",
+        "RESULTS",
+    ]
+    assert [section.original_heading for section in artifacts.sections] == [
+        "Results",
+        "Safety",
+    ]
+    assert [section.section_id for section in artifacts.sections] == [
+        "primary:section:0001",
+        "primary:section:0002",
+    ]
+    assert "Overall survival improved" in artifacts.sections[0].text
+    assert "Grade 3 adverse events" in artifacts.sections[1].text
+
+
+def test_page_aware_artifacts_map_standard_rct_subheadings_to_methods_and_results():
+    parse_artifact = SourceParseArtifact(
+        source_identity={
+            "document_id": "primary",
+            "document_name": "trial.pdf",
+            "document_role": "primary",
+            "source_kind": "rag_chunk",
+            "path": "trial.pdf",
+            "is_primary": True,
+            "status": "parsed",
+        },
+        pages=[
+            {
+                "page_number": 4,
+                "text": (
+                    "Study Design\n"
+                    "This was a phase 3 randomized controlled trial.\n"
+                    "Statistical Analysis\n"
+                    "Analyses used the intention-to-treat population.\n"
+                    "Baseline Characteristics\n"
+                    "Baseline disease volume was balanced across groups.\n"
+                    "Protocol Deviations\n"
+                    "Major deviations were uncommon in both groups."
+                ),
+                "width": 612.0,
+                "height": 792.0,
+            }
+        ],
+        diagnostics=[],
+        provenance=ParserProvenance(
+            parser_name="fake-parser",
+            parser_version="1.2.3",
+            adapter_name="fake",
+            artifact_schema_version="parse-artifact-v1",
+            config={},
+        ),
+    )
+
+    artifacts = build_page_aware_artifacts(parse_artifact)
+
+    assert [section.canonical_label for section in artifacts.sections] == [
+        "METHODS",
+        "METHODS",
+        "RESULTS",
+        "RESULTS",
+    ]
+    assert [section.original_heading for section in artifacts.sections] == [
+        "Study Design",
+        "Statistical Analysis",
+        "Baseline Characteristics",
+        "Protocol Deviations",
+    ]
 
 
 def test_page_aware_artifacts_ignore_empty_and_low_text_pages():
