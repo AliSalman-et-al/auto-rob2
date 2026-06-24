@@ -288,7 +288,10 @@ def test_ingest_assessment_documents_uses_all_domain_fallback_for_sparse_supplem
 
     assert len(result.supplement_segments) == 1
     segment = result.supplement_segments[0]
-    assert segment["heading"] == "Full document"
+    # Per ADR-0006 change 1, the sparse-supplement fallback now emits one
+    # all-domain-tagged segment per page (heading "Page N") instead of a single
+    # uncapped "Full document" segment, so BM25S can retrieve selectively.
+    assert segment["heading"] == "Page 4"
     assert segment["page_numbers"] == [4]
     assert segment["domain_tags"] == ["D1", "D2", "D3", "D4", "D5"]
     assert "Supplementary Appendix" in segment["text"]

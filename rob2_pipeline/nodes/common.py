@@ -2,8 +2,8 @@ import time
 from typing import Callable, Literal, Optional
 
 from rob2_pipeline.cache import read_cache, write_cache
-from rob2_pipeline.config import build_provider
-from rob2_pipeline.llm_contracts import JsonContractResult, call_json_contract_llm
+from rob2_pipeline.config import build_provider, PROMPT_TOKEN_BUDGET
+from rob2_pipeline.llm_contracts import JsonContractResult, call_json_contract_llm, enforce_prompt_budget
 from rob2_pipeline.methodology import METHODOLOGIES
 from rob2_pipeline.methodology.render import render_methodology
 from rob2_pipeline.trace import append_llm_call
@@ -119,6 +119,7 @@ def call_node_llm(
 
     provider = build_provider()
     first_start = time.perf_counter()
+    prompt, _ = enforce_prompt_budget(prompt, budget_tokens=PROMPT_TOKEN_BUDGET, node=node_name)
     response_obj = provider.complete(system=SYSTEM_MESSAGE, user=prompt)
     response = response_obj.content
     first_latency_ms = int((time.perf_counter() - first_start) * 1000)
