@@ -47,6 +47,23 @@ METHODOLOGY_BY_DOMAIN: dict[str, DomainMethodology] = {
     "d5": DOMAIN5_METHODOLOGY,
 }
 
+MAX_SOURCE_CHARS = 8000  # ~2.7k tokens per source; pages are usually well under this
+
+
+def _estimate_tokens(text: str) -> int:
+    # Conservative: ~3 chars/token over-counts tokens vs the observed ~3.6,
+    # giving headroom under the model context limit. No tokenizer dependency.
+    return len(text) // 3
+
+
+def _cap_source_text(source: dict, *, max_chars: int) -> dict:
+    text = source.get("text", "") or ""
+    if len(text) <= max_chars:
+        return source
+    capped = dict(source)
+    capped["text"] = text[:max_chars] + "\n[... truncated to fit context ...]"
+    return capped
+
 
 def evidence_packet_builder_node(state: RoB2State) -> RoB2State:
     return build_evidence_packets(state)
@@ -171,6 +188,7 @@ def _build_packet_for_contract(
         ),
     )
     selected = _select_with_coverage(ranked, contract.coverage_groups, 3)
+    selected = [_cap_source_text(src, max_chars=MAX_SOURCE_CHARS) for src in selected]
     text = "\n\n".join(
         source.get("text", "") for source in selected if source.get("text")
     )

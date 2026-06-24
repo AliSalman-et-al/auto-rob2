@@ -162,7 +162,8 @@ def _segments_from_artifact(
 ) -> tuple[list[SupplementSegment], list[str]]:
     structural_segments = _structural_segments(artifact, source)
     if len(structural_segments) < MIN_STRUCTURAL_SEGMENTS:
-        structural_segments = [_full_document_segment(artifact, source)]
+        page_segments = _page_segments(artifact.pages, source)
+        structural_segments = page_segments or [_full_document_segment(artifact, source)]
 
     annotation_allowed, warnings = _annotation_allowed_by_segment_id(
         structural_segments, source
@@ -272,6 +273,37 @@ def _full_document_segment(
         annotation="",
         text=text,
     )
+
+
+def _page_segments(
+    pages: list[dict],
+    source: SourceDocument,
+) -> list[SupplementSegment]:
+    segments: list[SupplementSegment] = []
+    for page in pages:
+        text = str(page.get("text", "")).strip()
+        if not text:
+            continue
+        page_number = int(page.get("page_number", 0) or 0)
+        segment_number = len(segments) + 1
+        segments.append(
+            SupplementSegment(
+                segment_id=(
+                    f"{source.get('document_id', 'supplement')}:segment:"
+                    f"{segment_number:04d}"
+                ),
+                document_id=source.get("document_id", ""),
+                document_name=source.get("document_name", ""),
+                document_role=source.get("document_role", "unknown_supplement"),
+                source_path=source.get("path", ""),
+                heading=f"Page {page_number}" if page_number else "Page",
+                page_numbers=[page_number] if page_number else [],
+                domain_tags=list(ALL_ROB2_DOMAINS),
+                annotation="",
+                text=text,
+            )
+        )
+    return segments
 
 
 def _annotation_allowed_by_segment_id(

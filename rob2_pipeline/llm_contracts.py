@@ -1,6 +1,7 @@
 """Schema-first LLM call contract helpers."""
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -18,6 +19,21 @@ JSON_SYSTEM_MESSAGE = (
     "tool. Respond only with JSON that matches the requested schema. Do not add "
     "preamble, explanation, or markdown code fences."
 )
+
+LOGGER = logging.getLogger(__name__)
+
+
+def enforce_prompt_budget(prompt: str, *, budget_tokens: int, node: str) -> tuple[str, int]:
+    max_chars = budget_tokens * 3  # mirror evidence_packets._estimate_tokens (~3 chars/token)
+    if len(prompt) <= max_chars:
+        return prompt, 0
+    dropped = len(prompt) - max_chars
+    LOGGER.warning(
+        "PROMPT BUDGET HIT node=%s: trimmed %d chars (~%d tok) to fit budget=%d tok. "
+        "Investigate retrieval - evidence may have been lost.",
+        node, dropped, dropped // 3, budget_tokens,
+    )
+    return prompt[:max_chars] + "\n[... prompt trimmed to context budget ...]", dropped
 
 
 @dataclass(frozen=True)
@@ -58,6 +74,9 @@ def call_json_contract_llm(
 
     for attempt_index in range(max(1, max_attempts)):
         started = time.perf_counter()
+        current_prompt, _ = enforce_prompt_budget(
+            current_prompt, budget_tokens=config.PROMPT_TOKEN_BUDGET, node=node_name
+        )
         response_obj = provider.complete(system=JSON_SYSTEM_MESSAGE, user=current_prompt)
         latency_ms = int((time.perf_counter() - started) * 1000)
         parse_status = "not_parsed"

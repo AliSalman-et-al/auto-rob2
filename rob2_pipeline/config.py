@@ -50,6 +50,7 @@ REQUEST_TIMEOUT = _llm_cfg.request_timeout
 MAX_RETRIES = _llm_cfg.max_retries
 
 PROVIDER_NAME = os.getenv("ROB2_PROVIDER", "openrouter")
+PROMPT_TOKEN_BUDGET = int(os.getenv("ROB2_PROMPT_TOKEN_BUDGET", "115000"))
 
 
 def build_provider():
